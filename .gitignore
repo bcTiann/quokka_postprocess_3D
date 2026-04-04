@@ -18,3 +18,11 @@ output*/
 *.png
 *.zip
 *.npy
+*.npy
+*.dat
+*.egg-info/
+__pycache__/
+.DS_Store
+dist/
+build/
+EOF

@@ -13,8 +13,6 @@ warnings.filterwarnings(
     category=RuntimeWarning,
     module=r"DESPOTIC.*NL99_GC",
 )
-warnings.filterwarnings("ignore", category=RuntimeWarning, module="despotic.*")
-
 import contextlib
 import io
 import logging
@@ -56,24 +54,15 @@ def _empty_line_results(species: Sequence[str]) -> dict[str, LineLumResult]:
 
 def _extract_line_result(transitions: Sequence[Mapping[str, float]]) -> LineLumResult:
     if not transitions:
-        print("_extract_line_result function failed")
         return _nan_line_result()
     entry = transitions[0]
-    # return LineLumResult(
-    #     freq=entry.get("freq", float("nan")),
-    #     intIntensity=entry.get("intIntensity", float("nan")),
-    #     intTB=entry.get("intTB", float("nan")),
-    #     lumPerH=entry.get("lumPerH", float("nan")),
-    #     tau=entry.get("tau", float("nan")),
-    #     tauDust=entry.get("tauDust", float("nan")),
-    # )
     return LineLumResult(
-        freq=entry.get("freq"),
-        intIntensity=entry.get("intIntensity"),
-        intTB=entry.get("intTB"),
-        lumPerH=entry.get("lumPerH"),
-        tau=entry.get("tau"),
-        tauDust=entry.get("tauDust"),
+        freq=entry.get("freq", float("nan")),
+        intIntensity=entry.get("intIntensity", float("nan")),
+        intTB=entry.get("intTB", float("nan")),
+        lumPerH=entry.get("lumPerH", float("nan")),
+        tau=entry.get("tau", float("nan")),
+        tauDust=entry.get("tauDust", float("nan")),
     )
 
 def _log_despotic_stdout(output: io.StringIO | str) -> None:
@@ -104,12 +93,11 @@ def calculate_single_despotic_point(
     species: Sequence[str] = DEFAULT_SPECIES,
     abundance_only: Sequence[str] = ("e-", ),
     chem_network=NL99_GC,
-    T_fixed: float | None = None, 
     log_failures: bool = True,
     row_idx: int | None = None,
     col_idx: int | None = None,
     attempt_log: list[AttemptRecord] | None = None,
-) -> Tuple[Mapping[str, LineLumResult], Mapping[str, float], Mapping[str, float], float, float, Mapping[str, float], bool]:
+) -> Tuple[Mapping[str, LineLumResult], Mapping[str, float], Mapping[str, float], float, Mapping[str, float], bool]:
     """
     Calculate DESPOTIC line for a single point in (nH, colDen) .
 
@@ -151,122 +139,7 @@ def calculate_single_despotic_point(
     last_energy_terms: dict[str, float] = {}
     last_final_tg = float("nan")
     failed = True
-
-    # --- 固定温度分支：直接用指定温度，evolveTemp='fixed' ---
-    if T_fixed is not None:
-        try:
-            cell = cloud()
-            cell.nH = nH_val
-            cell.colDen = colDen_val
-            cell.Tg = T_fixed
-
-            # 你的固定参数保持不变
-            cell.sigmaNT = 2.0e5
-            cell.comp.xoH2 = 0.1
-            cell.comp.xpH2 = 0.4
-            cell.comp.xHe = 0.1
-
-            cell.dust.alphaGD = 3.2e-34
-            cell.dust.sigma10 = 2.0e-25
-            cell.dust.sigmaPE = 1.0e-21
-            cell.dust.sigmaISRF = 3.0e-22
-            cell.dust.beta = 2.0
-            cell.dust.Zd = 1.0
-
-            cell.Td = 10.0
-            cell.rad.TCMB = 2.73
-            cell.rad.TradDust = 0.0
-            cell.rad.ionRate = 2.0e-17
-            cell.rad.chi = 1.0
-
-            cell.comp.computeDerived(cell.nH)
-
-            stdout_buffer = io.StringIO()
-            with contextlib.redirect_stdout(stdout_buffer):
-                converged = cell.setChemEq(
-                    network=chem_network,
-                    evolveTemp="fixed",   # 关键：固定温度
-                    tol=1e-6,
-                    maxTime=1e33,
-                    maxTempIter=1000,
-                )
-            _log_despotic_stdout(stdout_buffer)
-
-            # 更新 abundance 到 emitters（只做一次，不要 addEmitter 循环）
-            cell.chemnetwork.applyAbundances(addEmitters=True)
-            mu_val = cell.chemnetwork.mu()
-
-
-            line_results: dict[str, LineLumResult] = {}
-            species_abundances: dict[str, float] = {}
-
-            for sp in species_order:
-                # applyAbundances 使用小写 emitter 名称，这里统一为小写查询
-                sp_key = sp.lower()
-                transitions = cell.lineLum(sp_key)
-                line_results[sp] = _extract_line_result(transitions)
-                species_abundances[sp] = float(cell.emitters[sp_key].abundance)
-
-            chem_abundances = dict(cell.chemabundances)
-            energy_terms = dict(cell.dEdt())
-            final_tg = float(cell.Tg)
-            # 固定温度分支不视为失败；仅异常时会返回 True
-            failed = False
-
-            if attempt_log is not None:
-                attempt_log.append(
-                    AttemptRecord(
-                        row_idx=row_idx if row_idx is not None else -1,
-                        col_idx=col_idx if col_idx is not None else -1,
-                        nH=nH_val,
-                        colDen=colDen_val,
-                        tg_guess=T_fixed,
-                        final_Tg=final_tg,
-                        mu_value=mu_val,
-                        converged=converged,
-                        message="Fixed-T run",
-                        duration=0.0,
-                    )
-                )
-
-            return (
-                MappingProxyType(line_results),
-                MappingProxyType(species_abundances),
-                MappingProxyType(chem_abundances),
-                mu_val,
-                final_tg,
-                MappingProxyType(energy_terms),
-                failed,
-            )
-        except Exception as exc:
-            if attempt_log is not None:
-                attempt_log.append(
-                    AttemptRecord(
-                        row_idx=row_idx if row_idx is not None else -1,
-                        col_idx=col_idx if col_idx is not None else -1,
-                        nH=nH_val,
-                        colDen=colDen_val,
-                        tg_guess=T_fixed,
-                        mu_value=float("nan"),
-                        final_Tg=float("nan"),
-                        converged=False,
-                        message=str(exc),
-                        duration=0.0,
-                    )
-                )
-            return (
-                MappingProxyType(_empty_line_results(species_order)),
-                MappingProxyType({sp: float("nan") for sp in species_order}),
-                MappingProxyType({}),
-                float("nan"),
-                float("nan"),
-                MappingProxyType({}),
-                True,
-            )
-
-
-
-
+    
     while pending_guesses:
         guess = pending_guesses.pop(0)
         if any(math.isclose(guess, prev, rel_tol=1e-2, abs_tol=1e-2) for prev in seen_guesses):
@@ -304,13 +177,11 @@ def calculate_single_despotic_point(
             cell.rad.chi = 1.0
 
             cell.comp.computeDerived(cell.nH)
-            ############
-            cell.setDustTempEq(verbose=False)
-            ############
+
             with contextlib.redirect_stdout(stdout_buffer):
                 converged = cell.setChemEq(
                     network=chem_network,
-                    evolveTemp="fixed",
+                    evolveTemp="iterateDust",
                     tol=1e-6,
                     maxTime=1e22,
                     maxTempIter=50,
@@ -318,7 +189,7 @@ def calculate_single_despotic_point(
             chem_abundances = dict(cell.chemabundances)
             last_chem_abundances = dict(chem_abundances)
             _log_despotic_stdout(stdout_buffer)
-    
+
             line_results: dict[str, LineLumResult] = {}
             species_abundances: dict[str, float] = {}
             for species in species_order:
@@ -354,14 +225,12 @@ def calculate_single_despotic_point(
                 MappingProxyType(last_line_results),
                 MappingProxyType(last_abundances),
                 MappingProxyType(last_chem_abundances),
-                mu_val,
                 last_final_tg,
                 MappingProxyType(last_energy_terms),
                 failed,
             )
 
         except Exception as exc:
-
             if attempt_log is not None:
                 attempt_log.append(
                     AttemptRecord(
@@ -376,15 +245,6 @@ def calculate_single_despotic_point(
                         duration=time.perf_counter() - attempt_start_time,
                     )
             )
-            return (
-                MappingProxyType(last_line_results),
-                MappingProxyType(last_abundances),
-                MappingProxyType(last_chem_abundances),
-                mu_val,
-                last_final_tg,
-                MappingProxyType(last_energy_terms),
-                failed,
-            )
 
 
     if log_failures:
@@ -393,8 +253,9 @@ def calculate_single_despotic_point(
     MappingProxyType(last_line_results),
     MappingProxyType(last_abundances),
     MappingProxyType(last_chem_abundances),
-    mu_val,
     last_final_tg,
     MappingProxyType(last_energy_terms),
     failed,
     )
+
+

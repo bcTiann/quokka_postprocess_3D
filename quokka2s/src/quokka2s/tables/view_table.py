@@ -10,51 +10,34 @@ from quokka2s.pipeline.prep import config as cfg
 
 def main():
     table = load_table(cfg.DESPOTIC_TABLE_PATH)
-    samples = np.load("log_samples.npy")
+    samples = np.load("/Users/baochen/quokka_postprocessing/log_samples.npy")
 
     tokens = [
         "tg_final",
-        "mu",
         "species:CO:abundance",
-        "species:CO:lumPerH",
-        "species:CO:intTB",
-
         "species:C+:abundance",
-        "species:C+:lumPerH",
-        "species:C+:intTB",
-
         "species:C:abundance",
-        "species:C:lumPerH",
-        "species:C:intTB",
-
         "species:HCO+:abundance",
-        "species:HCO+:lumPerH",
-        "species:HCO+:intTB",
-
         "species:e-:abundance",
-        "species:H:abundance",
-        "species:H2:abundance",
-        "species:H+:abundance",
-
+        "species:CO:lumPerH",
+        "species:C+:lumPerH",
+        "species:C:lumPerH",
+        "species:HCO+:lumPerH",
     ]
-    T_targets = [1.0, 5e1, 5e2, 5e3, 5e4, 5e5, 5e6]
-    T_indices = [int(np.argmin(np.abs(table.T_values - T))) for T in T_targets]
-    table_path = Path(cfg.DESPOTIC_TABLE_PATH)
-    base_dir = Path("plots") / table_path.parent.name
-    base_dir.mkdir(parents=True, exist_ok=True)
 
-    for t_idx, T_val in zip(T_indices, T_targets):
-        fig = plot_table_overview(
-            table,
-            t_index=t_idx,
-            fields=tokens,
-            ncols=3,
-            figsize=(20, 20),
-            separate=False,  # 拼成一张大图
-            samples=samples,
-        )
-        fname = f"T_{T_val:.0f}K.png"
-        fig.savefig(base_dir / fname, dpi=400)
+    figs = plot_table_overview(
+        table,
+        fields=tokens,
+        ncols=3,
+        figsize=(14, 10),
+        separate=True,  # 默认每个字段单独一张图
+        samples=samples,
+    )
+    out_dir = Path("plots/table_overview")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for token, fig in zip(tokens, figs):
+        fname = token.replace(":", "_") + ".png"
+        fig.savefig(out_dir / fname, dpi=200)
         plt.close(fig)
 
 

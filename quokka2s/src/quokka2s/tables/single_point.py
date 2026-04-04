@@ -14,9 +14,9 @@ from quokka2s.pipeline.prep import config as cfg
 
 cell = cloud()
 
-cell.Tg = 1000.0
-cell.nH = 1e-3
-cell.colDen = 10000000000.0
+cell.Tg = 10.0
+cell.nH = 0.0031622776601683794
+cell.colDen = 5623413251903491.0
 
 
 co_line_map = []
@@ -57,11 +57,10 @@ print("----------------------------")
 attempt_start = time.time()
 converged = cell.setChemEq(
     network=NL99_GC,
-    # evolveTemp="iterateDust",
-    evolveTemp="fixed",
+    evolveTemp="iterateDust",
     tol=1e-6,
-    maxTime=1e26,
-    maxTempIter=100,
+    maxTime=1e22,
+    maxTempIter=50,
 )
 
 duration = time.time() - attempt_start

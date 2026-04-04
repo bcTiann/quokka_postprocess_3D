@@ -3,8 +3,8 @@ from matplotlib.colors import LogNorm
 from yt.units import K, mp, kb, mh, planck_constant, cm, m, s, g, erg 
 
 # --- Input/Output ---
-YT_DATASET_PATH = "~/quokka_postprocessing/plt263168"
-DESPOTIC_TABLE_PATH = "/Users/baochen/quokka_postprocessing/output_tables_NL99GC_iterate_35/despotic_table.npz"
+YT_DATASET_PATH = "~/quokka_postprocessing/examples/halpha_analysis/plt263168"
+DESPOTIC_TABLE_PATH = "/Users/baochen/quokka_postprocessing/output_tables_testBig/despotic_table.npz"
 OUTPUT_DIR = "plots/"
 
 # --- Physics Parameters / Model Assumptions ---

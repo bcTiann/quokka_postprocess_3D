@@ -154,16 +154,7 @@ def plot_multiview_grid(plots_info: List[Dict],
 
         im = ax_top.imshow(data_top, origin='lower', extent=extent_top,
                            aspect='equal', cmap=cmap, norm=norm)
-        # Optional overlay mask (e.g., clipped/convergence mask)
-        overlay = info.get('overlay_mask')
-        if overlay is not None:
-            ov = np.array(overlay)
-            if ov.shape != np.shape(data_top):
-                raise ValueError("overlay_mask shape must match data_top")
-            ax_top.imshow(ov, origin='lower', extent=extent_top,
-                          aspect='equal', cmap='Greys', alpha=0.3, vmin=0, vmax=1)
-
-
+        
         if has_bottom_row:
             data_bottom = info.get('data_bottom')
             if data_bottom is not None:

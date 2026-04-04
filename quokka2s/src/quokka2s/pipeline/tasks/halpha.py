@@ -48,7 +48,7 @@ class HalphaTask(AnalysisTask):
         attenuation, _ = calculate_attenuation(N_H, A_LAMBDA_OVER_NH)
         attenuated_surface_brightness = np.sum(self._lum_3d * attenuation * self._dx_3d, axis=self.axis_idx)
         context.results["halpha_with_dust"] = attenuated_surface_brightness
-    
+
         return {
             "no_dust": surface_brightness,
             "with_dust": attenuated_surface_brightness,
@@ -90,3 +90,5 @@ class HalphaTask(AnalysisTask):
             include_bottom=False,
             units=self.figure_units,
         )
+
+        

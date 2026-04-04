@@ -29,8 +29,8 @@ def build_pipeline() -> Pipeline:
 
     pipeline = Pipeline(pipeline_config)
     # pipeline.register_task(DensityProjectionTask(pipeline_config, axis="x", figure_units='kpc'))
-    pipeline.register_task(HalphaTask(pipeline_config, axis="x", figure_units='kpc'))
-    # pipeline.register_task(EmitterTask(pipeline_config, axis="x", figure_units='kpc'))
+    # pipeline.register_task(HalphaTask(pipeline_config, axis="x", figure_units='kpc'))
+    pipeline.register_task(EmitterTask(pipeline_config, axis="x", figure_units='kpc'))
     # pipeline.register_task(HalphaWithDustTask(pipeline_config, axis="x"))
     # pipeline.register_task(HalphaComparisonTask(pipeline_config, axis="x"))
     return pipeline

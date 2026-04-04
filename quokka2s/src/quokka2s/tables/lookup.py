@@ -15,12 +15,10 @@ class TableLookup:
         self.table = table
         log_nH = np.log10(table.nH_values)
         log_col = np.log10(table.col_density_values)
-        log_T = np.log10(table.T_values)
-        self._axes = (log_nH, log_col, log_T)
+        self._axes = (log_nH, log_col)
         self._interpolators: dict[str, RegularGridInterpolator] = {}
         self._species_meta: dict[str, SpeciesRecord] = dict(table.species_data)
         self._register_field("tg_final", table.tg_final)
-        self._register_field("mu", table.mu_values)
         for name, record in self._species_meta.items():
             self._register_field(f"species:{name}:abundance", record.abundance)
             if record.is_emitter and record.line is not None:
@@ -46,29 +44,24 @@ class TableLookup:
         token: str,
         nH_cgs: np.ndarray,
         colDen_cgs: np.ndarray,
-        T_cgs: np.ndarray,
     ) -> np.ndarray:
         if token not in self._interpolators:
             raise KeyError(f"Field '{token}' not registered in TableLookup.")
         log_points = np.column_stack(
-            (np.log10(nH_cgs).ravel(), np.log10(colDen_cgs).ravel(), np.log10(T_cgs).ravel())
+            (np.log10(nH_cgs).ravel(), np.log10(colDen_cgs).ravel())
         )
         values = self._interpolators[token](log_points)
         return values.reshape(nH_cgs.shape)
     
-    def temperature(self, nH_cgs: np.ndarray, colDen_cgs: np.ndarray, T_cgs: np.ndarray) -> np.ndarray:
+    def temperature(self, nH_cgs: np.ndarray, colDen_cgs: np.ndarray) -> np.ndarray:
         """Interpolates the final gas temperature (Tg_final)."""
-        return self._eval("tg_final", nH_cgs, colDen_cgs, T_cgs)
-        
-    def mu(self, nH_cgs: np.ndarray, colDen_cgs: np.ndarray, T_cgs: np.ndarray) -> np.ndarray:
-        return self._eval("mu", nH_cgs, colDen_cgs, T_cgs)
+        return self._eval("tg_final", nH_cgs, colDen_cgs)
 
     def abundance(
         self,
         species: str, 
         nH_cgs: np.ndarray,
         colDen_cgs: np.ndarray,
-        T_cgs: np.ndarray,
     ) -> np.ndarray:
         """Interpolates the abundance of a given chemical species.
 
@@ -82,14 +75,13 @@ class TableLookup:
             A numpy array of the interpolated species abundances (unitless),
             with the same shape as the input `nH_cgs` array.
         """
-        return self._eval(f"species:{species}:abundance", nH_cgs, colDen_cgs, T_cgs)
+        return self._eval(f"species:{species}:abundance", nH_cgs, colDen_cgs)
     
     def field(
         self,
         token: str,
         nH_cgs: np.ndarray,
         colDen_cgs: np.ndarray,
-        T_cgs: np.ndarray,
     ) -> np.ndarray:
         """Provides generic access to any registered field by its token.
 
@@ -107,18 +99,17 @@ class TableLookup:
             A numpy array of the interpolated field values, with the same
             shape as the input `nH_cgs` array.
         """
-        return self._eval(token, nH_cgs, colDen_cgs, T_cgs)
+        return self._eval(token, nH_cgs, colDen_cgs)
     
     def number_densities(
         self,
         species: Sequence[str],
         n_H_cgs: np.ndarray,
         colDen_cgs: np.ndarray,
-        T_cgs: np.ndarray
     ) -> dict[str, np.ndarray]: 
         """Return n_species = n_H * abundances(species)"""
         return {
-            sp: n_H_cgs * self.abundance(sp, n_H_cgs, colDen_cgs, T_cgs)
+            sp: n_H_cgs * self.abundance(sp, n_H_cgs, colDen_cgs)
             for sp in species
         }
 
@@ -128,7 +119,6 @@ class TableLookup:
         field_name: str,
         nH_cgs: np.ndarray,
         colDen_cgs: np.ndarray,
-        T_cgs: np.ndarray,
     ) -> np.ndarray:
         """Interpolate a specific line property for an emitting species."""
         record = self._species_meta.get(species)
@@ -137,7 +127,7 @@ class TableLookup:
         if field_name not in LINE_RESULT_FIELDS:
             raise ValueError(f"Unknown line field '{field_name}'. Expected one of {LINE_RESULT_FIELDS}")
         token = f"species:{species}:line:{field_name}"
-        return self._eval(token, nH_cgs, colDen_cgs, T_cgs)
+        return self._eval(token, nH_cgs, colDen_cgs)
 
     def species_record(self, species: str) -> SpeciesRecord:
         """Return the cached SpeciesRecord for metadata queries."""

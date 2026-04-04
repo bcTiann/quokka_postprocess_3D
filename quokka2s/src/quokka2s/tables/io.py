@@ -23,7 +23,7 @@ import numpy as np
 
 from .models import AttemptRecord, DespoticTable, SpeciesLineGrid, SpeciesRecord
 
-TABLE_VERSION = 3
+TABLE_VERSION = 2
 _LINE_FIELDS = ("freq", "intIntensity", "intTB", "lumPerH", "tau", "tauDust")
 
 
@@ -36,7 +36,6 @@ def _attempts_to_array(attempts: Iterable[AttemptRecord]) -> np.ndarray:
         ("colDen", float),
         ("tg_guess", float),
         ("final_Tg", float),
-        ("mu_value", float),
         ("converged", np.bool_),
         ("message", object),
         ("duration", float),
@@ -49,7 +48,6 @@ def _attempts_to_array(attempts: Iterable[AttemptRecord]) -> np.ndarray:
             rec.colDen,
             rec.tg_guess,
             rec.final_Tg,
-            rec.mu_value,  
             rec.converged,
             rec.message,
             rec.duration if rec.duration is not None else np.nan,
@@ -68,7 +66,6 @@ def _attempts_from_array(data: np.ndarray) -> tuple[AttemptRecord, ...]:
                 colDen=float(row["colDen"]),
                 tg_guess=float(row["tg_guess"]),
                 final_Tg=float(row["final_Tg"]),
-                mu_value=float(row["mu_value"]),
                 converged=bool(row["converged"]),
                 message=row["message"] if row["message"] else None,
                 duration=None if np.isnan(row["duration"]) else float(row["duration"]),
@@ -84,9 +81,7 @@ def save_table(table: DespoticTable, path: str | Path) -> None:
         "version": np.array([TABLE_VERSION], dtype=np.int32),
         "nH_values": np.array(table.nH_values),
         "col_density_values": np.array(table.col_density_values),
-        "T_values": np.array(table.T_values),
         "tg_final": np.array(table.tg_final),
-        "mu_values": np.array(table.mu_values),
         "failure_mask": np.asarray(table.failure_mask) if table.failure_mask is not None else None,
         "species_names": np.array(table.species, dtype=object),
         "species_is_emitter": np.array([table.species_data[name].is_emitter for name in table.species], dtype=np.bool_),
@@ -116,9 +111,8 @@ def load_table(path: str | Path) -> DespoticTable:
     
     nH_values = np.array(blob["nH_values"])
     col_density_values = np.array(blob["col_density_values"], dtype=float)
-    T_values = np.array(blob["T_values"], dtype=float)
     tg_final = np.array(blob["tg_final"], dtype=float)
-    mu_values = np.array(blob["mu_values"], dtype=float)
+
     failure_mask = blob.get("failure_mask")
     if failure_mask is not None:
         failure_mask = np.array(failure_mask, dtype=bool)
@@ -157,8 +151,6 @@ def load_table(path: str | Path) -> DespoticTable:
         tg_final=tg_final,
         nH_values=nH_values,
         col_density_values=col_density_values,
-        T_values=T_values,
-        mu_values=mu_values,
         attempts=attempts,
         failure_mask=failure_mask,
         energy_terms=energy_fields,

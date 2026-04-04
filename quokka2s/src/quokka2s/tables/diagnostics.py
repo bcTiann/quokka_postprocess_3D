@@ -32,14 +32,9 @@ def plot_sampling_histogram(
         *,
         ax: plt.Axes | None = None,
         cmap: str = "viridis",
-        failure_mask=None,
         log_space: bool = True,
 ) -> plt.Axes:
-    """
-    table: DespoticTable (仍用于取 nH/col 网格)
-    log_samples: shape (N,2) 的采样 (log10 nH, log10 NH)
-    failure_mask: 2D bool 与 nH x NH 网格同形状；若传入则叠加。
-    """
+    """Plot simulation sampling density per table cell, matching raw-table coverage plot."""
     if samples.ndim != 2 or samples.shape[1] != 2:
         raise ValueError("samples must be a 2D array with shape (N, 2)")
 
@@ -92,24 +87,18 @@ def plot_sampling_histogram(
     cbar = fig.colorbar(mesh, ax=ax)
     cbar.set_label("Voxel count per table cell")
 
-    if failure_mask is not None:
-        overlay = np.ma.masked_where(~failure_mask, np.ones_like(failure_mask, dtype=float))
-        ax.pcolormesh(col_edges, nH_edges, overlay, shading="auto",
-                      cmap=plt.cm.Greys, alpha=0.4, vmin=0, vmax=1)
-    return ax
-    
-    # if table.failure_mask is not None:
-    #     overlay = np.ma.masked_where(~table.failure_mask, np.ones_like(table.failure_mask, dtype=float))
-    #     ax.pcolormesh(
-    #         col_edges,
-    #         nH_edges,
-    #         overlay,
-    #         shading="auto",
-    #         cmap=plt.cm.Greys,
-    #         alpha=0.4,
-    #         vmin=0,
-    #         vmax=1,
-    #     )
+    if table.failure_mask is not None:
+        overlay = np.ma.masked_where(~table.failure_mask, np.ones_like(table.failure_mask, dtype=float))
+        ax.pcolormesh(
+            col_edges,
+            nH_edges,
+            overlay,
+            shading="auto",
+            cmap=plt.cm.Greys,
+            alpha=0.4,
+            vmin=0,
+            vmax=1,
+        )
 
-    # return ax
+    return ax
 

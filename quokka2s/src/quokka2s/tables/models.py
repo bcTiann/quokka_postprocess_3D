@@ -39,6 +39,7 @@ class LogGrid:
             raise ValueError("LogGrid min_value must be less than max_value.")
         if self.num_points < 2:
             raise ValueError("LogGrid num_points must be at least 2.")
+    
 
     def sample(self) -> np.ndarray:
         """Generate sample points on the logarithmic grid."""
@@ -130,7 +131,6 @@ class AttemptRecord:
     colDen: float
     tg_guess: float
     final_Tg: float
-    mu_value: float
     converged: bool
     message: str | None = None
     duration: float | None = None
@@ -149,20 +149,15 @@ class DespoticTable:
     tg_final: np.ndarray
     nH_values: np.ndarray
     col_density_values: np.ndarray
-    T_values: np.ndarray
-    mu_values: np.ndarray
     failure_mask: np.ndarray | None = None
     energy_terms: Mapping[str, np.ndarray] | None = None
     attempts: Tuple[AttemptRecord, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "species_data", MappingProxyType(dict(self.species_data)))
-        if self.failure_mask is not None and self.failure_mask.shape != self.tg_final.shape:
-            raise ValueError("failure_mask shape must match tg_final shape.")
-        if self.tg_final.shape != (len(self.nH_values), len(self.col_density_values), len(self.T_values)):
-            raise ValueError("tg_final shape must be (nH, col, T).")
-        if self.mu_values.shape != self.tg_final.shape:
-            raise ValueError("mu_values shape must match tg_final shape.")
+        if self.failure_mask is not None:
+            if self.failure_mask.shape != self.tg_final.shape:
+                raise ValueError("failure_mask shape must match tg_final shape.")
         if self.energy_terms is not None:
             object.__setattr__(self, "energy_terms", MappingProxyType(dict(self.energy_terms)))
 
