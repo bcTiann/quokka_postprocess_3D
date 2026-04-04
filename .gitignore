@@ -1,28 +1,30 @@
-# Virtual environment
+# Python 虛擬環境與快取
 yt-env/
-
-# Python cache
 __pycache__/
 *.pyc
-
-# # Large data files and simulation outputs
-plt*/
-sample/
-plots/
-
-# IDE and OS files
-.vscode/
-.DS_Store
-
-output*/
-*.png
-*.zip
-*.npy
-*.npy
-*.dat
 *.egg-info/
-__pycache__/
-.DS_Store
 dist/
 build/
-EOF
+
+# 模擬輸出資料夾 (QUOKKA/AMReX 慣例)
+plt*/
+output*/
+
+# 大型數據與暫存檔
+*.npy
+*.zip
+*.log
+# 如果 log_samples.npy 在特定目錄，也可以指定路徑
+# sample/ 
+
+# 圖片與繪圖結果 (保持倉庫乾淨)
+*.png
+*.pdf
+plots/
+
+# 系統與 IDE 垃圾文件
+.DS_Store
+.vscode/
+
+# 物理數據表 (如果你希望 GitHub 保留 LAMDA 數據，請註解掉下面這行)
+# *.dat
