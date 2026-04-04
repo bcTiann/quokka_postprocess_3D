@@ -27,4 +27,4 @@ plots/
 .vscode/
 
 # 物理數據表 (如果你希望 GitHub 保留 LAMDA 數據，請註解掉下面這行)
-# *.dat
+*.dat
