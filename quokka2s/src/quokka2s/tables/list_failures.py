@@ -20,20 +20,21 @@ def format_record(idx: int, rec) -> str:
     )
 
 
-def collect_failures(table) -> list[tuple[int, int, float, float, float, list]]:
+def collect_failures(table) -> list[tuple[int, int, int, float, float, float, float, list]]:
     failure_mask = np.asarray(table.failure_mask, dtype=bool)
     coords = np.argwhere(failure_mask)
     attempts_by_cell: dict[tuple[int, int], list] = defaultdict(list)
     for rec in table.attempts:
         attempts_by_cell[(rec.row_idx, rec.col_idx)].append(rec)
 
-    failures: list[tuple[int, int, float, float, float, list]] = []
-    for row_idx, col_idx in coords:
+    failures: list[tuple[int, int, int, float, float, float, float, list]] = []
+    for row_idx, col_idx, t_idx in coords:
         nH = table.nH_values[row_idx]
         col = table.col_density_values[col_idx]
-        final_tg = table.tg_final[row_idx, col_idx]
+        t_val = table.T_values[t_idx]  # 新增：提取失败的温度
+        final_tg = table.tg_final[row_idx, col_idx, t_idx]  # 修改：加上t_idx
         history = attempts_by_cell.get((row_idx, col_idx), [])
-        failures.append((row_idx, col_idx, nH, col, final_tg, history))
+        failures.append((row_idx, col_idx, t_idx, nH, col, t_val, final_tg, history))
     return failures
 
 
@@ -43,10 +44,10 @@ def print_failures(table, failures) -> None:
         return
 
     print(f"Found {len(failures)} failing cells:")
-    for row_idx, col_idx, nH, col, final_tg, history in failures:
+    for row_idx, col_idx, t_idx, nH, col, t_val, final_tg, history in failures:
         print(
-            f"- cell[{row_idx},{col_idx}] nH={nH:.3e} cm^-3 "
-            f"col={col:.3e} cm^-2 final_Tg={final_tg:.3g} K"
+            f"- cell[{row_idx},{col_idx},{t_idx}] nH={nH:.3e} cm^-3 "
+            f"col={col:.3e} cm^-2 T={t_val:.3g} K final_Tg={final_tg:.3g} K"
         )
         if not history:
             print("    (no attempt records)")
@@ -59,8 +60,10 @@ def write_csv(path: Path, failures) -> None:
     headers = [
         "row_idx",
         "col_idx",
+        "t_idx",
         "nH_cgs",
         "colDen_cgs",
+        "T_K",
         "final_Tg",
         "attempt_idx",
         "tg_guess",
@@ -72,15 +75,17 @@ def write_csv(path: Path, failures) -> None:
     with path.open("w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(headers)
-        for row_idx, col_idx, nH, col, final_tg, history in failures:
+        for row_idx, col_idx, t_idx, nH, col, t_val, final_tg, history in failures:
             if history:
                 for idx, rec in enumerate(history, start=1):
                     writer.writerow(
                         [
                             row_idx,
                             col_idx,
+                            t_idx,
                             nH,
                             col,
+                            t_val,
                             final_tg,
                             idx,
                             rec.tg_guess,
@@ -92,7 +97,7 @@ def write_csv(path: Path, failures) -> None:
                     )
             else:
                 writer.writerow(
-                    [row_idx, col_idx, nH, col, final_tg, "", "", "", "", "", ""]
+                    [row_idx, col_idx, t_idx, nH, col, t_val, final_tg, "", "", "", "", "", ""]
                 )
     print(f"Wrote failure details to {path}")
 

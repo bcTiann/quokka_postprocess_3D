@@ -26,6 +26,8 @@ class EmitterTask(AnalysisTask):
         self._extent = None
         self._CO_lum_3d = None
         self._Cplus_lum_3d = None
+        self._CO_Eint_3d = None
+
 
 
     def prepare(self, context: PipelinePlotContext) -> None:

@@ -68,13 +68,16 @@ DEFAULT_FIELDS: tuple[str, ...] = (
     "species:C+:lumPerH",
 )
 
-def _plot_panel(ax, data, title, table, cmap, show_colorbar, fig, samples=None):
+def _plot_panel(ax, data, title, table, cmap, show_colorbar, fig, samples=None, t_idx=0):
     # 对齐 build_despotic_table.py 的绘图风格：对数坐标、掩蔽非正值、叠加失败遮罩
     nH_edges = np.power(10.0, _log_edges(table.nH_values))
     col_edges = np.power(10.0, _log_edges(table.col_density_values))
 
-    invalid = ~np.isfinite(data) | (data <= 0)
-    masked = np.ma.masked_array(data, mask=invalid)
+    # 修改：将3D data切片成2D
+    data_2d = data[:, :, t_idx]
+
+    invalid = ~np.isfinite(data_2d) | (data_2d <= 0)
+    masked = np.ma.masked_array(data_2d, mask=invalid)
 
     norm = None
     valid = masked.compressed()
@@ -97,7 +100,9 @@ def _plot_panel(ax, data, title, table, cmap, show_colorbar, fig, samples=None):
     ax.set_ylabel("n$_\\mathrm{H}$ (cm$^{-3}$)")
 
     if table.failure_mask is not None:
-        overlay = np.ma.masked_where(~table.failure_mask, np.ones_like(table.failure_mask, dtype=float))
+        # 修改：failure_mask也要切片
+        mask_2d = table.failure_mask[:, :, t_idx]
+        overlay = np.ma.masked_where(~mask_2d, np.ones_like(mask_2d, dtype=float))
         ax.pcolormesh(
             col_edges,
             nH_edges,
@@ -143,6 +148,7 @@ def plot_table_overview(
     show_colorbar: bool = True,
     separate: bool = False,
     samples: np.ndarray | None = None,
+    t_idx: int = 0,  # 新增：默认画第一个温度
 ) -> plt.Figure | list[plt.Figure]:
     """Plot an overview of selected fields from a DespoticTable.
 
@@ -173,7 +179,7 @@ def plot_table_overview(
         for token in tokens:
             data, title = _get_field_data(table, token)
             fig, ax = plt.subplots(figsize=figsize)
-            _plot_panel(ax, data, title, table, cmap, show_colorbar, fig, samples=samples)
+            _plot_panel(ax, data, title, table, cmap, show_colorbar, fig, samples=samples, t_idx=t_idx)
             figs.append(fig)
         return figs
 
@@ -191,7 +197,7 @@ def plot_table_overview(
         ax = axes[row][col]
 
         data, title = _get_field_data(table, token)
-        _plot_panel(ax, data, title, table, cmap, show_colorbar, fig, samples=samples)
+        _plot_panel(ax, data, title, table, cmap, show_colorbar, fig, samples=samples, t_idx=t_idx)
 
 
     # Hide any unused subplots

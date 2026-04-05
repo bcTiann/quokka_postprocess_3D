@@ -96,8 +96,9 @@ def calculate_single_despotic_point(
     log_failures: bool = True,
     row_idx: int | None = None,
     col_idx: int | None = None,
+    T_fixed: float | None = None,   
     attempt_log: list[AttemptRecord] | None = None,
-) -> Tuple[Mapping[str, LineLumResult], Mapping[str, float], Mapping[str, float], float, Mapping[str, float], bool]:
+) -> Tuple[Mapping[str, LineLumResult], Mapping[str, float], Mapping[str, float], float, float, float, float, Mapping[str, float], bool]:
     """
     Calculate DESPOTIC line for a single point in (nH, colDen) .
 
@@ -140,6 +141,10 @@ def calculate_single_despotic_point(
     last_final_tg = float("nan")
     failed = True
     
+    last_mu_val = float("nan")      # 新增
+    last_cv_val = float("nan")      # 新增
+    last_eint_val = float("nan")    # 新增
+
     while pending_guesses:
         guess = pending_guesses.pop(0)
         if any(math.isclose(guess, prev, rel_tol=1e-2, abs_tol=1e-2) for prev in seen_guesses):
@@ -176,16 +181,22 @@ def calculate_single_despotic_point(
             cell.rad.ionRate = 2.0e-17
             cell.rad.chi = 1.0
 
-            cell.comp.computeDerived(cell.nH)
+
 
             with contextlib.redirect_stdout(stdout_buffer):
                 converged = cell.setChemEq(
                     network=chem_network,
-                    evolveTemp="iterateDust",
+                    evolveTemp="fixed",
                     tol=1e-6,
                     maxTime=1e22,
                     maxTempIter=50,
                 )
+
+            cell.comp.computeDerived(cell.nH)
+            mu_val = float(cell.comp.mu)
+            cv_val = float(cell.comp.computeCv(guess))
+            eint_val = float(cell.comp.computeEint(guess))
+
             chem_abundances = dict(cell.chemabundances)
             last_chem_abundances = dict(chem_abundances)
             _log_despotic_stdout(stdout_buffer)
@@ -206,6 +217,9 @@ def calculate_single_despotic_point(
             last_abundances = dict(species_abundances)
             last_energy_terms = dict(energy_terms)
             last_final_tg = final_tg
+            last_mu_val = mu_val        # 新增
+            last_cv_val = cv_val        # 新增
+            last_eint_val = eint_val    # 新增
 
             if attempt_log is not None:
                 attempt_log.append(
@@ -225,6 +239,9 @@ def calculate_single_despotic_point(
                 MappingProxyType(last_line_results),
                 MappingProxyType(last_abundances),
                 MappingProxyType(last_chem_abundances),
+                last_mu_val,
+                last_cv_val,
+                last_eint_val,
                 last_final_tg,
                 MappingProxyType(last_energy_terms),
                 failed,
@@ -250,12 +267,15 @@ def calculate_single_despotic_point(
     if log_failures:
         LOGGER.warning("All guesses failed for nH=%s colDen=%s", nH_val, colDen_val)
     return (
-    MappingProxyType(last_line_results),
-    MappingProxyType(last_abundances),
-    MappingProxyType(last_chem_abundances),
-    last_final_tg,
-    MappingProxyType(last_energy_terms),
-    failed,
+        MappingProxyType(last_line_results),
+        MappingProxyType(last_abundances),
+        MappingProxyType(last_chem_abundances),
+        last_mu_val,
+        last_cv_val,
+        last_eint_val,
+        last_final_tg,
+        MappingProxyType(last_energy_terms),
+        failed,
     )
 
 

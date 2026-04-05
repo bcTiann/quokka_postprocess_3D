@@ -88,7 +88,10 @@ def plot_sampling_histogram(
     cbar.set_label("Voxel count per table cell")
 
     if table.failure_mask is not None:
-        overlay = np.ma.masked_where(~table.failure_mask, np.ones_like(table.failure_mask, dtype=float))
+        # 修改：沿著T轴(axis=2)做ANY投影，只要有一个T失败，这格就算True
+        fail_2d = np.any(table.failure_mask, axis=2)
+        
+        overlay = np.ma.masked_where(~fail_2d, np.ones_like(fail_2d, dtype=float))
         ax.pcolormesh(
             col_edges,
             nH_edges,

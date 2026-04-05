@@ -11,6 +11,9 @@ from quokka2s.pipeline.tasks import (
     DensityProjectionTask,
     HalphaTask,
     EmitterTask,
+    COLine1DTask,
+    CplusLine1DTask,
+    HCOplusLine1DTask,
 )
 
 
@@ -31,6 +34,9 @@ def build_pipeline() -> Pipeline:
     # pipeline.register_task(DensityProjectionTask(pipeline_config, axis="x", figure_units='kpc'))
     # pipeline.register_task(HalphaTask(pipeline_config, axis="x", figure_units='kpc'))
     pipeline.register_task(EmitterTask(pipeline_config, axis="x", figure_units='kpc'))
+    pipeline.register_task(COLine1DTask(pipeline_config, axis="x", figure_units='kpc'))
+    pipeline.register_task(CplusLine1DTask(pipeline_config, axis="x", figure_units='kpc'))
+    pipeline.register_task(HCOplusLine1DTask(pipeline_config, axis="x", figure_units='kpc'))
     # pipeline.register_task(HalphaWithDustTask(pipeline_config, axis="x"))
     # pipeline.register_task(HalphaComparisonTask(pipeline_config, axis="x"))
     return pipeline

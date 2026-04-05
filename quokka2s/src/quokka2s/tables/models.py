@@ -149,6 +149,10 @@ class DespoticTable:
     tg_final: np.ndarray
     nH_values: np.ndarray
     col_density_values: np.ndarray
+    T_values: np.ndarray        
+    mu_values: np.ndarray       
+    cv_values: np.ndarray       
+    Eint_values: np.ndarray
     failure_mask: np.ndarray | None = None
     energy_terms: Mapping[str, np.ndarray] | None = None
     attempts: Tuple[AttemptRecord, ...] = field(default_factory=tuple)

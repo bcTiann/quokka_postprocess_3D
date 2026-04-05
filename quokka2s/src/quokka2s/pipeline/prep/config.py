@@ -3,9 +3,9 @@ from matplotlib.colors import LogNorm
 from yt.units import K, mp, kb, mh, planck_constant, cm, m, s, g, erg 
 
 # --- Input/Output ---
-YT_DATASET_PATH = "~/quokka_postprocessing/examples/halpha_analysis/plt263168"
-DESPOTIC_TABLE_PATH = "/Users/baochen/quokka_postprocessing/output_tables_testBig/despotic_table.npz"
-OUTPUT_DIR = "plots/"
+YT_DATASET_PATH = "/Users/baochen/quokka_postprocessing/plt263168"
+DESPOTIC_TABLE_PATH = "/Users/baochen/quokka_postprocessing/output_tables_3D_01/despotic_table.npz"
+OUTPUT_DIR = "plots_3DVersion/"
 
 # --- Physics Parameters / Model Assumptions ---
 X_H = 0.74  # Mass fraction of Hydrogen
