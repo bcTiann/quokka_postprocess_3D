@@ -8,16 +8,20 @@ dist/
 build/
 .ipynb_checkpoints/
 
-# --- Simulation & Data (CRITICAL for Token Saving) ---
+
+# --- Simulation & Data (Token Saving) ---
+# 截屏3中那個巨大的目錄
+TablePlots/        
+# 測試數據與物理數據庫
+examples/          
+LAMDA/             
 plt*/
 output*/
-TablePlots/        <-- 截屏3中那個巨大的目錄
-examples/          <-- 裡面有很多靜態測試數據
-LAMDA/             <-- 物理數據庫
+output_tables_*/
 *.npy
-*.npz              <-- 截屏1看到的數據格式
+*.npz
 *.dat
-*.csv              <-- 如果 failures.csv 很大，建議也屏蔽
+*.csv
 
 # --- Visualization ---
 *.png
@@ -30,3 +34,6 @@ plots*/
 yt-env/
 .vscode/
 .DS_Store
+
+
+*.ipynb
