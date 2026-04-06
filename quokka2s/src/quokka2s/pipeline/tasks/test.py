@@ -1,12 +1,12 @@
 import yt
 from yt.units import K, mp, kb, mh, planck_constant, cm, m, s, g, erg
-from quokka2s.pipeline.prep.physics_fields import add_all_fields
-from quokka2s.pipeline.prep import config as cfg
-from quokka2s.data_handling import YTDataProvider
-from quokka2s.despotic_tables import compute_average
-import quokka2s as q2s
-from quokka2s.tables.lookup import TableLookup
-from quokka2s.tables import load_table
+from ..prep.physics_fields import add_all_fields
+from ..prep import config as cfg
+from ...data_handling import YTDataProvider
+from ...despotic_tables import compute_average
+from ...analysis import along_sight_cumulation
+from ...tables.lookup import TableLookup
+from ...tables import load_table
 import numpy as np
 from matplotlib.colors import LogNorm
 TABLE_LOOKUP_CACHE: TableLookup | None = None
@@ -19,12 +19,12 @@ def ensure_table_lookup(path: str | None) -> TableLookup:
     return TABLE_LOOKUP_CACHE
 
 def _Avg_column_density_H(n_H, dx, dy, dz):
-    Nx_p = q2s.along_sight_cumulation(n_H * dx, axis="x", sign="+")
-    Ny_p = q2s.along_sight_cumulation(n_H * dy, axis="y", sign="+")
-    Nz_p = q2s.along_sight_cumulation(n_H * dz, axis="z", sign="+")
-    Nx_n = q2s.along_sight_cumulation(n_H * dx, axis="x", sign="-")
-    Ny_n = q2s.along_sight_cumulation(n_H * dy, axis="y", sign="-")
-    Nz_n = q2s.along_sight_cumulation(n_H * dz, axis="z", sign="-")
+    Nx_p = along_sight_cumulation(n_H * dx, axis="x", sign="+")
+    Ny_p = along_sight_cumulation(n_H * dy, axis="y", sign="+")
+    Nz_p = along_sight_cumulation(n_H * dz, axis="z", sign="+")
+    Nx_n = along_sight_cumulation(n_H * dx, axis="x", sign="-")
+    Ny_n = along_sight_cumulation(n_H * dy, axis="y", sign="-")
+    Nz_n = along_sight_cumulation(n_H * dz, axis="z", sign="-")
 
     average_N_3d = compute_average(
         [Nx_p, Ny_p, Nz_p, Nx_n, Ny_n, Nz_n],

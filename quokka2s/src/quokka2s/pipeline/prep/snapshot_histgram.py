@@ -1,12 +1,13 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from quokka2s.tables import load_table, plot_sampling_histogram
+from ...tables import load_table, plot_sampling_histogram
 import yt
 from yt.units import mh
-from quokka2s.pipeline.prep import config as cfg
-import quokka2s as q2s
-from quokka2s.pipeline.prep import physics_fields as phys
-from quokka2s.despotic_tables import compute_average
+from . import config as cfg
+from ...data_handling import YTDataProvider
+from ...analysis import along_sight_cumulation
+from . import physics_fields as phys
+from ...despotic_tables import compute_average
 
 table = load_table(cfg.DESPOTIC_TABLE_PATH)
 
@@ -14,7 +15,7 @@ ds = yt.load(cfg.YT_DATASET_PATH)
 # phys.add_all_fields(ds)  # 注释掉，避免添加temperature字段
 ds.add_field(name=('gas', 'number_density_H'), function=phys._number_density_H, sampling_type="cell", units="cm**-3", force_override=True)
 ds.add_field(name=('gas', 'column_density_H'), function=phys._column_density_H, sampling_type="cell", units="cm**-2", force_override=True)
-provider = q2s.YTDataProvider(ds)
+provider = YTDataProvider(ds)
 dx_3d, dx_3d_extent = provider.get_slab_z(('boxlib', 'dx'))
 dx_projection = dx_3d.sum(axis=0)
 
@@ -51,13 +52,13 @@ dz_3d, dz_3d_extent = provider.get_slab_z(
     field=('boxlib', 'dz')
 )
 
-Nx_p = q2s.along_sight_cumulation(n_H_3d * dx_3d, axis="x", sign="+") 
-Ny_p = q2s.along_sight_cumulation(n_H_3d * dy_3d, axis="y", sign="+") 
-Nz_p = q2s.along_sight_cumulation(n_H_3d * dz_3d, axis="z", sign="+")
+Nx_p = along_sight_cumulation(n_H_3d * dx_3d, axis="x", sign="+") 
+Ny_p = along_sight_cumulation(n_H_3d * dy_3d, axis="y", sign="+") 
+Nz_p = along_sight_cumulation(n_H_3d * dz_3d, axis="z", sign="+")
 
-Nx_n = q2s.along_sight_cumulation(n_H_3d * dx_3d, axis="x", sign="-")
-Ny_n = q2s.along_sight_cumulation(n_H_3d * dy_3d, axis="y", sign="-")
-Nz_n = q2s.along_sight_cumulation(n_H_3d * dz_3d, axis="z", sign="-")
+Nx_n = along_sight_cumulation(n_H_3d * dx_3d, axis="x", sign="-")
+Ny_n = along_sight_cumulation(n_H_3d * dy_3d, axis="y", sign="-")
+Nz_n = along_sight_cumulation(n_H_3d * dz_3d, axis="z", sign="-")
 
 average_N_3d = compute_average(
     [Nx_p, Ny_p, Nz_p, Nx_n, Ny_n, Nz_n],

@@ -1,14 +1,14 @@
 from __future__ import annotations
 from pathlib import Path
-from quokka2s.tables import LogGrid, build_table, save_table
-from quokka2s.tables.builder import SpeciesSpec
-from despotic.chemistry import NL99, NL99_GC
-from quokka2s.pipeline.prep import config as cfg
+from . import LogGrid, build_table, save_table
+from .builder import SpeciesSpec
+from despotic.chemistry import NL99, NL99_GC, GOW
+from ..pipeline.prep import config as cfg
 
 N_H_RANGE = (1e-4,  1e6)
 COL_DEN_RANGE = (1e15, 1e24)
-T_RANGE = (2.0, 5e6)
-points = 25
+T_RANGE = (1.0, 2e5)
+points = 35
 
 nH_grid = LogGrid(*N_H_RANGE, num_points=points)
 col_grid = LogGrid(*COL_DEN_RANGE, num_points=points)
@@ -40,7 +40,7 @@ table = build_table(
     T_grid, 
     species_specs=SPECIES_SPECS, 
     show_progress=True, 
-    chem_network=NL99_GC, 
+    chem_network=GOW, 
     full_parallel=False,
     workers=-1,
 )

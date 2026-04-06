@@ -1,19 +1,4 @@
 Metadata-Version: 2.4
 Name: quokka2s
 Version: 0.1.0
-Summary: A Python Pipeline for Post-processing QUOKKA Radiation-MHD Simulations.
-Home-page: https://github.com/quokka-astro/quokka
-Author: Baochen Tian, ChongChong He
-Author-email: baochen.tian.phys@gmail.com
-Classifier: Programming Language :: Python :: 3
-Classifier: License :: OSI Approved :: MIT License
-Classifier: Operating System :: OS Independent
-Classifier: Intended Audience :: Science/Research
-Classifier: Topic :: Scientific/Engineering :: Astronomy
-Requires-Python: >=3.7
-Description-Content-Type: text/markdown
-License-File: LICENSE
-Requires-Dist: numpy
-Requires-Dist: matplotlib
-Requires-Dist: yt
-Dynamic: license-file
+Requires-Python: >=3.10

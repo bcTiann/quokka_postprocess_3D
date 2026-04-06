@@ -3,9 +3,9 @@ from pathlib import Path
 import numpy as np
 import matplotlib.pyplot as plt
 
-from quokka2s.tables import load_table
-from quokka2s.tables.plotting import plot_table_overview
-from quokka2s.pipeline.prep import config as cfg
+from . import load_table
+from .plotting import plot_table_overview
+from ..pipeline.prep import config as cfg
 
 
 def main():

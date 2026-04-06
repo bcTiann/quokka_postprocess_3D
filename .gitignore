@@ -1,30 +1,32 @@
-# Python 虛擬環境與快取
-yt-env/
-__pycache__/
+# --- Python & Build ---
+**/__pycache__/
 *.pyc
+*.pyo
+*.pyd
 *.egg-info/
 dist/
 build/
+.ipynb_checkpoints/
 
-# 模擬輸出資料夾 (QUOKKA/AMReX 慣例)
+# --- Simulation & Data (CRITICAL for Token Saving) ---
 plt*/
 output*/
-
-# 大型數據與暫存檔
+TablePlots/        <-- 截屏3中那個巨大的目錄
+examples/          <-- 裡面有很多靜態測試數據
+LAMDA/             <-- 物理數據庫
 *.npy
-*.zip
-*.log
-# 如果 log_samples.npy 在特定目錄，也可以指定路徑
-# sample/ 
+*.npz              <-- 截屏1看到的數據格式
+*.dat
+*.csv              <-- 如果 failures.csv 很大，建議也屏蔽
 
-# 圖片與繪圖結果 (保持倉庫乾淨)
+# --- Visualization ---
 *.png
 *.pdf
+*.svg
 plots/
+plots*/
 
-# 系統與 IDE 垃圾文件
-.DS_Store
+# --- Environment & Tools ---
+yt-env/
 .vscode/
-
-# 物理數據表 (如果你希望 GitHub 保留 LAMDA 數據，請註解掉下面這行)
-*.dat
+.DS_Store

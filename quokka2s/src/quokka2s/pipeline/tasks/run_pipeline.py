@@ -1,13 +1,18 @@
 """Entry point for the H-alpha analysis pipeline."""
 from __future__ import annotations
 
-from pathlib import Path
+import sys
 import time
+from pathlib import Path
 
-from quokka2s.pipeline.base import Pipeline, PipelineConfig
-from quokka2s.pipeline.prep import config as cfg
-from quokka2s.pipeline.prep import physics_fields as phys
-from quokka2s.pipeline.tasks import (
+# Add the project root to sys.path for relative imports
+project_root = Path(__file__).parent.parent.parent.parent
+sys.path.insert(0, str(project_root))
+
+from ..base import Pipeline, PipelineConfig
+from ..prep import config as cfg
+from ..prep import physics_fields as phys
+from . import (
     DensityProjectionTask,
     HalphaTask,
     EmitterTask,
@@ -44,6 +49,10 @@ def build_pipeline() -> Pipeline:
 
 
 def main() -> None:
+    print("Pipeline Start")
+    print("="*50)
+    print(f"OUTPUT_DIR = {cfg.OUTPUT_DIR}")
+    print("="*50)
     pipeline = build_pipeline()
     pipeline.run()
 

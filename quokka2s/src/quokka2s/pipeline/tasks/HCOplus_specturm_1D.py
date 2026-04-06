@@ -5,9 +5,9 @@ from yt.units import cm, kb, mh, s, m, km
 from matplotlib.colors import LogNorm
 import matplotlib.ticker as ticker
 
-from quokka2s.tables import load_table
-from quokka2s.tables.lookup import TableLookup
-from quokka2s.pipeline.prep import config as cfg
+from ...tables import load_table
+from ...tables.lookup import TableLookup
+from ..prep import config as cfg
 import matplotlib.pyplot as plt
 from tqdm import tqdm 
 
@@ -16,7 +16,7 @@ from ...plotting import create_plot, plot_multiview_grid
 from ...utils.axes import axis_index
 from ..base import AnalysisTask, PipelinePlotContext
 from ..utils import make_axis_labels, shared_lognorm
-from quokka2s.pipeline.prep.physics_fields import get_one_sightline_spectrum
+from ..prep.physics_fields import get_one_sightline_spectrum
 
 
 class HCOplusLine1DTask(AnalysisTask):
@@ -40,16 +40,13 @@ class HCOplusLine1DTask(AnalysisTask):
         provider = context.provider
         
         self._Bulk_Doppler_factor_x, _ = provider.get_slab_z(("gas", "Bulk_Doppler_factor_x"))
-        self._CO_freq_field, _ = provider.get_slab_z(("gas", "CO_freq"))
-        self._Cplus_freq_field, _ = provider.get_slab_z(("gas", "C+_freq"))
+        
         self._HCOplus_freq_field, _ = provider.get_slab_z(("gas", "HCO+_freq"))
 
-        self._CO_lum_3d, self._extent = provider.get_slab_z(("gas", "CO_luminosity"))
-        self._Cplus_lum_3d, self._extent = provider.get_slab_z(("gas", "C+_luminosity"))
+        
         self._HCOplus_lum_3d, self._extent = provider.get_slab_z(("gas", "HCO+_luminosity"))
 
-        self._CO_thermal_width, _ = provider.get_slab_z(("gas", "CO_thermal_width"))
-        self._Cplus_thermal_width, _ = provider.get_slab_z(("gas", "C+_thermal_width"))
+       
         self._HCOplus_thermal_width, _ = provider.get_slab_z(("gas", "HCO+_thermal_width"))
 
         self._dx_3d, _ = provider.get_slab_z(("boxlib", "dx"))
@@ -101,19 +98,41 @@ class HCOplusLine1DTask(AnalysisTask):
         spec_cube = np.zeros((n_channels, ny, nz))
 
         print(f"Looping over {ny}x{nz} pixels with yt.units...")
+        c_cm_s = c.in_units('cm/s').value
+        shifted_freq_val = shifted_freq_3d.in_units("Hz").value
+        lum_val = lum_3d.in_units("erg/s").value
+        thermal_val = thermal_3d.in_units("cm/s").value
 
-        for j in tqdm(range(ny), desc="Rows"):
-            for k in range(nz):
-                f_line = shifted_freq_3d[:, j, k]
-                l_line = lum_3d[:, j, k]
-                t_line = thermal_3d[:, j, k]
 
-                spec_1d = get_one_sightline_spectrum(
-                    f_line, l_line, t_line,
-                    freq_centers
-                )
+        shifted_freq_val = shifted_freq_3d.in_units("Hz").value
+        lum_val = lum_3d.in_units("erg/s").value
+        thermal_val = thermal_3d.in_units("cm/s").value
 
-                spec_cube[:, j, k] = spec_1d.value
+        #调整频率中心数组的形状为 [n_channels, 1, 1] 以便广播
+        nu_grid = freq_centers.in_units("Hz").value[:, None, None]
+
+        # ==========================================
+        # 优化 2：按 X 轴（视线方向）单层遍历，向量化计算 (y, z) 面的辐射
+        # ==========================================
+        for i in tqdm(range(nx), desc="Integrating along LOS (X)"):
+            
+            # 取出当前 X 层的切片，形状为 [Ny, Nz]，加上 None 变成 [1, Ny, Nz]
+            nu_gas = shifted_freq_val[i, :, :][None, :, :]
+            lum_gas = lum_val[i, :, :][None, :, :]
+            # 限制最小热展宽，防止除以 0
+            sigma_v = np.maximum(thermal_val[i, :, :], 1.0)[None, :, :] 
+
+            # 以下所有计算都发生在 [n_channels, Ny, Nz] 或者 [1, Ny, Nz] 级别的 Numpy 矩阵上，速度极快！
+            sigma_nu = nu_gas * (sigma_v / c_cm_s)
+            norm = lum_gas / (np.sqrt(2 * np.pi) * sigma_nu)
+            
+            delta_nu = nu_grid - nu_gas
+            exponent = -0.5 * (delta_nu / sigma_nu)**2
+            
+            # 算出这一层气体的光度贡献，直接累加到总光谱立方体中
+            spec_cube += norm * np.exp(exponent)
+
+        spec_max = spec_cube.max()
 
 
         # Plotting
@@ -152,7 +171,7 @@ class HCOplusLine1DTask(AnalysisTask):
         # 转成 km/s 并剥离单位给 matplotlib
         v_axis_kms = v_axis.in_units("km/s").value
         
-        # 2. 设定采样间隔 (均匀切分 5 份)
+        # 2. 设定采样间隔 (均匀切分 10 份)
         n_grid = 10
         
         y_sampling = np.linspace(0, ny - 1, n_grid, dtype=int)

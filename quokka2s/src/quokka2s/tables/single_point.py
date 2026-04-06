@@ -8,7 +8,7 @@ from despotic.chemistry import NL99, NL99_GC, GOW
 from despotic import cloud
 from tqdm import tqdm 
 import time
-from quokka2s.pipeline.prep import config as cfg
+from ..pipeline.prep import config as cfg
 # import yt
 
 
