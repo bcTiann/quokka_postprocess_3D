@@ -1,4 +1,5 @@
 from __future__ import annotations
+import os
 import warnings
 
 warnings.filterwarnings(
@@ -13,10 +14,19 @@ warnings.filterwarnings(
     category=RuntimeWarning,
     module=r"DESPOTIC.*NL99_GC",
 )
+
+# Point DESPOTIC at its bundled LAMDA molecular-data directory if the
+# user has not set DESPOTIC_HOME themselves. Without this, addEmitter
+# silently falls back to fetching LAMDA files from the web on first use
+# — fragile when the network is flaky.
+if "DESPOTIC_HOME" not in os.environ:
+    _despotic_home = "/Users/baochen/despotic/despotic/chemistry"
+    if os.path.isdir(os.path.join(_despotic_home, "LAMDA")):
+        os.environ["DESPOTIC_HOME"] = _despotic_home
+
 import contextlib
 import io
 import logging
-import math
 import time
 from typing import Mapping, Sequence, Tuple
 
@@ -45,12 +55,12 @@ _NAN_LINE_RESULT = LineLumResult(
 
 def _nan_line_result() -> LineLumResult:
     """Return a LineLumResult with all fields set to NaN."""
-    return _NAN_LINE_RESULT 
+    return _NAN_LINE_RESULT
 
 
-def _empty_line_results(species: Sequence[str]) -> dict[str, LineLumResult]:
-    """Return a dict of species to NaN LineLumResults."""
-    return {sp: _nan_line_result() for sp in species}
+def _empty_line_results_per_dvdr(species: Sequence[str], num_dvdr: int) -> dict[str, list[LineLumResult]]:
+    """Return a dict of species → list of NaN LineLumResults (one per dVdr point)."""
+    return {sp: [_nan_line_result()] * num_dvdr for sp in species}
 
 def _extract_line_result(transitions: Sequence[Mapping[str, float]]) -> LineLumResult:
     if not transitions:
@@ -88,184 +98,185 @@ def _log_despotic_stdout(output: io.StringIO | str) -> None:
 def calculate_single_despotic_point(
     nH_val: float,
     colDen_val: float,
-    initial_Tg_guesses: Sequence[float],
+    dvdr_grid: Sequence[float],
     *,
     species: Sequence[str] = DEFAULT_SPECIES,
     abundance_only: Sequence[str] = ("e-", ),
-    chem_network=NL99_GC,
+    chem_network=GOW,
     log_failures: bool = True,
     row_idx: int | None = None,
     col_idx: int | None = None,
-    T_fixed: float | None = None,   
+    Tg_init: float = 100.0,
     attempt_log: list[AttemptRecord] | None = None,
-) -> Tuple[Mapping[str, LineLumResult], Mapping[str, float], Mapping[str, float], float, float, float, float, Mapping[str, float], bool]:
-    """
-    Calculate DESPOTIC line for a single point in (nH, colDen) .
+    escape_geom: str = 'LVG',
+) -> Tuple[
+    Mapping[str, list[LineLumResult]],
+    Mapping[str, float],
+    Mapping[str, float],
+    float, float, float,
+    float,
+    Mapping[str, float],
+    bool,
+]:
+    """Run DESPOTIC at one (nH, colDen) point and sweep dVdr for line emission.
 
-    Parameters
-    ----------
-    nH_val : float
-        Hydrogen number density in cm^-3.
-    colDen_val : float
-        Hydrogen column density in cm^-2.
-    initial_Tg_guesses : Sequence[float]
-        Initial guesses for gas temperature in K.
-    chem_network : despotic.chemistry.ChemicalNetwork, optional
-        Chemical network to use. Default is NL99_GC.
-    log_failures : bool, optional
-        Whether to log failures. Default is True.
-    row_idx : int | None, optional
-        Row index in the table grid, for logging purposes.
-    col_idx : int | None, optional
-        Column index in the table grid, for logging purposes.
-    attempt_log : List[AttemptRecord] | None, optional
-        List to append attempt records to.
+    Two-stage build optimization (verified empirically: at fixed nH, colDen,
+    Tg and chemical abundances are independent of dVdr because dVdr enters
+    DESPOTIC only via LVG escape probabilities, which feed back into thermal
+    balance only through line cooling — empirically a sub-dominant cooling
+    channel across the whole physical ISM range):
+
+    1.  Solve chemistry + thermal balance once via
+        ``cell.setChemEq(evolveTemp="iterateDust")`` at a canonical dVdr.
+    2.  For each dVdr in ``dvdr_grid``: set ``cell.dVdr`` and call
+        ``cell.lineLum(species, escapeProbGeom='LVG')``. Internally this
+        re-solves level populations and escape probabilities (cheap)
+        without rerunning chemistry.
 
     Returns
     -------
-    line_results : Mapping[str, LineLumResult]
-        Mapping of species to their line luminosity results.
+    line_results : Mapping[str, list[LineLumResult]]
+        For each emitting species, a list of LineLumResult (one per
+        entry in ``dvdr_grid``, in order).
+    species_abundances, chem_abundances : Mapping[str, float]
+        Single-value-per-species mappings (independent of dVdr).
+    mu, cv, eint : float
+        Single-value composition derivatives (independent of dVdr).
     final_Tg : float
-        Final gas temperature in K.
-    failed_flag : bool
-        Whether the calculation converged.
+        Self-consistent gas temperature from setChemEq.
+    energy_terms : Mapping[str, float]
+        Single-cell dEdt() dictionary at convergence.
+    failed : bool
+        True if setChemEq did not converge or an exception occurred.
     """
     species_order = tuple(species)
-    pending_guesses = [float(g) for g in initial_Tg_guesses]
-    seen_guesses: list[float] = []
+    num_dvdr = len(dvdr_grid)
+    canonical_dvdr = float(dvdr_grid[num_dvdr // 2]) if num_dvdr > 0 else 1e-14
 
-    last_line_results: dict[str, LineLumResult] = _empty_line_results(species_order)
+    # Failure-mode defaults.
+    last_line_results: dict[str, list[LineLumResult]] = _empty_line_results_per_dvdr(species_order, num_dvdr)
     last_abundances: dict[str, float] = {sp: float("nan") for sp in species_order}
     last_chem_abundances: dict[str, float] = {}
     last_energy_terms: dict[str, float] = {}
     last_final_tg = float("nan")
+    last_mu_val = float("nan")
+    last_cv_val = float("nan")
+    last_eint_val = float("nan")
     failed = True
-    
-    last_mu_val = float("nan")      # 新增
-    last_cv_val = float("nan")      # 新增
-    last_eint_val = float("nan")    # 新增
 
-    while pending_guesses:
-        guess = pending_guesses.pop(0)
-        if any(math.isclose(guess, prev, rel_tol=1e-2, abs_tol=1e-2) for prev in seen_guesses):
-            continue
-        seen_guesses.append(guess)
-        attempt_start_time = time.perf_counter()
+    attempt_start_time = time.perf_counter()
+    stdout_buffer = io.StringIO()
 
-        energy_terms: dict[str, float] = {}
-        final_tg = float("nan")
-        stdout_buffer = io.StringIO()
-        
-        try:
-            cell = cloud()
-            cell.nH = nH_val
-            cell.colDen = colDen_val
-            cell.Tg = guess
+    try:
+        cell = cloud()
+        cell.nH = nH_val
+        cell.colDen = colDen_val
+        cell.Tg = Tg_init
+        cell.dVdr = canonical_dvdr
 
+        cell.sigmaNT = 2.0e5
+        cell.comp.xoH2 = 0.1
+        cell.comp.xpH2 = 0.4
+        cell.comp.xHe = 0.1
 
-            cell.sigmaNT = 2.0e5
-            cell.comp.xoH2 = 0.1
-            cell.comp.xpH2 = 0.4
-            cell.comp.xHe = 0.1
+        cell.dust.alphaGD = 3.2e-34
+        cell.dust.sigma10 = 2.0e-25
+        cell.dust.sigmaPE = 1.0e-21
+        cell.dust.sigmaISRF = 3.0e-22
+        cell.dust.beta = 2.0
+        cell.dust.Zd = 1.0
 
-            cell.dust.alphaGD = 3.2e-34
-            cell.dust.sigma10 = 2.0e-25
-            cell.dust.sigmaPE = 1.0e-21
-            cell.dust.sigmaISRF = 3.0e-22
-            cell.dust.beta = 2.0
-            cell.dust.Zd = 1.0
+        cell.Td = 10.0
+        cell.rad.TCMB = 2.73
+        cell.rad.TradDust = 0.0
+        cell.rad.ionRate = 2.0e-17
+        cell.rad.chi = 1.0
 
-            cell.Td = 10.0
-            cell.rad.TCMB = 2.73
-            cell.rad.TradDust = 0.0
-            cell.rad.ionRate = 2.0e-17
-            cell.rad.chi = 1.0
+        with contextlib.redirect_stdout(stdout_buffer):
+            converged = cell.setChemEq(
+                network=chem_network,
+                evolveTemp="iterateDust",
+                tol=1e-6,
+                maxTime=1e22,
+                maxTempIter=200,
+            )
+        _log_despotic_stdout(stdout_buffer)
 
+        cell.comp.computeDerived(cell.nH)
+        last_mu_val = float(cell.comp.mu)
+        last_cv_val = float(cell.comp.computeCv(cell.Tg))
+        last_eint_val = float(cell.comp.computeEint(cell.Tg))
+        last_chem_abundances = dict(cell.chemabundances)
+        last_final_tg = float(cell.Tg)
+        last_energy_terms = dict(cell.dEdt())
 
+        # Add all emitters once at the converged abundances.
+        species_abundances: dict[str, float] = {}
+        for sp in species_order:
+            cell.addEmitter(sp, cell.chemabundances[sp])
+            species_abundances[sp] = float(cell.emitters[sp].abundance)
+        last_abundances = species_abundances
 
+        # Compute line emission. LVG: sweep dVdr; sphere: compute once then
+        # broadcast across the dVdr axis (sphere τ formula doesn't read dVdr).
+        line_results: dict[str, list[LineLumResult]] = {sp: [] for sp in species_order}
+        if escape_geom == 'LVG':
+            for dvdr in dvdr_grid:
+                cell.dVdr = float(dvdr)
+                with contextlib.redirect_stdout(stdout_buffer):
+                    for sp in species_order:
+                        transitions = cell.lineLum(sp, escapeProbGeom='LVG')
+                        line_results[sp].append(_extract_line_result(transitions))
+                _log_despotic_stdout(stdout_buffer)
+        elif escape_geom == 'sphere':
             with contextlib.redirect_stdout(stdout_buffer):
-                converged = cell.setChemEq(
-                    network=chem_network,
-                    evolveTemp="fixed",
-                    tol=1e-6,
-                    maxTime=1e22,
-                    maxTempIter=50,
-                )
-
-            cell.comp.computeDerived(cell.nH)
-            mu_val = float(cell.comp.mu)
-            cv_val = float(cell.comp.computeCv(guess))
-            eint_val = float(cell.comp.computeEint(guess))
-
-            chem_abundances = dict(cell.chemabundances)
-            last_chem_abundances = dict(chem_abundances)
+                for sp in species_order:
+                    transitions = cell.lineLum(sp, escapeProbGeom='sphere')
+                    single = _extract_line_result(transitions)
+                    line_results[sp] = [single] * num_dvdr
             _log_despotic_stdout(stdout_buffer)
+        else:
+            raise ValueError(f"unknown escape_geom: {escape_geom!r}; expected 'LVG' or 'sphere'")
+        last_line_results = line_results
 
-            line_results: dict[str, LineLumResult] = {}
-            species_abundances: dict[str, float] = {}
-            for species in species_order:
-                cell.addEmitter(species, cell.chemabundances[species])
-                transitions = cell.lineLum(species)
-                line_results[species] = _extract_line_result(transitions)
-                species_abundances[species] = float(cell.emitters[species].abundance)
+        failed = not converged
 
-            energy_terms = dict(cell.dEdt())
-            final_tg = float(cell.Tg)
-            failed = not converged
-
-            last_line_results = dict(line_results)
-            last_abundances = dict(species_abundances)
-            last_energy_terms = dict(energy_terms)
-            last_final_tg = final_tg
-            last_mu_val = mu_val        # 新增
-            last_cv_val = cv_val        # 新增
-            last_eint_val = eint_val    # 新增
-
-            if attempt_log is not None:
-                attempt_log.append(
-                    AttemptRecord(
-                        row_idx=row_idx if row_idx is not None else -1,
-                        col_idx=col_idx if col_idx is not None else -1,
-                        nH=nH_val,
-                        colDen=colDen_val,
-                        tg_guess=guess,
-                        final_Tg=final_tg,
-                        converged=converged,
-                        message= "Success",
-                        duration=time.perf_counter() - attempt_start_time,
-                    )
-                )    
-            return (
-                MappingProxyType(last_line_results),
-                MappingProxyType(last_abundances),
-                MappingProxyType(last_chem_abundances),
-                last_mu_val,
-                last_cv_val,
-                last_eint_val,
-                last_final_tg,
-                MappingProxyType(last_energy_terms),
-                failed,
+        if attempt_log is not None:
+            attempt_log.append(
+                AttemptRecord(
+                    row_idx=row_idx if row_idx is not None else -1,
+                    col_idx=col_idx if col_idx is not None else -1,
+                    nH=nH_val,
+                    colDen=colDen_val,
+                    tg_guess=Tg_init,
+                    final_Tg=last_final_tg,
+                    converged=converged,
+                    message="Success" if converged else "Did not converge",
+                    duration=time.perf_counter() - attempt_start_time,
+                )
             )
 
-        except Exception as exc:
-            if attempt_log is not None:
-                attempt_log.append(
-                    AttemptRecord(
-                        row_idx=row_idx if row_idx is not None else -1,
-                        col_idx=col_idx if col_idx is not None else -1,
-                        nH=nH_val,
-                        colDen=colDen_val,
-                        tg_guess=guess,
-                        final_Tg=final_tg,
-                        converged=False,
-                        message=str(exc),
-                        duration=time.perf_counter() - attempt_start_time,
-                    )
+    except Exception as exc:
+        if attempt_log is not None:
+            attempt_log.append(
+                AttemptRecord(
+                    row_idx=row_idx if row_idx is not None else -1,
+                    col_idx=col_idx if col_idx is not None else -1,
+                    nH=nH_val,
+                    colDen=colDen_val,
+                    tg_guess=Tg_init,
+                    final_Tg=last_final_tg,
+                    converged=False,
+                    message=str(exc),
+                    duration=time.perf_counter() - attempt_start_time,
+                )
             )
+        if log_failures:
+            LOGGER.warning("Exception at nH=%s colDen=%s: %s", nH_val, colDen_val, exc)
 
+    if failed and log_failures:
+        LOGGER.warning("Failed at nH=%s colDen=%s", nH_val, colDen_val)
 
-    if log_failures:
-        LOGGER.warning("All guesses failed for nH=%s colDen=%s", nH_val, colDen_val)
     return (
         MappingProxyType(last_line_results),
         MappingProxyType(last_abundances),
@@ -277,5 +288,3 @@ def calculate_single_despotic_point(
         MappingProxyType(last_energy_terms),
         failed,
     )
-
-

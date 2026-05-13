@@ -68,13 +68,13 @@ DEFAULT_FIELDS: tuple[str, ...] = (
     "species:C+:lumPerH",
 )
 
-def _plot_panel(ax, data, title, table, cmap, show_colorbar, fig, samples=None, t_idx=0):
+def _plot_panel(ax, data, title, table, cmap, show_colorbar, fig, samples=None, dvdr_idx=0):
     # 对齐 build_despotic_table.py 的绘图风格：对数坐标、掩蔽非正值、叠加失败遮罩
     nH_edges = np.power(10.0, _log_edges(table.nH_values))
     col_edges = np.power(10.0, _log_edges(table.col_density_values))
 
     # 修改：将3D data切片成2D
-    data_2d = data[:, :, t_idx]
+    data_2d = data[:, :, dvdr_idx]
 
     invalid = ~np.isfinite(data_2d) | (data_2d <= 0)
     masked = np.ma.masked_array(data_2d, mask=invalid)
@@ -101,7 +101,7 @@ def _plot_panel(ax, data, title, table, cmap, show_colorbar, fig, samples=None, 
 
     if table.failure_mask is not None:
         # 修改：failure_mask也要切片
-        mask_2d = table.failure_mask[:, :, t_idx]
+        mask_2d = table.failure_mask[:, :, dvdr_idx]
         overlay = np.ma.masked_where(~mask_2d, np.ones_like(mask_2d, dtype=float))
         ax.pcolormesh(
             col_edges,
@@ -148,7 +148,7 @@ def plot_table_overview(
     show_colorbar: bool = True,
     separate: bool = False,
     samples: np.ndarray | None = None,
-    t_idx: int = 0,  # 新增：默认画第一个温度
+    dvdr_idx: int = 0,  # index into the dVdr axis (3rd table dimension)
 ) -> plt.Figure | list[plt.Figure]:
     """Plot an overview of selected fields from a DespoticTable.
 
@@ -179,7 +179,7 @@ def plot_table_overview(
         for token in tokens:
             data, title = _get_field_data(table, token)
             fig, ax = plt.subplots(figsize=figsize)
-            _plot_panel(ax, data, title, table, cmap, show_colorbar, fig, samples=samples, t_idx=t_idx)
+            _plot_panel(ax, data, title, table, cmap, show_colorbar, fig, samples=samples, dvdr_idx=dvdr_idx)
             figs.append(fig)
         return figs
 
@@ -197,7 +197,7 @@ def plot_table_overview(
         ax = axes[row][col]
 
         data, title = _get_field_data(table, token)
-        _plot_panel(ax, data, title, table, cmap, show_colorbar, fig, samples=samples, t_idx=t_idx)
+        _plot_panel(ax, data, title, table, cmap, show_colorbar, fig, samples=samples, dvdr_idx=dvdr_idx)
 
 
     # Hide any unused subplots

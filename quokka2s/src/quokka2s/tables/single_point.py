@@ -8,7 +8,7 @@ from despotic.chemistry import NL99, NL99_GC, GOW
 from despotic import cloud
 from tqdm import tqdm 
 import time
-from ..pipeline.prep import config as cfg
+
 # import yt
 
 
@@ -79,7 +79,8 @@ print(f"cell emitters: {cell.emitters}")
 
 
 # Add CO emitter
-print("Adding CO emitter...")
+print("Adding  emitter...")
+cell.addEmitter("H", cell.chemabundances["H"])
 cell.addEmitter("CO", cell.chemabundances["CO"])
 cell.addEmitter("C+", cell.chemabundances["C+"])
 cell.addEmitter("C", cell.chemabundances["C"])
@@ -87,6 +88,7 @@ cell.addEmitter("HCO+", cell.chemabundances["HCO+"])
 cell.addEmitter("O", cell.chemabundances["O"])
 
 print(cell.emitters)             # => {'CO': <despotic.emitter.emitter object at 0x...>}
+print(f"abundance H: {cell.emitters['H'].abundance}")
 print(f"abundance CO: {cell.emitters['CO'].abundance}")  # => 0.0001999439...
 print(f"abundance C+: {cell.emitters['C+'].abundance}")
 print(f"abundance C: {cell.emitters['C'].abundance}")
@@ -96,6 +98,13 @@ print(f"abundance e-: {cell.chemabundances['e-']} ")
 
 print("\n")
 print("Calculating line luminosities...")
+
+for i in range(0):
+    lines = cell.lineLum("H")[i]["lumPerH"]
+    print(f"H {i} lumPerH = {lines}")
+
+
+
 lines = cell.lineLum("CO")[0]["lumPerH"]
 print(f"CO lumPerH = {lines}")
 

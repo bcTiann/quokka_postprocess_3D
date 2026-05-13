@@ -2,6 +2,7 @@
 
 import yt
 import numpy as np
+from scipy.special import erf as scipy_erf
 from yt.units import K, mp, kb, mh, planck_constant, cm, m, s, g, erg, amu
 from ...analysis import along_sight_cumulation
 from ...despotic_tables import compute_average
@@ -14,10 +15,25 @@ from ...tables.lookup import TableLookup
 m_H = mh.in_cgs()
 lambda_Halpha = 656.3e-7 * cm
 h = planck_constant
-speed_of_light_value_in_ms = 299792458 
+speed_of_light_value_in_ms = 299792458
 c = speed_of_light_value_in_ms * m / s
 TABLE_LOOKUP_CACHE: TableLookup | None = None
 TABLE_LOOKUP_SPECIES: tuple[str, ...] = ()
+
+# Lower bound on |∇·v|/3 used as the LVG dVdr field. Cells with smaller
+# divergence are pinned to this floor — the table's dVdr axis bottoms
+# out at 1e-19, so 1e-18 keeps every cell strictly inside the
+# interpolation range. ~0.04% of plt263168 cells fall below this floor
+# (quiescent halo), measured 2026-05-09.
+DVDR_FLOOR = 1e-18
+
+# Hα and HI 21 cm constants (closed-form per-cell emissivity formulas;
+# see plan note 2026-05-10 — these lines bypass DESPOTIC LAMDA because
+# Hα is recombination-cascade and HI 21 cm is hyperfine, neither of
+# which DESPOTIC's collisional-excitation framework can treat).
+NU_H_ALPHA = 4.5681e14   # Hz (Balmer α, 656.281 nm)
+NU_HI_21   = 1.4204e9    # Hz (21.106 cm hyperfine F=1→0)
+A_HI_21    = 2.876e-15   # s^-1  Einstein A for 21 cm
 
 def ensure_table_lookup(path: str | None) -> TableLookup:
     global TABLE_LOOKUP_CACHE
@@ -28,6 +44,9 @@ def ensure_table_lookup(path: str | None) -> TableLookup:
 
 
 def _number_density_H(field, data):
+    # 返回"总 H 核数密度" n_H_tot = n_HI + n_H+ + 2*n_H2
+    # ρ·X_H/m_H 自动满足: H₂ 分子质量 ≈ 2·m_H, 每个分子贡献 2 个 H 核
+    # 与 DESPOTIC "per H nucleus" 约定一致 (despotic/composition.py computeEint)
     density_3d = data[('gas', 'density')].in_cgs()
     n_H_3d = (density_3d * cfg.X_H) / m_H
     return n_H_3d.to('cm**-3')
@@ -69,139 +88,114 @@ def _column_density_H(field, data):
     )
     return average_N_3d.to('cm**-2')
 
+
+def _dVdr_lvg(field, data):
+    """LVG radial-gradient proxy: |∇·v|/3 with central differences.
+
+    Equivalent to dv_r/dr for a uniformly expanding/contracting cell.
+    Cells with |∇·v|/3 < DVDR_FLOOR are pinned to the floor so the
+    table interpolation never sees log10(0).
+    """
+    density = data[('gas', 'density')]
+    if density.ndim == 1:
+        # 1D fallback (e.g., PhasePlot context) — no spatial structure
+        # available; assume a quiescent-cell floor so the field is finite.
+        return np.full_like(density.in_cgs().value, DVDR_FLOOR) / s
+
+    vx = data[('gas', 'velocity_x')].in_units('cm/s').v
+    vy = data[('gas', 'velocity_y')].in_units('cm/s').v
+    vz = data[('gas', 'velocity_z')].in_units('cm/s').v
+    dx = float(data[('boxlib', 'dx')].in_units('cm').v.flat[0])
+    dy = float(data[('boxlib', 'dy')].in_units('cm').v.flat[0])
+    dz = float(data[('boxlib', 'dz')].in_units('cm').v.flat[0])
+
+    div = (np.gradient(vx, dx, axis=0)
+           + np.gradient(vy, dy, axis=1)
+           + np.gradient(vz, dz, axis=2))
+    out = np.maximum(np.abs(div) / 3.0, DVDR_FLOOR)
+    return out / s
+
+
 # --- YT Derived Fields ---
 
 
-def _temperature_error(field, data):
-    # 利用刚刚写好的 _temperature，它会被缓存，不会重复计算
-    T = data[('gas', 'temperature')].to('K').value
-    n_H = data[('gas', 'number_density_H')].to('cm**-3').value
-    colDen = data[('gas', 'column_density_H')].to('cm**-2').value
-    
-    E_total = data[('gas', 'total_energy_density')].to('erg/cm**3')
-    E_kinetic = data[('gas', 'kinetic_energy_density')].to('erg/cm**3')
-    E_int = E_total - E_kinetic
-    E_target_K = (E_int / (data[('gas', 'number_density_H')] * kb)).in_cgs().value
-    
-    lookup = ensure_table_lookup(cfg.DESPOTIC_TABLE_PATH)
-    nH_safe = np.clip(n_H, lookup.table.nH_values.min(), lookup.table.nH_values.max())
-    col_safe = np.clip(colDen, lookup.table.col_density_values.min(), lookup.table.col_density_values.max())
-    
-    E_final = T * lookup.Eint(nH_safe, col_safe, T)
-    rel_error = np.abs(E_final - E_target_K) / (np.abs(E_target_K) + 1e-30)
-    
-    return rel_error * yt.units.dimensionless
+def _temperature_despotic(field, data):
+    """Self-consistent gas temperature from the (nH, NH, dVdr) DESPOTIC table.
 
-
-
-def _temperature(field, data):
+    Direct interpolation of the table's tg_final field. The historical
+    bisection-on-eint logic was needed when T was a table *input*; with
+    T as an output, the lookup is unambiguous.
+    """
     lookup = ensure_table_lookup(cfg.DESPOTIC_TABLE_PATH)
 
-    n_H = data[('gas', 'number_density_H')]
-    colDen_H = data[('gas', 'column_density_H')]
+    n_H      = data[('gas', 'number_density_H')].in_cgs().value
+    colDen_H = data[('gas', 'column_density_H')].in_cgs().value
+    dVdr     = data[('gas', 'dVdr_lvg')].in_cgs().value
 
-    # 1. 计算目标能量
-    E_total = data[('gas', 'total_energy_density')].to('erg/cm**3')
-    E_kinetic = data[('gas', 'kinetic_energy_density')].to('erg/cm**3')
-    E_int = E_total - E_kinetic
-    E_target_K = (E_int / (n_H * kb)).in_cgs().value
-    E_target_K = np.maximum(E_target_K, 1e-30)
-
-    # 2. 限制输入范围
-    nH_min, nH_max = lookup.table.nH_values.min(), lookup.table.nH_values.max()
+    nH_min,  nH_max  = lookup.table.nH_values.min(),       lookup.table.nH_values.max()
     col_min, col_max = lookup.table.col_density_values.min(), lookup.table.col_density_values.max()
-    T_min, T_max = lookup.table.T_values.min(), lookup.table.T_values.max()
+    dv_min,  dv_max  = lookup.table.dVdr_values.min(),     lookup.table.dVdr_values.max()
 
-    n_H_safe = np.clip(n_H.in_cgs().value, nH_min, nH_max)
-    col_safe = np.clip(colDen_H.in_cgs().value, col_min, col_max)
+    n_H_safe = np.clip(n_H,      nH_min,  nH_max)
+    col_safe = np.clip(colDen_H, col_min, col_max)
+    dV_safe  = np.clip(dVdr,     dv_min,  dv_max)
 
-    # 3. 向量化二分法求 T
-    T_low = np.full_like(E_target_K, T_min)
-    T_high = np.full_like(E_target_K, T_max)
+    return lookup.temperature(n_H_safe, col_safe, dV_safe) * K
 
-    for _ in range(25):
-        T_mid = (T_low + T_high) * 0.5
-        E_mid = T_mid * lookup.Eint(n_H_safe, col_safe, T_mid)
-        mask = E_mid < E_target_K
-        T_low[mask] = T_mid[mask]
-        T_high[~mask] = T_mid[~mask]
 
-    T_final = (T_low + T_high) * 0.5
+def build_spectral_cube(
+    shifted_freq_val: np.ndarray,
+    lum_val: np.ndarray,
+    thermal_val: np.ndarray,
+    freq_edges_hz: np.ndarray,
+    c_cms: float,
+) -> np.ndarray:
+    """Build a spectral cube using analytic erf integration over each frequency bin.
 
-    # ==========================================
-    # 4. 收敛性检验 (Convergence Diagnostics)
-    # ==========================================
-    # 重新计算一次最终温度对应的能量
-    E_final = T_final * lookup.Eint(n_H_safe, col_safe, T_final)
+    Each cell's line profile is a Gaussian centred at its Doppler-shifted
+    frequency with thermal width sigma_nu = nu_gas * (sigma_v / c).
+    Rather than sampling the Gaussian at the bin centre (which aliases when
+    the line is narrower than the bin), we integrate analytically:
 
-    # 计算相对误差 (Relative Error)，加一个小量 1e-30 防止除以零
-    rel_error = np.abs(E_final - E_target_K) / (np.abs(E_target_K) + 1e-30)
+        bin_frac[k] = 0.5 * [erf(x_hi) - erf(x_lo)]
+        x = (nu_edge - nu_gas) / (sqrt(2) * sigma_nu)
 
-    # 定义“不收敛”的阈值：相对误差大于 5% (0.05) 即视为找不到解
-    tolerance = 0.05
-    bad_mask = rel_error > tolerance
-    n_bad = np.sum(bad_mask)
-    n_total = bad_mask.size
+    Luminosity is conserved exactly: sum_k bin_frac[k] == 1 per cell.
 
-    if n_bad > 0:
-        print(f"\n[WARNING] Temperature Bisection Failed for {n_bad} / {n_total} points ({(n_bad/n_total)*100:.2f}%).")
+    Parameters
+    ----------
+    shifted_freq_val : (nx, ny, nz)  Doppler-shifted cell frequency [Hz]
+    lum_val          : (nx, ny, nz)  cell luminosity [erg/s]
+    thermal_val      : (nx, ny, nz)  thermal velocity width [cm/s]
+    freq_edges_hz    : (n_channels+1,)  bin edges [Hz], uniform spacing
+    c_cms            : float  speed of light [cm/s]
 
-        # 提取坏点的信息
-        bad_nH = n_H_safe[bad_mask]
-        bad_E_target = E_target_K[bad_mask]
-        bad_T_final = T_final[bad_mask]
-        bad_error = rel_error[bad_mask]
+    Returns
+    -------
+    spec_cube : (n_channels, ny, nz)  spectral density [erg/s/Hz]
+    """
+    n_channels = len(freq_edges_hz) - 1
+    nx, ny, nz = shifted_freq_val.shape
+    spec_cube = np.zeros((n_channels, ny, nz))
 
-        # 判断这些坏点是不是撞到了表格的温度边界
-        hit_min = np.sum(bad_T_final <= T_min + 0.1)
-        hit_max = np.sum(bad_T_final >= T_max - 0.1)
-        print(f"          -> {hit_min} points hit the T_min ({T_min} K) boundary.")
-        print(f"          -> {hit_max} points hit the T_max ({T_max} K) boundary.")
+    nu_lo = freq_edges_hz[:-1][:, None, None]   # (n_ch, 1, 1)
+    nu_hi = freq_edges_hz[1:][:, None, None]
+    delta_nu_bin = float(freq_edges_hz[1] - freq_edges_hz[0])
 
-        # 打印前 5 个最严重的坏点，供你物理检查
-        print("          Sample Bad Points (Top 5):")
-        for i in range(min(5, n_bad)):
-            print(f"          {i+1}. nH = {bad_nH[i]:.2e} cm^-3, Target Energy(K) = {bad_E_target[i]:.2e}, "
-                  f"Stuck at T = {bad_T_final[i]:.2f} K, Error = {bad_error[i]:.1%}")
-        print("-" * 50)
+    for i in range(nx):
+        nu_gas  = shifted_freq_val[i, :, :][None, :, :]   # (1, ny, nz)
+        lum_gas = lum_val[i, :, :][None, :, :]
+        sigma_v = np.maximum(thermal_val[i, :, :], 1.0)[None, :, :]
+        sigma_nu = nu_gas * (sigma_v / c_cms)
 
-    return T_final * K
+        sqrt2_sigma = np.sqrt(2.0) * sigma_nu
+        x_lo = (nu_lo - nu_gas) / sqrt2_sigma              # (n_ch, ny, nz)
+        x_hi = (nu_hi - nu_gas) / sqrt2_sigma
+        bin_frac = 0.5 * (scipy_erf(x_hi) - scipy_erf(x_lo))
 
-def get_one_sightline_spectrum(
-    freq_los,   # [Hz] 視線上各點的觀測頻率 (已含多普勒位移) [Nx]
-    lum_los,    # [erg/s] 視線上各點的總光度 [Nx]
-    width_los,  # [cm/s] 視線上各點的譜線寬度 (sigma_v) [Nx]
-    freq_axis,  # [Hz] 目標頻率網格的中心點 [n_channels]
-    ):
-    # 1. 定義常數 (確保與 width_los 單位一致，皆為 cm/s)
-    c_cm_s = c.in_units("cm/s")
+        spec_cube += lum_gas * bin_frac / delta_nu_bin
 
-    # 2. 準備廣播維度
-    nu_grid = freq_axis[:, None] # [n_channels, 1]
-    nu_gas = freq_los[None, :]   # [1, Nx]
-    lum_gas = lum_los[None, :]   # [1, Nx]
-    
-    # 3. 防止 sigma_v 為零導致崩潰
-    width_los_cms = width_los.to('cm/s').value
-    sigma_v = np.maximum(width_los_cms, 1.0) * width_los.units
-    
-    # 4. 計算頻率域的寬度: sigma_nu = nu * (sigma_v / c)
-    sigma_nu = nu_gas * (sigma_v[None, :] / c_cm_s) # [1, Nx]
-
-    # 5. 高斯歸一化係數: L / (sqrt(2*pi) * sigma_nu)
-    norm = lum_gas / (np.sqrt(2 * np.pi) * sigma_nu)
-
-    # 6. 計算指數部分: exp(-0.5 * (delta_nu / sigma_nu)^2)
-    delta_nu = nu_grid - nu_gas
-    exponent = -0.5 * (delta_nu / sigma_nu)**2
-    
-    # 7. 算出每個 cell 在每個 channel 的貢獻 [n_channels, Nx]
-    profile = norm * np.exp(exponent)
-
-    # 8. 對視線方向求和，得到該像素的光譜 [n_channels]
-    spectrum_yz = np.sum(profile, axis=1)
-
-    return spectrum_yz
+    return spec_cube
     
 # def _number_density_electron(field, data):
 #     n_H = data[('gas', 'number_density_H')]
@@ -214,30 +208,28 @@ def get_one_sightline_spectrum(
 def _make_luminosity_field(species: str):
     lookup = ensure_table_lookup(cfg.DESPOTIC_TABLE_PATH)
     yt_safe_name = species.replace('+', '_plus').replace('-','_minus')
-    
+
     def _field(field, data):
-        # 1. 提取基础变量，增加提取 temperature
-        n_H = data[('gas','number_density_H')].to('cm**-3').value
+        n_H      = data[('gas','number_density_H')].to('cm**-3').value
         colDen_H = data[('gas','column_density_H')].to('cm**-2').value
-        T = data[('gas', 'temperature')].to('K').value  # <--- 新增
-        
-        # 2. 限制安全边界 (增加 T 的边界)
-        nH_min, nH_max = lookup.table.nH_values.min(), lookup.table.nH_values.max()
+        dVdr     = data[('gas','dVdr_lvg')].in_cgs().value
+        T        = data[('gas','temperature_despotic')].to('K').value  # for T_CUTOFF gating
+
+        nH_min,  nH_max  = lookup.table.nH_values.min(),         lookup.table.nH_values.max()
         col_min, col_max = lookup.table.col_density_values.min(), lookup.table.col_density_values.max()
-        T_min, T_max = lookup.table.T_values.min(), lookup.table.T_values.max()
+        dv_min,  dv_max  = lookup.table.dVdr_values.min(),       lookup.table.dVdr_values.max()
 
-        n_H_safe = np.clip(n_H, nH_min, nH_max)
+        n_H_safe = np.clip(n_H,      nH_min,  nH_max)
         col_safe = np.clip(colDen_H, col_min, col_max)
-        T_safe = np.clip(T, T_min, T_max) # <--- 新增
+        dV_safe  = np.clip(dVdr,     dv_min,  dv_max)
 
-        # 3. 传入 T_safe 查表！(必须要有 4 个参数)
-        lumPerH = lookup.line_field(species, "lumPerH", n_H_safe, col_safe, T_safe)
+        lumPerH = lookup.line_field(species, "lumPerH", n_H_safe, col_safe, dV_safe)
 
-        lumPerH[T > 100000.0] = 0.0
+        lumPerH[T > cfg.T_CUTOFF.get(species, cfg.T_CUTOFF_DEFAULT)] = 0.0
         lumPerH = np.nan_to_num(lumPerH, nan=0.0)
 
         return (n_H_safe * lumPerH) * (erg / s / cm**3)
-        
+
     _field.__name__ = f"_luminosity_{yt_safe_name}"
     return yt_safe_name, _field
 
@@ -246,29 +238,27 @@ def _make_number_density_field(species: str):
     lookup = ensure_table_lookup(cfg.DESPOTIC_TABLE_PATH)
     yt_safe_name = species.replace('+', '_plus').replace('-','_minus')
     token = species
-    
+
     def _field(field, data):
-        # 1. 提取基础变量，增加提取 temperature
-        n_H = data[('gas','number_density_H')].to('cm**-3').value
+        n_H      = data[('gas','number_density_H')].to('cm**-3').value
         colDen_H = data[('gas','column_density_H')].to('cm**-2').value
-        T = data[('gas', 'temperature')].to('K').value # <--- 新增
-        
-        # 2. 限制安全边界 (增加 T 的边界)
-        nH_min, nH_max = lookup.table.nH_values.min(), lookup.table.nH_values.max()
+        dVdr     = data[('gas','dVdr_lvg')].in_cgs().value
+        T        = data[('gas','temperature_despotic')].to('K').value  # for high-T mask
+
+        nH_min,  nH_max  = lookup.table.nH_values.min(),         lookup.table.nH_values.max()
         col_min, col_max = lookup.table.col_density_values.min(), lookup.table.col_density_values.max()
-        T_min, T_max = lookup.table.T_values.min(), lookup.table.T_values.max()
+        dv_min,  dv_max  = lookup.table.dVdr_values.min(),       lookup.table.dVdr_values.max()
 
-        n_H_safe = np.clip(n_H, nH_min, nH_max)
+        n_H_safe = np.clip(n_H,      nH_min,  nH_max)
         col_safe = np.clip(colDen_H, col_min, col_max)
-        T_safe = np.clip(T, T_min, T_max) # <--- 新增
+        dV_safe  = np.clip(dVdr,     dv_min,  dv_max)
 
-        # 3. 传入 T_safe 查表！(必须要有 4 个参数)
-        densities = lookup.number_densities([token], n_H_safe, col_safe, T_safe)
+        densities = lookup.number_densities([token], n_H_safe, col_safe, dV_safe)
         densities[token] = np.nan_to_num(densities[token], nan=0.0)
         densities[token][T > 100000.0] = 0.0
 
         return densities[token] * cm**-3
-        
+
     _field.__name__ = f"_number_density_{yt_safe_name}"
     return yt_safe_name, _field
 
@@ -281,7 +271,7 @@ def _Halpha_luminosity(field, data):
     """
     E_Halpha = (h * c) / lambda_Halpha # Energy of a single H-alpha photon
     density_3d = data[('gas', 'density')].in_cgs()
-    temp = data[('gas', 'temperature')].in_cgs()
+    temp = data[('gas', 'temperature_despotic')].in_cgs()
    
     n_e = data[('gas', 'e-')]
     n_ion = data[('gas', 'H+')]
@@ -296,10 +286,37 @@ def _Halpha_luminosity(field, data):
     alpha_B = (2.54e-13 * Z**2 * (T4 / Z**2)**exponent) * cm**3 / s
 
     luminosity_density = 0.45 * E_Halpha * alpha_B * n_e * n_ion
-    print(f"lum density units:{luminosity_density.units}")
-    luminosity_density = luminosity_density.in_cgs()
-    print(f"lum density units in cgs:{luminosity_density.units}")
-    return luminosity_density
+    return luminosity_density.in_cgs()
+
+
+def _HI_luminosity(field, data):
+    """HI 21 cm volumetric emissivity, optically-thin spin-flip:
+        ε_21 = (3/4) · n_HI · A_10 · h · ν_21        [erg s^-1 cm^-3]
+    Factor 3/4 is the upper hyperfine state fraction in the high-T
+    limit (kT >> hν_21/k = 0.07 K, valid for all ISM)."""
+    n_HI = data[('gas', 'H')]                          # cm^-3
+    A_10 = A_HI_21 / yt.units.s                        # s^-1
+    nu   = NU_HI_21 * yt.units.Hz                      # 1/s
+    return (0.75 * n_HI * A_10 * h * nu).in_cgs()
+
+
+def _HI_freq(field, data):
+    shape = data[('gas', 'density')].shape
+    return np.full(shape, NU_HI_21, dtype=float) * yt.units.Hz
+
+
+def _H_alpha_freq(field, data):
+    shape = data[('gas', 'density')].shape
+    return np.full(shape, NU_H_ALPHA, dtype=float) * yt.units.Hz
+
+
+def _H_atom_thermal_width(field, data):
+    """Doppler thermal width for H-emitting lines (m_emitter = 1 amu).
+    Used by both HI 21 cm and Hα spectral cubes."""
+    T = data[('gas', 'temperature_despotic')].to('K')
+    sigma_v = np.sqrt((kb * T) / (1.00794 * amu)).to('cm/s')
+    return sigma_v
+
 
 def _make_line_frequency_field(species: str):
     lookup = ensure_table_lookup(cfg.DESPOTIC_TABLE_PATH)
@@ -332,7 +349,7 @@ def _make_thermal_width_field(species: str):
     yt_safe_name = species.replace('+', '_plus').replace('-','_minus')
 
     def _field(field, data):
-        T = data[('gas', 'temperature')].to('K')
+        T = data[('gas', 'temperature_despotic')].to('K')
         sigma_v = np.sqrt((kb * T) / mass).to('cm/s')
         return sigma_v
 
@@ -356,21 +373,45 @@ def _Bulk_Doppler_factor_x(field, data):
     
     return factor
 
+def _Bulk_Doppler_factor_y(field, data):
+    """(1 - v_y / c) — observer along -y direction."""
+    v_y = data[("gas", "velocity_y")].in_units("cm/s")
+    c_speed = c.in_units("cm/s")
+    return 1.0 - (v_y / c_speed)
+
 def add_all_fields(ds):
     """Adds all derived fields to the yt dataset."""
     ds.add_field(name=('gas', 'number_density_H'), function=_number_density_H, sampling_type="cell", units="cm**-3", force_override=True)
     ds.add_field(name=('gas', 'column_density_H'), function=_column_density_H, sampling_type="cell", units="cm**-2", force_override=True)
-    ds.add_field(name=('gas', 'temperature'), function=_temperature, sampling_type="cell", units="K", force_override=True)
+    ds.add_field(name=('gas', 'dVdr_lvg'), function=_dVdr_lvg, sampling_type="cell", units="1/s", force_override=True)
+
+    # Save QUOKKA's native temperature from the raw boxlib field.
+    # ('boxlib', 'temperature') is the value QUOKKA wrote to disk (units K,
+    # but yt reads it as dimensionless — we attach K explicitly here).
+    def _temperature_quokka(field, data):
+        return data[('boxlib', 'temperature')] * K
+    ds.add_field(name=('gas', 'temperature_quokka'), function=_temperature_quokka,
+                 sampling_type="cell", units="K", force_override=True)
+
+    ds.add_field(name=('gas', 'temperature_despotic'), function=_temperature_despotic, sampling_type="cell", units="K", force_override=True)
     ds.add_field(
         name=('gas', 'Bulk_Doppler_factor_x'),
         function=_Bulk_Doppler_factor_x,
         sampling_type="cell",
-        units="",  # 無單位
+        units="",
         force_override=True
     )
-    # SPECIES = ['H+', 'H2', 'H3+', 'He+', 'OHx', 'CHx', 'CO', 'C', 
+    ds.add_field(
+        name=('gas', 'Bulk_Doppler_factor_y'),
+        function=_Bulk_Doppler_factor_y,
+        sampling_type="cell",
+        units="",
+        force_override=True
+    )
+    # SPECIES = ['H+', 'H2', 'H3+', 'He+', 'OHx', 'CHx', 'CO', 'C',
     #           'C+', 'HCO+', 'O', 'M+', 'H', 'He', 'M', 'e-']
-    SPECIES = ['H+', 'CO', 'C', 'C+', 'e-']
+    # 'H' added 2026-05-10 — needed by _HI_luminosity (HI 21 cm).
+    SPECIES = ['H+', 'CO', 'C', 'C+', 'e-', 'H']
     EMITTERS = ['CO', 'C+', 'HCO+']
     for sp in SPECIES:
         _, func = _make_number_density_field(species=sp)
@@ -408,6 +449,32 @@ def add_all_fields(ds):
             force_override=True
         )
         
-    ds.add_field(name=('gas', 'temperature_error'), function=_temperature_error, sampling_type="cell", units="", force_override=True)
-    ds.add_field(name=('gas', 'Halpha_luminosity'), function=_Halpha_luminosity, sampling_type="cell", units="erg/s/cm**3", force_override=True)
-    print("Added derived fields: 'temp_neutral', 'temperature', 'ionized_mask', 'Halpha_luminosity'.")
+    ds.add_field(name=('gas', 'Halpha_luminosity'),
+                 function=_Halpha_luminosity, sampling_type="cell",
+                 units="erg/s/cm**3", force_override=True)
+
+    # H_alpha and HI 21 cm closed-form fields. H_alpha_luminosity is
+    # an alias of Halpha_luminosity for naming uniformity with the
+    # other emitter-style fields ({sp}_luminosity, {sp}_freq,
+    # {sp}_thermal_width).
+    ds.add_field(name=('gas', 'H_alpha_luminosity'),
+                 function=_Halpha_luminosity, sampling_type="cell",
+                 units="erg/s/cm**3", force_override=True)
+    ds.add_field(name=('gas', 'H_alpha_freq'),
+                 function=_H_alpha_freq, sampling_type="cell",
+                 units="Hz", force_override=True)
+    ds.add_field(name=('gas', 'H_alpha_thermal_width'),
+                 function=_H_atom_thermal_width, sampling_type="cell",
+                 units="cm/s", force_override=True)
+
+    ds.add_field(name=('gas', 'HI_luminosity'),
+                 function=_HI_luminosity, sampling_type="cell",
+                 units="erg/s/cm**3", force_override=True)
+    ds.add_field(name=('gas', 'HI_freq'),
+                 function=_HI_freq, sampling_type="cell",
+                 units="Hz", force_override=True)
+    ds.add_field(name=('gas', 'HI_thermal_width'),
+                 function=_H_atom_thermal_width, sampling_type="cell",
+                 units="cm/s", force_override=True)
+
+    print("Added derived fields including HI/H_alpha (closed-form, no DESPOTIC).")

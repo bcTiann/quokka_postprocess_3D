@@ -16,7 +16,7 @@ from ...plotting import create_plot, plot_multiview_grid
 from ...utils.axes import axis_index
 from ..base import AnalysisTask, PipelinePlotContext
 from ..utils import make_axis_labels, shared_lognorm
-from ..prep.physics_fields import get_one_sightline_spectrum
+from ..prep.physics_fields import build_spectral_cube
 
 
 class CplusLine1DTask(AnalysisTask):
@@ -90,49 +90,27 @@ class CplusLine1DTask(AnalysisTask):
         
         bw_hz = nu_0 * (v_range / c) * 2.0
   
-        n_channels = 1000
+        n_channels = 350
 
         
         freq_edges = np.linspace(nu_0 - bw_hz/2, nu_0 + bw_hz/2, n_channels + 1)
         freq_centers = 0.5 * (freq_edges[:-1] + freq_edges[1:])
 
         # Sepctrum cube (freq_channels, ny, nz)
-        spec_cube = np.zeros((n_channels, ny, nz))
-
-        print(f"Looping over {ny}x{nz} pixels with yt.units...")
         c_cm_s = c.in_units('cm/s').value
         shifted_freq_val = shifted_freq_3d.in_units("Hz").value
         lum_val = lum_3d.in_units("erg/s").value
         thermal_val = thermal_3d.in_units("cm/s").value
+        freq_edges_hz = freq_edges.in_units("Hz").value
 
+        print(f"  [C+] building spectral cube (erf integration, {nx} slices) ...")
+        spec_cube = build_spectral_cube(shifted_freq_val, lum_val, thermal_val,
+                                        freq_edges_hz, c_cm_s)
 
-        shifted_freq_val = shifted_freq_3d.in_units("Hz").value
-        lum_val = lum_3d.in_units("erg/s").value
-        thermal_val = thermal_3d.in_units("cm/s").value
-
-        #调整频率中心数组的形状为 [n_channels, 1, 1] 以便广播
-        nu_grid = freq_centers.in_units("Hz").value[:, None, None]
-
-        # ==========================================
-        # 优化 2：按 X 轴（视线方向）单层遍历，向量化计算 (y, z) 面的辐射
-        # ==========================================
-        for i in tqdm(range(nx), desc="Integrating along LOS (X)"):
-            
-            # 取出当前 X 层的切片，形状为 [Ny, Nz]，加上 None 变成 [1, Ny, Nz]
-            nu_gas = shifted_freq_val[i, :, :][None, :, :]
-            lum_gas = lum_val[i, :, :][None, :, :]
-            # 限制最小热展宽，防止除以 0
-            sigma_v = np.maximum(thermal_val[i, :, :], 1.0)[None, :, :] 
-
-            # 以下所有计算都发生在 [n_channels, Ny, Nz] 或者 [1, Ny, Nz] 级别的 Numpy 矩阵上，速度极快！
-            sigma_nu = nu_gas * (sigma_v / c_cm_s)
-            norm = lum_gas / (np.sqrt(2 * np.pi) * sigma_nu)
-            
-            delta_nu = nu_grid - nu_gas
-            exponent = -0.5 * (delta_nu / sigma_nu)**2
-            
-            # 算出这一层气体的光度贡献，直接累加到总光谱立方体中
-            spec_cube += norm * np.exp(exponent)
+        from ..utils import apply_spectral_lsf
+        dv_per_channel = 2 * v_range.in_units('km/s').value / n_channels
+        spec_cube = apply_spectral_lsf(spec_cube, dv_per_channel,
+                                       cfg.SPECTRAL_RESOLUTION_R, axis=0)
 
         spec_max = spec_cube.max()
 

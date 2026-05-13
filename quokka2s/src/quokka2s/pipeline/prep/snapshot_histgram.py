@@ -82,7 +82,7 @@ log_samples = np.column_stack(
 )
 np.save("log_samples.npy", log_samples)
 
-ax = plot_sampling_histogram(table, log_samples, log_space=True)
+ax = plot_sampling_histogram(table, log_samples, log_space=True, show_failure_mask=False)
 
 ax.set_title("Snapshot sampling vs DESPOTIC failures")
 plt.savefig("snapshot_hist.png", dpi=800)

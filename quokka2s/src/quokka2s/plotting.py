@@ -55,7 +55,6 @@ def create_plot(data_2d: np.ndarray,
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
     plt.savefig(filename, dpi=800)
-    plt.show()
     plt.close(fig)
     print("="*40)
     print(f"Plot saved as {filename}")
@@ -267,7 +266,7 @@ def plot_multiview_grid(plots_info: List[Dict],
 
     # plt.tight_layout()
     plt.savefig(filename, dpi=800, bbox_inches='tight', pad_inches=0.2)
-    plt.show()
+    plt.close()
 
 
 
@@ -323,7 +322,6 @@ def create_horizontal_subplots(plots_info: List[Dict],
 
     plt.tight_layout()
     plt.savefig(filename, dpi=800)
-    plt.show()
     plt.close(fig)
     print("="*40)
     print(f"Subplots saved as {filename}")

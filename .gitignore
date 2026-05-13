@@ -12,6 +12,7 @@ build/
 # --- Simulation & Data (Token Saving) ---
 # 截屏3中那個巨大的目錄
 TablePlots/        
+TablePlots*/      
 # 測試數據與物理數據庫
 examples/          
 LAMDA/             

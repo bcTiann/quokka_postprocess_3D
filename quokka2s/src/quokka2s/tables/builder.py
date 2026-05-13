@@ -14,7 +14,7 @@ import numpy as np
 from joblib import Parallel, delayed
 from tqdm import tqdm
 from tqdm_joblib import tqdm_joblib
-from despotic.chemistry import NL99, NL99_GC
+from despotic.chemistry import NL99, NL99_GC, GOW
 
 from .models import (
     AttemptRecord,
@@ -49,29 +49,41 @@ SPECIES_SPECS = (
 def build_table(
     nH_grid: LogGrid,
     col_grid: LogGrid,
-    T_grid: LogGrid,  
+    dVdr_grid: LogGrid,
     *,
     species_specs: Sequence[SpeciesSpec],
-    chem_network=NL99_GC,
+    chem_network=GOW,
     show_progress: bool = True,
     full_parallel: bool = False,
     workers: int | None = None,
+    escape_geom: str = 'LVG',
 ) -> DespoticTable:
+    """Build a 3D DESPOTIC table on (nH, colDen, dVdr).
+
+    Architecture (validated empirically):
+    - Outer loop over (nH, colDen): chemistry + thermal balance is solved
+      ONCE per (nH, colDen) point with `evolveTemp="iterateDust"`.
+    - Inner loop over dVdr: only line emission is recomputed
+      (`cell.lineLum(escapeProbGeom='LVG')`) — no chemistry rerun.
+    - Tg, abundances, mu, cv, Eint do not depend on dVdr; they are
+      broadcast across the dVdr axis at storage time.
+    - Line fields (lumPerH, tau, intIntensity, intTB, tauDust, freq)
+      are genuinely 3D.
+    """
 
     specs = tuple(species_specs)
     nH_vals = nH_grid.sample()
     col_vals = col_grid.sample()
-    T_vals = T_grid.sample()
+    dvdr_vals = dVdr_grid.sample()
 
-    shape = (len(nH_vals), len(col_vals), len(T_vals))
-    num_rows, num_cols, num_temps = shape
+    shape = (len(nH_vals), len(col_vals), len(dvdr_vals))
+    num_rows, num_cols, num_dvdr = shape
 
     tg_table = np.full(shape, np.nan)
     failure_mask = np.zeros(shape, dtype=bool)
     abundance_map = {spec.name: np.full(shape, np.nan) for spec in specs}
-    
-    # 增加的物理量网格
-    mu_grid = np.full(shape, np.nan) 
+
+    mu_grid = np.full(shape, np.nan)
     cv_grid = np.full(shape, np.nan)
     Eint_dimless = np.full(shape, np.nan)
 
@@ -85,78 +97,88 @@ def build_table(
     }
     energy_fields: dict[str, np.ndarray] = {}
 
-    # 修改 1：更新参数接收 col_i 和 t_i，并使用 2D 赋值
-    def _flatten_energy(term: str, value, target: dict[str, np.ndarray], col_i: int, t_i: int) -> None:
+    def _flatten_energy(term: str, value, target: dict[str, np.ndarray], col_i: int) -> None:
+        """Flatten one (col, dVdr-broadcast) energy-term entry into target."""
         if isinstance(value, Mapping):
             for sub_key, sub_value in value.items():
-                _flatten_energy(f"{term}.{sub_key}", sub_value, target, col_i, t_i)
+                _flatten_energy(f"{term}.{sub_key}", sub_value, target, col_i)
             return
-        grid = target.setdefault(term, np.full((num_cols, num_temps), np.nan, dtype=float))
-        grid[col_i, t_i] = float(value)
+        grid = target.setdefault(term, np.full((num_cols, num_dvdr), np.nan, dtype=float))
+        grid[col_i, :] = float(value)
 
-    # 修改 2：返回值类型加上 cv 和 Eint 的 array
     def _solve_row(row_idx: int) -> tuple[
-        int, np.ndarray, np.ndarray, dict[str, dict[str, np.ndarray]],
-        dict[str, np.ndarray], dict[str, np.ndarray], 
-        np.ndarray, np.ndarray, np.ndarray, list[AttemptRecord]
+        int,
+        np.ndarray,                                # tg_row (num_cols, num_dvdr)
+        np.ndarray,                                # failure_row
+        dict[str, dict[str, np.ndarray]],          # line_rows
+        dict[str, np.ndarray],                     # abundance_rows
+        dict[str, np.ndarray],                     # energy_rows
+        np.ndarray, np.ndarray, np.ndarray,        # mu/cv/eint
+        list[AttemptRecord],
     ]:
-        tg_row = np.full((num_cols, num_temps), np.nan)
-        failure_row = np.zeros((num_cols, num_temps), dtype=bool)
-        mu_row = np.full((num_cols, num_temps), np.nan)
-        # 为新变量准备 2D row 容器
-        cv_row = np.full((num_cols, num_temps), np.nan)
-        eint_row = np.full((num_cols, num_temps), np.nan)
+        tg_row      = np.full((num_cols, num_dvdr), np.nan)
+        failure_row = np.zeros((num_cols, num_dvdr), dtype=bool)
+        mu_row      = np.full((num_cols, num_dvdr), np.nan)
+        cv_row      = np.full((num_cols, num_dvdr), np.nan)
+        eint_row    = np.full((num_cols, num_dvdr), np.nan)
 
         line_rows: dict[str, dict[str, np.ndarray]] = {
-            spec.name: {field: np.full((num_cols, num_temps), np.nan) for field in LINE_RESULT_FIELDS}
+            spec.name: {field: np.full((num_cols, num_dvdr), np.nan) for field in LINE_RESULT_FIELDS}
             for spec in specs if spec.is_emitter
         }
         abundance_rows: dict[str, np.ndarray] = {
-            spec.name: np.full((num_cols, num_temps), np.nan) for spec in specs
+            spec.name: np.full((num_cols, num_dvdr), np.nan) for spec in specs
         }
         energy_rows: dict[str, np.ndarray] = {}
         attempts_row: list[AttemptRecord] = []
 
+        emitter_names = [spec.name for spec in specs if spec.is_emitter]
+
         for col_idx, col_val in enumerate(col_vals):
-            for t_idx, t_val in enumerate(T_vals):
-                
-                # 注意：这里假设你修改了 calculate_single_despotic_point，让它也返回 cv_val 和 eint_val
-                line_results, emitter_abunds, chem_abunds, mu_val, cv_val, eint_val, final_tg, energy_terms, failed = (
-                    calculate_single_despotic_point(
-                        nH_val=nH_vals[row_idx],
-                        colDen_val=col_val,
-                        initial_Tg_guesses=[t_val],  
-                        species=[spec.name for spec in specs if spec.is_emitter],
-                        abundance_only=[spec.name for spec in specs if not spec.is_emitter],
-                        chem_network=chem_network,
-                        row_idx=row_idx,
-                        col_idx=col_idx,
-                        T_fixed=t_val,            
-                        log_failures=True,
-                        attempt_log=attempts_row,
-                    )
+            line_results, _emit_abunds, chem_abunds, mu_val, cv_val, eint_val, final_tg, energy_terms, failed = (
+                calculate_single_despotic_point(
+                    nH_val=nH_vals[row_idx],
+                    colDen_val=col_val,
+                    dvdr_grid=tuple(dvdr_vals.tolist()),
+                    species=emitter_names,
+                    abundance_only=tuple(spec.name for spec in specs if not spec.is_emitter),
+                    chem_network=chem_network,
+                    row_idx=row_idx,
+                    col_idx=col_idx,
+                    Tg_init=100.0,
+                    log_failures=True,
+                    attempt_log=attempts_row,
+                    escape_geom=escape_geom,
                 )
-                
-                tg_row[col_idx, t_idx] = final_tg
-                failure_row[col_idx, t_idx] = failed
-                mu_row[col_idx, t_idx] = mu_val 
-                cv_row[col_idx, t_idx] = cv_val
-                eint_row[col_idx, t_idx] = eint_val
-                
-                for spec in specs:
-                    abundance_rows[spec.name][col_idx, t_idx] = chem_abunds.get(spec.name, float("nan"))
-                    if spec.is_emitter:
-                        result = line_results.get(spec.name, DEFAULT_LINE_RESULT)
-                        for field in LINE_RESULT_FIELDS:
-                            line_rows[spec.name][field][col_idx, t_idx] = getattr(result, field)
+            )
 
-                for term, value in energy_terms.items():
-                    _flatten_energy(term, value, energy_rows, col_idx, t_idx)
+            # 2D fields broadcast across the dvdr axis.
+            tg_row[col_idx, :]      = final_tg
+            failure_row[col_idx, :] = failed
+            mu_row[col_idx, :]      = mu_val
+            cv_row[col_idx, :]      = cv_val
+            eint_row[col_idx, :]    = eint_val
 
-        # 返回时加上 cv_row 和 eint_row
+            for spec in specs:
+                abundance_rows[spec.name][col_idx, :] = chem_abunds.get(spec.name, float("nan"))
+
+            # 3D line fields filled per dvdr index.
+            for spec in specs:
+                if not spec.is_emitter:
+                    continue
+                results_list = line_results.get(spec.name, [DEFAULT_LINE_RESULT] * num_dvdr)
+                for d_idx, result in enumerate(results_list):
+                    if d_idx >= num_dvdr:
+                        break
+                    for field in LINE_RESULT_FIELDS:
+                        line_rows[spec.name][field][col_idx, d_idx] = getattr(result, field)
+
+            for term, value in energy_terms.items():
+                _flatten_energy(term, value, energy_rows, col_idx)
+
         return row_idx, tg_row, failure_row, line_rows, abundance_rows, energy_rows, mu_row, cv_row, eint_row, attempts_row
 
-    # ============ 下面是主进程收集数据的部分 ============
+    # ============ Main process: collect parallel results ============
 
     if full_parallel:
         raise NotImplementedError("3D full_parallel is currently not updated. Please use row-wise parallel.")
@@ -174,13 +196,12 @@ def build_table(
             results = Parallel(n_jobs=workers)(delayed(solve_row)(row_idx) for row_idx in tasks)
 
         attempts: list[AttemptRecord] = []
-        
-        # 修改 3：在这里解包并收集新的物理量
+
         for row_idx, tg_row, failure_row, line_rows, abundance_rows, energy_rows, mu_row, cv_row, eint_row, attempts_row in results:
-            tg_table[row_idx, :, :] = tg_row
+            tg_table[row_idx, :, :]    = tg_row
             failure_mask[row_idx, :, :] = failure_row
-            mu_grid[row_idx, :, :] = mu_row
-            cv_grid[row_idx, :, :] = cv_row
+            mu_grid[row_idx, :, :]     = mu_row
+            cv_grid[row_idx, :, :]     = cv_row
             Eint_dimless[row_idx, :, :] = eint_row
             attempts.extend(attempts_row)
 
@@ -195,10 +216,11 @@ def build_table(
                 grid[row_idx, :, :] = values
 
         failed_cells = int(np.count_nonzero(failure_mask))
+        total_cells  = num_rows * num_cols * num_dvdr
         if failed_cells:
-            LOGGER.warning("DESPOTIC table: %s/%s cells failed to converge", failed_cells, num_rows * num_cols * num_temps)
+            LOGGER.warning("DESPOTIC table: %s/%s cells failed to converge", failed_cells, total_cells)
         else:
-            LOGGER.info("DESPOTIC table converged for all %s cells", num_rows * num_cols * num_temps)
+            LOGGER.info("DESPOTIC table converged for all %s cells", total_cells)
 
         species_data: dict[str, SpeciesRecord] = {}
         for spec in specs:
@@ -222,16 +244,15 @@ def build_table(
                 is_emitter=spec.is_emitter,
             )
 
-        # 修改 4：最后把新加入的数据也传给模型
         return DespoticTable(
             species_data=species_data,
             tg_final=tg_table,
             nH_values=nH_vals,
             col_density_values=col_vals,
-            T_values=T_vals,            # 别忘了更新你的 models.py 接收这个！
+            dVdr_values=dvdr_vals,
             mu_values=mu_grid,
-            cv_values=cv_grid,          # 别忘了更新你的 models.py 接收这个！
-            Eint_values=Eint_dimless,   # 别忘了更新你的 models.py 接收这个！
+            cv_values=cv_grid,
+            Eint_values=Eint_dimless,
             failure_mask=failure_mask,
             energy_terms=energy_fields or None,
             attempts=tuple(attempts),

@@ -23,7 +23,7 @@ import numpy as np
 
 from .models import AttemptRecord, DespoticTable, SpeciesLineGrid, SpeciesRecord
 
-TABLE_VERSION = 3
+TABLE_VERSION = 4
 _LINE_FIELDS = ("freq", "intIntensity", "intTB", "lumPerH", "tau", "tauDust")
 
 def _attempts_to_array(attempts: Iterable[AttemptRecord]) -> np.ndarray:
@@ -82,9 +82,8 @@ def save_table(table: DespoticTable, path: str | Path) -> None:
         "nH_values": np.array(table.nH_values),
         "col_density_values": np.array(table.col_density_values),
         "tg_final": np.array(table.tg_final),
-        
-        # 修改 2：將新增的四個屬性加入 payload 中以便存檔
-        "T_values": np.array(table.T_values),
+
+        "dVdr_values": np.array(table.dVdr_values),
         "mu_values": np.array(table.mu_values),
         "cv_values": np.array(table.cv_values),
         "Eint_values": np.array(table.Eint_values),
@@ -119,9 +118,8 @@ def load_table(path: str | Path) -> DespoticTable:
     nH_values = np.array(blob["nH_values"])
     col_density_values = np.array(blob["col_density_values"], dtype=float)
     tg_final = np.array(blob["tg_final"], dtype=float)
-    
-    # 修改 3：從讀取的檔案中提取這四個新的陣列
-    T_values = np.array(blob["T_values"], dtype=float)
+
+    dVdr_values = np.array(blob["dVdr_values"], dtype=float)
     mu_values = np.array(blob["mu_values"], dtype=float)
     cv_values = np.array(blob["cv_values"], dtype=float)
     Eint_values = np.array(blob["Eint_values"], dtype=float)
@@ -159,13 +157,12 @@ def load_table(path: str | Path) -> DespoticTable:
         
     attempts = _attempts_from_array(blob["attempts"])
 
-    # 修改 4：將這些提取出來的參數正確傳入 DespoticTable
     return DespoticTable(
         species_data=species_data,
         tg_final=tg_final,
         nH_values=nH_values,
         col_density_values=col_density_values,
-        T_values=T_values,
+        dVdr_values=dVdr_values,
         mu_values=mu_values,
         cv_values=cv_values,
         Eint_values=Eint_values,

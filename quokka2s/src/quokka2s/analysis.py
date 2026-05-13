@@ -15,6 +15,7 @@ def run_despotic_on_map(
     nH_map: np.ndarray,
     colDen_map: np.ndarray,
     Tg_map: Optional[np.ndarray] = None,
+    dVdr_map: Optional[np.ndarray] = None,
 ) -> np.ndarray:
     """
     Iterates over a 2D slice and runs DESPOTIC on each pixel.
@@ -23,9 +24,8 @@ def run_despotic_on_map(
         nH_map (np.ndarray): 2D map of Volume density of H nuclei [cm^-3].
         Tg_map (np.ndarray): 2D map of gas temperature [K].
         colDen_map (np.ndarray): 2D map of Column density of H nuclei [cm^-2].
-
-    Returns:
-        np.ndarray: 2D map of the calculated CO (J=1-0) integrated brightness temperature [K km/s].
+        dVdr_map (np.ndarray, optional): 2D map of LVG velocity gradient [s^-1].
+                  Defaults to 1e-14 s^-1 (median ISM value) if not given.
     """
     shape = nH_map.shape
     print(f"nH_map.shape = {nH_map.shape}")
@@ -37,82 +37,22 @@ def run_despotic_on_map(
     start_time = time.time()
 
     Tg_working = []
-    tg_guesses = [
-        1958.3639773669447,
-        1876.3811984430195,
-        1904.6735038533895,
-        2269.7464280911563,
-        5529.099690585343,
-        4467.07705368385,
-        1921.7595997264211,
-        1903.3063609939322,
-        1907.7950789311126,
-        1923.5653681769838,
-        3128.178080797415,
-        1921.9298726833636,
-        1896.4011480919055,
-        1909.3440156155311,
-        13996.874562092222,
-        3022.9801308742763,
-        1907.308357562927,
-        1909.4572682127873,
-        2229.9653914481332,
-        1947.0623389936507,
-        2388.5525460121485,
-        1901.115961026267,
-        2393.6290610541246,
-        2693.9753954376056,
-        1907.308357562927,
-        1907.308357562927,
-        1906.8138296348143,
-        2959.997148072065,
-        208072.04383595262,
-        503398.0480434042,
-        6199404.503674414,
-        1907.3083575629323,
-        1951.2451612775776,
-        1907.2675792788657,
-        1907.3096438825598,
-        2098.333042303612,
-        37739.033264610196,
-        25301.5132811833,
-        1907.1986667866572,
-        1906.0004035267134,
-        1940.9177912829907,
-        1907.2974533513202,
-        1907.978989716906,
-        1907.308433427053,
-        1926.1281732989792,
-        2043.475598201943,
-        2061.8065832019997,
-        1906.219433232716,
-        34590.689516202736,
-        24173.3696307906,
-        1123275.1871095176,
-        1998.2232263030933,
-        1891.6056493165058,
-        1908.05451292517,
-        1909.1151153089127,
-        1907.308357562927,
-        889293.6619643234,
-        67831.41869508532,
-        69094.70519253935,
-        2621.014000572547,
-        2080.154582484991,
-        1890.6529949503965,
-        2618.834115138999,
-        1907.3084022789865,
-    ]
+    # Single-guess fallback list — bistability test (2026-05-09) showed final
+    # Tg is unique per (nH, NH), so the long historical guess ladder is
+    # unnecessary. Kept short for occasional convergence retries.
+    tg_guesses = [100.0, 1000.0, 10000.0]
     working = 0
     for i in tqdm(range(shape[0]), desc="DESPOTIC Processing Rows"):
         for j in range(shape[1]):
             success = False
+            dvdr_ij = float(dVdr_map[i, j]) if dVdr_map is not None else 1e-14
             for guess in tg_guesses:
                 try:
                     cell = cloud()
                     cell.nH = nH_map[i, j]
                     cell.colDen = colDen_map[i, j]
                     cell.Tg = guess
+                    cell.dVdr = dvdr_ij
 
                     cell.sigmaNT = 2.0e5
                     cell.comp.xoH2 = 0.1
@@ -138,9 +78,9 @@ def run_despotic_on_map(
                     print(f"initial CO abundance = {co_abundance}")
                     print(f"initial Tg = {cell.Tg}")
                     print("haven't pass")
-                    cell.setChemEq(network=NL99, evolveTemp="iterate")
+                    cell.setChemEq(network=NL99, evolveTemp="iterateDust")
                     print("pass!!")
-                    lines = cell.lineLum("CO")
+                    lines = cell.lineLum("CO", escapeProbGeom='LVG')
                     co_int_TB = lines[0]["intTB"]
 
                     co_line_map[i, j] = co_int_TB

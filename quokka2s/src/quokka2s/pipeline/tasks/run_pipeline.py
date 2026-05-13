@@ -19,6 +19,19 @@ from . import (
     COLine1DTask,
     CplusLine1DTask,
     HCOplusLine1DTask,
+    TripleLineTask,
+    TemperatureCompareTask,
+    SigmaNTCheckTask,
+    TableDiagnosticsTask,
+    EmitterCompareTask,
+    IntegratedSpectrumTask,
+    BinnedPixelGridTask,
+    PhaseSigmaVTask,
+    PhaseSpectrumOverlayTask,
+    PhaseResolvedSpectrumTask,
+    SpaxelSigmaTask,
+    SigmaSFROverlayTask,
+    TemperatureSlicesTask,
 )
 
 
@@ -33,15 +46,47 @@ def build_pipeline() -> Pipeline:
         figure_units="kpc",
         projection_axis="x",
         field_setup=phys.add_all_fields,
+        downsample_factor=cfg.DOWNSAMPLE_FACTOR,
     )
 
     pipeline = Pipeline(pipeline_config)
-    # pipeline.register_task(DensityProjectionTask(pipeline_config, axis="x", figure_units='kpc'))
+    pipeline.register_task(TemperatureSlicesTask(pipeline_config, n_slices=2))
+    # pipeline.register_task(TableDiagnosticsTask(pipeline_config))
+    pipeline.register_task(DensityProjectionTask(pipeline_config, axis="x", figure_units='kpc'))
+
     # pipeline.register_task(HalphaTask(pipeline_config, axis="x", figure_units='kpc'))
+
+
     pipeline.register_task(EmitterTask(pipeline_config, axis="x", figure_units='kpc'))
-    pipeline.register_task(COLine1DTask(pipeline_config, axis="x", figure_units='kpc'))
-    pipeline.register_task(CplusLine1DTask(pipeline_config, axis="x", figure_units='kpc'))
-    pipeline.register_task(HCOplusLine1DTask(pipeline_config, axis="x", figure_units='kpc'))
+
+    
+
+    pipeline.register_task(PhaseSigmaVTask(pipeline_config))
+    # pipeline.register_task(SpaxelSigmaTask(pipeline_config))
+    # pipeline.register_task(SigmaSFROverlayTask(pipeline_config))
+
+    pipeline.register_task(IntegratedSpectrumTask(pipeline_config, axis="x", figure_units='kpc'))
+    # pipeline.register_task(BinnedPixelGridTask(pipeline_config, species='CO',      bin_size=8, max_panels_per_side=10))
+    # pipeline.register_task(BinnedPixelGridTask(pipeline_config, species='C+',      bin_size=8, max_panels_per_side=10))
+    # pipeline.register_task(BinnedPixelGridTask(pipeline_config, species='H_alpha', bin_size=8, max_panels_per_side=10))
+    # pipeline.register_task(BinnedPixelGridTask(pipeline_config, species='HI',      bin_size=8, max_panels_per_side=10))
+    pipeline.register_task(PhaseSpectrumOverlayTask(pipeline_config))                # R = ∞ (no LSF)
+    pipeline.register_task(PhaseResolvedSpectrumTask(pipeline_config))
+    
+    
+    
+    # pipeline.register_task(PhaseSpectrumOverlayTask(pipeline_config, R=1e5))         # near-ideal
+    # pipeline.register_task(PhaseSpectrumOverlayTask(pipeline_config, R=1e4))         # heavy smearing
+    # pipeline.register_task(PhaseSpectrumOverlayTask(pipeline_config, R=1e3))         # extreme smearing
+   
+   
+    # pipeline.register_task(COLine1DTask(pipeline_config, axis="x", figure_units='kpc'))
+    # pipeline.register_task(CplusLine1DTask(pipeline_config, axis="x", figure_units='kpc'))
+    # pipeline.register_task(HCOplusLine1DTask(pipeline_config, axis="x", figure_units='kpc'))
+    # pipeline.register_task(TripleLineTask(pipeline_config, axis="x", figure_units='kpc'))
+    # pipeline.register_task(TemperatureCompareTask(pipeline_config, axis="x", figure_units='kpc'))
+    # pipeline.register_task(EmitterCompareTask(pipeline_config, axis="x", figure_units='kpc'))
+    # pipeline.register_task(SigmaNTCheckTask(pipeline_config, axis="x", figure_units='kpc'))
     # pipeline.register_task(HalphaWithDustTask(pipeline_config, axis="x"))
     # pipeline.register_task(HalphaComparisonTask(pipeline_config, axis="x"))
     return pipeline

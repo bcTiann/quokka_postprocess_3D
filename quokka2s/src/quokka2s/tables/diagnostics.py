@@ -33,6 +33,7 @@ def plot_sampling_histogram(
         ax: plt.Axes | None = None,
         cmap: str = "viridis",
         log_space: bool = True,
+        show_failure_mask: bool = True,
 ) -> plt.Axes:
     """Plot simulation sampling density per table cell, matching raw-table coverage plot."""
     if samples.ndim != 2 or samples.shape[1] != 2:
@@ -87,7 +88,7 @@ def plot_sampling_histogram(
     cbar = fig.colorbar(mesh, ax=ax)
     cbar.set_label("Voxel count per table cell")
 
-    if table.failure_mask is not None:
+    if show_failure_mask and table.failure_mask is not None:
         # 修改：沿著T轴(axis=2)做ANY投影，只要有一个T失败，这格就算True
         fail_2d = np.any(table.failure_mask, axis=2)
         

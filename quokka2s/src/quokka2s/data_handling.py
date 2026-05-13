@@ -6,9 +6,205 @@ from unyt import unyt_array
 
 from .utils.axes import axis_index, axis_label
 
+
+# Primitive fields that the GOW chemistry / temperature derived-field chain
+# in physics_fields.py consumes.  All other fields are derived from these.
+# Stored as {field_key_on_orig_ds: (output_dict_key_for_uniform_grid, unit_str)}.
+#
+# Note on namespacing: yt's load_uniform_grid stream frontend doesn't allow
+# fields under arbitrary ftypes like 'boxlib' to be looked up downstream
+# (the field type is rejected by the field detector even after add_field).
+# So we read ('boxlib','temperature') from ds_orig but stash it under the
+# stream namespace as 'temperature_raw'; an alias is registered on the new
+# ds (see _register_boxlib_aliases below) so consumers like
+# `_temperature_quokka` and `_column_density_H` can still read
+# ('boxlib','temperature') / ('boxlib','dx|dy|dz') unchanged.
+_DOWNSAMPLE_PRIMITIVES: Dict[Tuple[str, str], Tuple[object, str]] = {
+    ('gas', 'density'):                 (('gas', 'density'),                'g/cm**3'),
+    ('gas', 'velocity_x'):              (('gas', 'velocity_x'),             'cm/s'),
+    ('gas', 'velocity_y'):              (('gas', 'velocity_y'),             'cm/s'),
+    ('gas', 'velocity_z'):              (('gas', 'velocity_z'),             'cm/s'),
+    ('gas', 'total_energy_density'):    (('gas', 'total_energy_density'),   'erg/cm**3'),
+    ('gas', 'kinetic_energy_density'):  (('gas', 'kinetic_energy_density'), 'erg/cm**3'),
+    ('boxlib', 'temperature'):          ('temperature_raw',                 'dimensionless'),
+}
+
+
+def _register_boxlib_aliases(ds_lo: 'yt.Dataset') -> None:
+    """Make ('boxlib', 'temperature' / 'dx' / 'dy' / 'dz') resolvable on a
+    stream-frontend dataset, mirroring what yt does automatically for
+    real plotfiles.  These are the only ('boxlib', ...) fields read by
+    `add_all_fields` in physics_fields.py."""
+    if 'boxlib' not in ds_lo.fluid_types:
+        ds_lo.fluid_types = ds_lo.fluid_types + ('boxlib',)
+
+    def _temperature_alias(field, data):
+        return data[('stream', 'temperature_raw')]
+
+    ds_lo.add_field(
+        ('boxlib', 'temperature'),
+        function=_temperature_alias,
+        sampling_type='cell',
+        units='dimensionless',
+        force_override=True,
+    )
+
+    for axis in ('x', 'y', 'z'):
+        idx_field = ('index', f'd{axis}')
+
+        def _make_alias(src=idx_field):
+            def _alias(field, data):
+                return data[src]
+            return _alias
+
+        ds_lo.add_field(
+            ('boxlib', f'd{axis}'),
+            function=_make_alias(),
+            sampling_type='cell',
+            units='cm',
+            force_override=True,
+        )
+
+
+def make_downsampled_dataset(ds_orig: 'yt.Dataset', factor: int) -> 'yt.Dataset':
+    """Block-mean-downsample a yt dataset by an integer factor along each axis.
+
+    Reads the small set of primitive fields actually consumed by the
+    derived-field chain slab-by-slab from `ds_orig`, averages each
+    factor³ block, and packs the results into a new in-memory uniform-grid
+    dataset.  All `physics_fields.add_all_fields` derived fields then
+    work on the new dataset unchanged.
+
+    Memory: peak ≈ one slab (nx × ny × slab_nz × 8 bytes) per field.
+    For 256×256×2048 with slab_nz=128 that is ~64 MB at a time, well
+    below the multi-GB peaks the full-domain derived-field chain hits.
+
+    factor=1 is a fast pass-through (returns ds_orig unchanged).
+    """
+    if factor == 1:
+        return ds_orig
+
+    # yt's RegionSelector rejects any region whose edge sits even one ULP
+    # outside the domain.  When we slab-loop along z, the last slab's
+    # implicit covering_grid right edge (= slab_left + dims*dx) drifts
+    # past domain_right_edge by FP rounding, and yt crashes before
+    # reading any data.  Forcing periodicity disables that strict check;
+    # we never actually read past the domain (only the slab edges suffer
+    # ULP drift, no cell falls in that sliver), so this is functionally
+    # a no-op.  yt's error message itself recommends this workaround.
+    ds_orig.force_periodicity()
+
+    nx, ny, nz = (int(d) for d in ds_orig.domain_dimensions)
+    if any(d % factor != 0 for d in (nx, ny, nz)):
+        raise ValueError(
+            f"domain_dimensions {(nx, ny, nz)} not divisible by factor={factor}"
+        )
+
+    nx_lo, ny_lo, nz_lo = nx // factor, ny // factor, nz // factor
+    print(f"[downsample] {nx}x{ny}x{nz} -> {nx_lo}x{ny_lo}x{nz_lo} (factor={factor})")
+
+    out_arrays = {
+        src_key: np.empty((nx_lo, ny_lo, nz_lo), dtype=np.float64)
+        for src_key in _DOWNSAMPLE_PRIMITIVES
+    }
+
+    le = ds_orig.domain_left_edge       # unyt_array, code_length
+    re = ds_orig.domain_right_edge
+
+    slab_nz = factor * 64
+
+    for iz in range(0, nz, slab_nz):
+        cur_nz = min(slab_nz, nz - iz)
+
+        slab_left  = le.copy()
+        slab_right = re.copy()
+        slab_left[2]  = le[2] + (re[2] - le[2]) * iz / nz
+        slab_right[2] = le[2] + (re[2] - le[2]) * (iz + cur_nz) / nz
+
+        box_region = ds_orig.box(slab_left, slab_right)
+        grid = ds_orig.covering_grid(
+            level=0,
+            left_edge=slab_left,
+            dims=(nx, ny, cur_nz),
+            data_source=box_region,
+        )
+
+        for src_key, (_out_key, unit_str) in _DOWNSAMPLE_PRIMITIVES.items():
+            if unit_str == 'dimensionless':
+                arr = np.asarray(grid[src_key].d)
+            else:
+                arr = grid[src_key].in_cgs().value
+
+            cur_nz_lo = cur_nz // factor
+            ds_arr = arr.reshape(
+                nx_lo, factor, ny_lo, factor, cur_nz_lo, factor,
+            ).mean(axis=(1, 3, 5))
+            out_arrays[src_key][..., iz // factor : iz // factor + cur_nz_lo] = ds_arr
+            del arr, ds_arr
+
+        del grid, box_region
+        print(f"[downsample] slab z=[{iz}:{iz + cur_nz}] done")
+
+    data_dict = {
+        out_key: (out_arrays[src_key], unit_str)
+        for src_key, (out_key, unit_str) in _DOWNSAMPLE_PRIMITIVES.items()
+    }
+
+    le_cm = ds_orig.domain_left_edge.in_units('cm').value
+    re_cm = ds_orig.domain_right_edge.in_units('cm').value
+    bbox = np.array([
+        [le_cm[0], re_cm[0]],
+        [le_cm[1], re_cm[1]],
+        [le_cm[2], re_cm[2]],
+    ])
+
+    ds_lo = yt.load_uniform_grid(
+        data=data_dict,
+        domain_dimensions=(nx_lo, ny_lo, nz_lo),
+        bbox=bbox,
+        length_unit='cm',
+        mass_unit='g',
+        time_unit='s',
+    )
+    _register_boxlib_aliases(ds_lo)
+    print(f"[downsample] built downsampled dataset: dims={ds_lo.domain_dimensions.tolist()}")
+    return ds_lo
+
+
 class YTDataProvider:
     def __init__(self, ds):
         self.ds = ds
+        self._cached_grid = None  # populated lazily by _get_full_grid()
+
+    def _get_full_grid(self):
+        """Return (and lazily create) the full-domain covering_grid.
+
+        Why this exists
+        ---------------
+        yt caches every derived field *on the covering_grid object*.  If you
+        call ``ds.covering_grid(...)`` twice you get two independent objects;
+        the second one recomputes every derived field from scratch even if the
+        geometry is identical.  In this pipeline the expensive fields are:
+
+          column_density_H  – 6 cumulative-sum passes over the full cube
+          temperature       – 25-iteration bisection over ~8 M cells
+
+        Both are dependencies of every luminosity and thermal-width field.
+        Without caching, these are recomputed once per ``get_slab_z`` call
+        (≈ 10 times across EmitterTask + TripleLineTask combined).
+
+        With this cache, the grid is constructed once; yt's internal cache
+        satisfies every subsequent field request on the same object for free.
+        """
+        if self._cached_grid is None:
+            level = self.ds.max_level
+            dims = self.ds.domain_dimensions * (2 ** level)
+            self._cached_grid = self.ds.covering_grid(
+                level=level,
+                left_edge=self.ds.domain_left_edge,
+                dims=dims,
+            )
+        return self._cached_grid
 
     def get_slice(self,
                   field: Tuple[str, str],
@@ -38,9 +234,9 @@ class YTDataProvider:
         # numpy_data = np.array(data_with_units)
         # unit_string = str(data_with_units.units)
 
-        print("="*40)
-        print(f"Slice: field = {field}, axis = {axis_str}, units = {data_with_units.units}")
-        print("="*40)
+        # print("="*40)
+        # print(f"Slice: field = {field}, axis = {axis_str}, units = {data_with_units.units}")
+        # print("="*40)
         
         return data_with_units
     
@@ -56,17 +252,21 @@ class YTDataProvider:
             - 
         """
         
+        use_cache = (level is None and dims is None)
+
         if level is None:
             level = self.ds.max_level
         if dims is None:
             dims = self.ds.domain_dimensions * (2**level)
-        
 
-        grid = self.ds.covering_grid(level=level, left_edge=self.ds.domain_left_edge, dims=dims)
+        if use_cache:
+            grid = self._get_full_grid()
+        else:
+            grid = self.ds.covering_grid(level=level, left_edge=self.ds.domain_left_edge, dims=dims)
         data_with_units = grid[field].in_cgs()
 
-        print(f"Retrieved 3D grid data for field '{field}' with shape {data_with_units.shape}")
-        print(f"units: {data_with_units.units}")
+        # print(f"Retrieved 3D grid data for field '{field}' with shape {data_with_units.shape}")
+        # print(f"units: {data_with_units.units}")
 
         return data_with_units
     
@@ -117,7 +317,7 @@ class YTDataProvider:
 
         if center is None:
             center = self.ds.domain_center
-            print(f"Center not provided. Using domain_center: {center}")
+            # print(f"Center not provided. Using domain_center: {center}")
 
         if level is None:
             level = self.ds.max_level
@@ -126,7 +326,7 @@ class YTDataProvider:
         if box_width is None:
             min_side_length = self.ds.domain_width.min()
             box_width = self.ds.arr([min_side_length] * 3)
-            print(f"Box width not provided. Defaulting to the largest possible width: {box_width}")
+            # print(f"Box width not provided. Defaulting to the largest possible width: {box_width}")
         
         half_width = box_width / 2.0
         left_edge = center - half_width
@@ -169,20 +369,30 @@ class YTDataProvider:
         Extracts a data slab oriented along the Z-axis.
         The slab covers the full extent of the X and Y dimensions.
         The width of the slab in the Z direction is specified by the user.
+
+        Performance note
+        ----------------
+        When all three optional arguments are left at their defaults (i.e. the
+        full-domain slab), this method reuses ``_get_full_grid()`` instead of
+        constructing a new covering_grid.  That means yt's per-grid field
+        cache is shared across every default call: expensive derived fields
+        such as ``temperature`` and ``column_density_H`` are evaluated at most
+        once per pipeline run regardless of how many tasks request them.
+
+        When a non-default slab is requested a fresh covering_grid is created
+        as before, so the behaviour for sub-domain slabs is unchanged.
         """
+        # Detect whether the caller wants the full domain (all defaults).
+        # We check BEFORE applying defaults so the sentinel is unambiguous.
+        use_full_grid = (slab_width is None and center is None and level is None)
 
         if center is None:
             center = self.ds.domain_center
-            print(f"Center not provided. Using domain_center: {center}")
-
         if level is None:
             level = self.ds.max_level
-
-
         if slab_width is None:
             slab_width = self.ds.domain_width[2]
-            print(f"Slab width not provided. Defaulting to Full of Z-domain width: {slab_width}")
-        
+
         left_edge_xy = self.ds.domain_left_edge[0:2]
         right_edge_xy = self.ds.domain_right_edge[0:2]
 
@@ -190,31 +400,31 @@ class YTDataProvider:
         left_edge_z = center[2] - half_width_z
         right_edge_z = center[2] + half_width_z
 
-
         left_edge = self.ds.arr([left_edge_xy[0], left_edge_xy[1], left_edge_z])
         right_edge = self.ds.arr([right_edge_xy[0], right_edge_xy[1], right_edge_z])
-        print(f"Defining a physical slab from {left_edge} to {right_edge}")
-        
+
         pixel_widths = self.ds.domain_width / self.ds.domain_dimensions
         dims_xy = self.ds.domain_dimensions[0:2]
-
         num_z_pixels = np.round(slab_width / pixel_widths[2]).astype(int)
-
         dims = np.array([dims_xy[0], dims_xy[1], num_z_pixels]) * 2**level
-        print(f"Calculated corresponding pixel dimensions: {dims}")
 
-        box_region = self.ds.box(left_edge, right_edge)
-
-        grid = self.ds.covering_grid(
-            level=level,
-            left_edge=left_edge,
-            dims=dims,
-            
-            data_source=box_region
-        )
+        if use_full_grid:
+            # Reuse the cached full-domain grid.  yt looks up the field in its
+            # internal cache on this object; if it was already computed by a
+            # previous get_slab_z call the result is returned immediately.
+            grid = self._get_full_grid()
+        else:
+            # Sub-domain or non-default level: construct a fresh grid as before.
+            box_region = self.ds.box(left_edge, right_edge)
+            grid = self.ds.covering_grid(
+                level=level,
+                left_edge=left_edge,
+                dims=dims,
+                data_source=box_region,
+            )
 
         data_slab = grid[field].in_cgs()
-        print(f"Retrieved data slab for field '{field}' with shape {data_slab.shape}")
+        # print(f"Retrieved data slab for field '{field}' with shape {data_slab.shape}")
 
         extents = {
             'x': [left_edge[1], right_edge[1], left_edge[2], right_edge[2]],
@@ -250,9 +460,9 @@ class YTDataProvider:
         data_with_units = frb[field]
         # numpy_data = np.array(data_with_units)
         # unit_string = str(data_with_units.units)
-        print("="*40)
-        print(f"Slice: field = {field}, axis = {axis_str}, units = {data_with_units.units}")
-        print("="*40)
+        # print("="*40)
+        # print(f"Slice: field = {field}, axis = {axis_str}, units = {data_with_units.units}")
+        # print("="*40)
         
         return data_with_units
     

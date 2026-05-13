@@ -321,6 +321,7 @@ def calculate_single_despotic_point(
     attempt_log: list[AttemptRecord] | None = None,
     reuse_failed_tg: bool = False,
     reuse_max_insertions: int = 3,
+    dVdr_val: float = 1e-14,
 ) -> Tuple[Mapping[str, LineLumResult], float]:
     """Run DESPOTIC for one (nH, column density) pair.
 
@@ -387,6 +388,7 @@ def calculate_single_despotic_point(
             cell.Tg = guess
 
             cell.sigmaNT = 2.0e5
+            cell.dVdr = dVdr_val
             cell.comp.xoH2 = 0.1
             cell.comp.xpH2 = 0.4
             cell.comp.xHe = 0.1
@@ -457,7 +459,7 @@ def calculate_single_despotic_point(
             for species in species_order:
                 stdout_buffer = io.StringIO()
                 with contextlib.redirect_stdout(stdout_buffer):
-                    transitions = cell.lineLum(species)
+                    transitions = cell.lineLum(species, escapeProbGeom='LVG')
                 _log_despotic_stdout(stdout_buffer.getvalue())
                 line_results[species] = _extract_line_result(transitions)
 
@@ -503,7 +505,7 @@ def calculate_single_despotic_point(
                     try:
                         stdout_buffer = io.StringIO()
                         with contextlib.redirect_stdout(stdout_buffer):
-                            transitions = fallback_cell.lineLum(species)
+                            transitions = fallback_cell.lineLum(species, escapeProbGeom='LVG')
                         _log_despotic_stdout(stdout_buffer.getvalue())
                         recovered_results[species] = _extract_line_result(transitions)
                     except Exception:

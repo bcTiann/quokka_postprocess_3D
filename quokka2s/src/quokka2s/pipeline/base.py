@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Callable
 import yt
 
-from ..data_handling import YTDataProvider
+from ..data_handling import YTDataProvider, make_downsampled_dataset
 
 
 
@@ -49,11 +49,14 @@ class PipelineConfig:
     figure_units: str = "pc"
     projection_axis: str = "x",
     field_setup: Optional[Callable[[yt.Dataset], None]] = None
+    downsample_factor: int = 1
     extra_options: Dict[str, Any] = field(default_factory=dict)
 
     def load_dataset(self) -> yt.Dataset:
         """Load the yt dataset and register derived fields if requested."""
         ds = yt.load(self.dataset_path)
+        if self.downsample_factor > 1:
+            ds = make_downsampled_dataset(ds, self.downsample_factor)
         if self.field_setup:
             self.field_setup(ds)
         return ds
