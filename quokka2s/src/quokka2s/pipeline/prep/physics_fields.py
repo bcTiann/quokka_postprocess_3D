@@ -3,9 +3,8 @@
 import yt
 import numpy as np
 from scipy.special import erf as scipy_erf
-from yt.units import K, mp, kb, mh, planck_constant, cm, m, s, g, erg, amu
+from yt.units import K, mp, kb, mh, planck_constant, cm, m, s, g, erg, amu, kpc
 from ...analysis import along_sight_cumulation
-from ...despotic_tables import compute_average
 from . import config as cfg
 from ...tables import load_table
 from ...tables.lookup import TableLookup
@@ -55,7 +54,7 @@ def _number_density_H(field, data):
 
 def _column_density_H(field, data):
     density_3d = data[('gas', 'density')].in_cgs()
-    
+
     # Check if data is 1D (flattened cells) - common in PhasePlot or certain yt operations
     if density_3d.ndim == 1:
         # For 1D data, we cannot compute column density along axes
@@ -68,25 +67,50 @@ def _column_density_H(field, data):
         domain_size = (ds.domain_right_edge - ds.domain_left_edge)
         char_length = (domain_size.prod() ** (1/3)) / (len(n_H) ** (1/3))
         return (n_H * char_length).to('cm**-2')
-    
+
     dx_3d = data[("boxlib", "dx")].in_cgs()
     dy_3d = data[("boxlib", "dy")].in_cgs()
     dz_3d = data[("boxlib", "dz")].in_cgs()
 
     n_H_3d = (density_3d * cfg.X_H) / m_H
 
-    Nx_p = along_sight_cumulation(n_H_3d * dx_3d, axis="x", sign="+")
-    Ny_p = along_sight_cumulation(n_H_3d * dy_3d, axis="y", sign="+")
-    Nz_p = along_sight_cumulation(n_H_3d * dz_3d, axis="z", sign="+")
-    Nx_n = along_sight_cumulation(n_H_3d * dx_3d, axis="x", sign="-")
-    Ny_n = along_sight_cumulation(n_H_3d * dy_3d, axis="y", sign="-")
-    Nz_n = along_sight_cumulation(n_H_3d * dz_3d, axis="z", sign="-")
+    # Lateral (x, y) extension: shearing-box faces are periodic BCs, not
+    # physical edges.  Add  L_ext * <n_H>(z)  to each ±x, ±y ray, with
+    # <n_H>(z) the (x, y)-mean number density at the cell's own height.
+    # ±z gets no extension — the box already spans the stratified disk.
+    # See cfg.COLUMN_EXTENSION_LATERAL_KPC for the rationale.
+    L_ext_kpc = float(cfg.COLUMN_EXTENSION_LATERAL_KPC)
+    if L_ext_kpc > 0.0:
+        L_ext_qty   = (L_ext_kpc * kpc).in_units('cm')        # unyt, cm
+        n_bar_z     = n_H_3d.mean(axis=(0, 1))                # unyt, cm^-3
+        N_ext_lat_3d = (L_ext_qty * n_bar_z)[None, None, :]   # unyt, cm^-2
+    else:
+        N_ext_lat_3d = None
 
-    average_N_3d = compute_average(
-        [Nx_p, Ny_p, Nz_p, Nx_n, Ny_n, Nz_n],
-        method="harmonic",
-    )
-    return average_N_3d.to('cm**-2')
+    # Streaming harmonic mean: H = 6 / Σ_k (1/N_k).
+    # Build one directional cumulation at a time, fold 1/N_k into the
+    # reciprocal accumulator, then free it. Function-internal peak: ~5 GB
+    # (vs ~22 GB for the original stack-then-aggregate version at down=1).
+    inv_sum = None
+    for axis, sign, dxyz, lateral in (
+        ("x", "+", dx_3d, True),
+        ("x", "-", dx_3d, True),
+        ("y", "+", dy_3d, True),
+        ("y", "-", dy_3d, True),
+        ("z", "+", dz_3d, False),
+        ("z", "-", dz_3d, False),
+    ):
+        N = along_sight_cumulation(n_H_3d * dxyz, axis=axis, sign=sign)
+        if lateral and N_ext_lat_3d is not None:
+            N = N + N_ext_lat_3d
+        inc = 1.0 / N
+        del N
+        if inv_sum is None:
+            inv_sum = inc
+        else:
+            inv_sum = inv_sum + inc
+        del inc
+    return (6.0 / inv_sum).to('cm**-2')
 
 
 def _dVdr_lvg(field, data):
@@ -178,22 +202,33 @@ def build_spectral_cube(
     nx, ny, nz = shifted_freq_val.shape
     spec_cube = np.zeros((n_channels, ny, nz))
 
-    nu_lo = freq_edges_hz[:-1][:, None, None]   # (n_ch, 1, 1)
-    nu_hi = freq_edges_hz[1:][:, None, None]
     delta_nu_bin = float(freq_edges_hz[1] - freq_edges_hz[0])
 
-    for i in range(nx):
-        nu_gas  = shifted_freq_val[i, :, :][None, :, :]   # (1, ny, nz)
-        lum_gas = lum_val[i, :, :][None, :, :]
-        sigma_v = np.maximum(thermal_val[i, :, :], 1.0)[None, :, :]
-        sigma_nu = nu_gas * (sigma_v / c_cms)
+    # Process channels in chunks to bound per-iteration transient memory.
+    # The unchunked version allocates ~5 arrays of (n_channels, ny, nz)
+    # per LOS cell — at down=1 (n_ch=300, ny=256, nz=2048) that is ~6 GB
+    # transient per inner step.  CHUNK=150 halves that to ~3 GB per build
+    # (well within budget for 2-6 parallel workers at down=1) while keeping
+    # only 2 outer iters so the Python loop overhead stays trivial.
+    CHUNK = 150
 
-        sqrt2_sigma = np.sqrt(2.0) * sigma_nu
-        x_lo = (nu_lo - nu_gas) / sqrt2_sigma              # (n_ch, ny, nz)
-        x_hi = (nu_hi - nu_gas) / sqrt2_sigma
-        bin_frac = 0.5 * (scipy_erf(x_hi) - scipy_erf(x_lo))
+    for ch0 in range(0, n_channels, CHUNK):
+        ch1 = min(ch0 + CHUNK, n_channels)
+        nu_lo = freq_edges_hz[ch0:ch1][:, None, None]          # (chunk, 1, 1)
+        nu_hi = freq_edges_hz[ch0 + 1:ch1 + 1][:, None, None]
 
-        spec_cube += lum_gas * bin_frac / delta_nu_bin
+        for i in range(nx):
+            nu_gas  = shifted_freq_val[i, :, :][None, :, :]    # (1, ny, nz)
+            lum_gas = lum_val[i, :, :][None, :, :]
+            sigma_v = np.maximum(thermal_val[i, :, :], 1.0)[None, :, :]
+            sigma_nu = nu_gas * (sigma_v / c_cms)
+
+            sqrt2_sigma = np.sqrt(2.0) * sigma_nu
+            x_lo = (nu_lo - nu_gas) / sqrt2_sigma              # (chunk, ny, nz)
+            x_hi = (nu_hi - nu_gas) / sqrt2_sigma
+            bin_frac = 0.5 * (scipy_erf(x_hi) - scipy_erf(x_lo))
+
+            spec_cube[ch0:ch1] += lum_gas * bin_frac / delta_nu_bin
 
     return spec_cube
     

@@ -18,6 +18,14 @@ from .phase_resolved_spectrum import PhaseResolvedSpectrumTask
 from .spaxel_sigma import SpaxelSigmaTask
 from .sigma_sfr_overlay import SigmaSFROverlayTask
 from .temperature_slices import TemperatureSlicesTask
+from .temperature_projection import TemperatureProjectionTask
+from .temperature_lext_diff import TemperatureLextDiffTask
+from .emitter_lext_diff import EmitterLextDiffTask
+from .trust_region import TrustRegionTask
+from .multi_field_slices import MultiFieldSlicesTask
+from .phase_plots import PhasePlotTask
+from .phase_colden import PhaseColdenTask
+from .phase_combined import PhaseCombinedTask
 
 
 __all__ = [
@@ -40,6 +48,14 @@ __all__ = [
     "SpaxelSigmaTask",
     "SigmaSFROverlayTask",
     "TemperatureSlicesTask",
+    "TemperatureProjectionTask",
+    "TemperatureLextDiffTask",
+    "EmitterLextDiffTask",
+    "TrustRegionTask",
+    "MultiFieldSlicesTask",
+    "PhasePlotTask",
+    "PhaseColdenTask",
+    "PhaseCombinedTask",
     # "HalphaWithDustTask",
     # "HalphaComparisonTask",
 ]

@@ -1,19 +1,19 @@
-"""TemperatureSlicesTask: multi-slice T_QUOKKA vs T_DESPOTIC comparison.
+"""TemperatureSlicesTask: T_QUOKKA vs T_DESPOTIC slice triplets.
 
-For one snapshot, take several slices through the cube along `slice_axis`
-and lay them out row-by-row. Three columns per row:
-  - T_QUOKKA      (raw ideal-gas temperature, fixed μ, γ)
-  - T_DESPOTIC    (μ/γ-iterated table lookup; the field other tasks use)
-  - log10(T_DESPOTIC / T_QUOKKA)   (deviation, ±1 dex window)
+Companion of TemperatureProjectionTask (line-of-sight projections live there).
+Single row of  3 × n_slices  panels, grouped by slice index:
 
-Same shared LogNorm across columns 0 and 1 so they are directly comparable.
-The ratio column uses RdBu_r at ±1 dex.
+    [ T_QK@idx0, T_DSP@idx0, T_DSP/T_QK @idx0,
+      T_QK@idx1, T_DSP@idx1, T_DSP/T_QK @idx1,
+      ... ]
 
-This is the pipeline analogue of the standalone script at
-`compare_T_quokka_vs_despotic_slices.py`. Differences:
-  * runs per snapshot automatically, with output in the snapshot's output_dir
-  * reuses the shared covering grid via PipelineDataProvider — no extra IO
-  * slice axis and indices are configurable
+So each slice contributes its own (QK, DSP, ratio) triplet at the same
+geometric position, letting you read off "who is bigger" at every slice.
+
+All T panels share one log10(T) colour scale (pooled p0.5/p99.5 across
+every T panel).  All ratio panels share one symmetric diverging colour
+scale (max |log10(ratio)| pooled across every ratio panel, capped at
+``ratio_clip_dex``).  Blue → DESPOTIC colder than QUOKKA, red → hotter.
 
 Output: temperature_slices.png
 """
@@ -21,180 +21,203 @@ from __future__ import annotations
 
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib.colors import LogNorm
+from matplotlib.colors import Normalize
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 from ..base import AnalysisTask, PipelinePlotContext
-from ..prep import config as cfg
+
+
+_CMAP_T     = 'turbo'
+_CMAP_RATIO = 'RdBu_r'
+
+_T_LABEL_QK    = r'$\log_{10}\,T_{\rm QUOKKA}$ [K]'
+_T_LABEL_DSP   = r'$\log_{10}\,T_{\rm DESPOTIC}$ [K]'
+_T_LABEL_RATIO = r'$\log_{10}\,(T_{\rm DSP} / T_{\rm QK})$'
 
 
 class TemperatureSlicesTask(AnalysisTask):
-    """Multi-slice T_QUOKKA vs T_DESPOTIC comparison for one plt snapshot."""
+    """T_QUOKKA / T_DESPOTIC slice triplets (QK, DSP, ratio) per slice index."""
 
     def __init__(self, config,
                  slice_axis: str = 'x',
-                 n_slices: int = 12,
-                 cols_per_row: int = 6,
-                 slice_indices: tuple[int, ...] | None = None,
-                 cmap: str | None = None):
+                 n_slices: int = 4,
+                 ratio_clip_dex: float = 1.0,
+                 figure_units: str = 'kpc',
+                 filename: str = 'temperature_slices.png'):
         super().__init__(config)
         self.slice_axis     = slice_axis
         self.n_slices       = int(n_slices)
-        # cols_per_row controls layout wrap: 12 slices with cols_per_row=6
-        # becomes 2 super-rows × 6 cols (instead of a 1×12 ribbon).
-        self.cols_per_row   = int(cols_per_row)
-        # When None, indices are computed at plot time from the cube shape so
-        # the same default works for any downsample factor.
-        self._explicit_idx  = tuple(slice_indices) if slice_indices is not None else None
-        self.cmap           = cmap or cfg.CMAP
-
-    def prepare(self, context: PipelinePlotContext) -> None:
-        p = context.provider
-        T_qk, extent_dict = p.get_slab_z(('gas', 'temperature_quokka'))
-        T_md, _           = p.get_slab_z(('gas', 'temperature_despotic'))
-        self._T_qk     = T_qk.to('K').value
-        self._T_md     = T_md.to('K').value
-        self._extent_dict = extent_dict
+        self.ratio_clip_dex = float(ratio_clip_dex)
+        self.figure_units   = figure_units
+        self.filename       = filename
+        self._axis_idx      = {'x': 0, 'y': 1, 'z': 2}[slice_axis]
 
     def compute(self, context: PipelinePlotContext) -> dict:
-        extent_unyt = self._extent_dict[self.slice_axis]
-        extent_pc   = [float(v.in_units('pc').value) for v in extent_unyt]
+        p = context.provider
+        T_qk_unyt, extent_dict = p.get_slab_z(('gas', 'temperature_quokka'))
+        T_md_unyt, _           = p.get_slab_z(('gas', 'temperature_despotic'))
+        T_qk = T_qk_unyt.to('K').value
+        T_md = T_md_unyt.to('K').value
+        del T_qk_unyt, T_md_unyt
+
+        n_cells = T_qk.shape[self._axis_idx]
+        # n_slices+2 anchors then drop endpoints to avoid boundary cells.
+        slice_indices = (np.linspace(0, n_cells - 1, self.n_slices + 2)
+                           .astype(int)[1:-1])
+
+        extent_unyt  = extent_dict[self.slice_axis]
+        extent_units = [float(v.in_units(self.figure_units).value) for v in extent_unyt]
+
+        T_qk_slices: list[np.ndarray] = []
+        T_md_slices: list[np.ndarray] = []
+        for idx in slice_indices:
+            T_qk_slices.append(np.asarray(self._take_slice(T_qk, int(idx))).copy())
+            T_md_slices.append(np.asarray(self._take_slice(T_md, int(idx))).copy())
+
         return {
-            'T_qk': self._T_qk,
-            'T_md': self._T_md,
-            'extent_pc': extent_pc,
+            'T_qk_slices':   T_qk_slices,
+            'T_md_slices':   T_md_slices,
+            'slice_indices': np.asarray(slice_indices, dtype=int),
+            'extent':        extent_units,
         }
 
+    def _take_slice(self, cube: np.ndarray, idx: int) -> np.ndarray:
+        sl = [slice(None)] * 3
+        sl[self._axis_idx] = int(idx)
+        return cube[tuple(sl)]
+
     def plot(self, context: PipelinePlotContext, results: dict) -> None:
-        T_q          = results['T_qk']
-        T_d          = results['T_md']
-        # extent_pc from get_slab_z is [horiz0, horiz1, vert0, vert1] for the
-        # slice plane in the original orientation (vert axis is the longer one,
-        # e.g. z when slicing along x). We rotate panels here so the longer
-        # axis becomes horizontal — extent reorders to [vert0, vert1, horiz0, horiz1].
-        ext_in       = results['extent_pc']
-        extent       = [ext_in[2], ext_in[3], ext_in[0], ext_in[1]]
+        T_qk_slices   = results['T_qk_slices']
+        T_md_slices   = results['T_md_slices']
+        slice_indices = list(results['slice_indices'])
+        extent        = results['extent']
+        ext_plot = [extent[0], extent[1], extent[2], extent[3]]
 
-        pos_q = T_q[T_q > 0]
-        pos_d = T_d[T_d > 0]
-        if pos_q.size == 0 or pos_d.size == 0:
-            print('TemperatureSlicesTask: no positive temperature cells, skipping')
+        n_slices = len(slice_indices)
+        if n_slices == 0:
+            print('TemperatureSlicesTask: no slices to draw, skipping')
             return
-        Tmin = max(min(float(pos_q.min()), float(pos_d.min())), 1.0)
-        Tmax = float(max(T_q.max(), T_d.max()))
-        t_norm = LogNorm(vmin=Tmin, vmax=Tmax)
 
-        horiz_label, vert_label = self._plane_axis_labels()
-        # After rotation, the long axis goes horizontal — swap labels accordingly.
-        plot_horiz, plot_vert = vert_label, horiz_label
+        # Pass A — build log10 panels (T and ratio) and gather their ranges.
+        # T panels: list of (log_data, p_lo, p_hi, label, sidx)
+        # R panels: list of (log_ratio, p_lo, p_hi, sidx)
+        t_panels: list[dict | None] = []
+        r_panels: list[dict | None] = []
+        for i, sidx in enumerate(slice_indices):
+            qk = T_qk_slices[i].T   # vertical = long axis
+            ds = T_md_slices[i].T
 
-        slice_indices = self._resolve_indices(T_q)
-        n_slices      = len(slice_indices)
-        cpr           = max(1, min(self.cols_per_row, n_slices))
-        n_super_rows  = (n_slices + cpr - 1) // cpr     # ceil(n / cpr)
-        n_grid_rows   = 3 * n_super_rows                # 3 metrics per super-row
+            # T_QK panel
+            pos_qk = qk > 0
+            if pos_qk.any():
+                log_qk = np.where(pos_qk, np.log10(np.where(pos_qk, qk, 1.0)), np.nan)
+                t_panels.append({
+                    'log_data': log_qk,
+                    'p_lo': float(np.nanpercentile(log_qk, 0.5)),
+                    'p_hi': float(np.nanpercentile(log_qk, 99.5)),
+                    'label': _T_LABEL_QK,
+                    'sidx':  int(sidx),
+                })
+            else:
+                t_panels.append(None)
 
-        # Panel aspect is roughly z:y ≈ 4:1 → with aspect='equal' each panel
-        # is width/4 tall. Per super-row needs ~1.3 in for 3 metric rows plus
-        # tick/title spacing. With cpr=6 + 2 super-rows we get ~21×8 in,
-        # much bigger panels than the old 1×12 strip.
-        fig, axes = plt.subplots(n_grid_rows, cpr,
-                                 figsize=(3.5 * cpr, 4.0 * n_super_rows),
-                                 constrained_layout=True)
-        # Normalise axes to a 2D ndarray even when cpr==1 or n_grid_rows==3.
-        axes = np.atleast_2d(axes)
-        if cpr == 1:
-            axes = axes.reshape(n_grid_rows, 1)
+            # T_DSP panel
+            pos_ds = ds > 0
+            if pos_ds.any():
+                log_ds = np.where(pos_ds, np.log10(np.where(pos_ds, ds, 1.0)), np.nan)
+                t_panels.append({
+                    'log_data': log_ds,
+                    'p_lo': float(np.nanpercentile(log_ds, 0.5)),
+                    'p_hi': float(np.nanpercentile(log_ds, 99.5)),
+                    'label': _T_LABEL_DSP,
+                    'sidx':  int(sidx),
+                })
+            else:
+                t_panels.append(None)
 
-        im_d = im_r = None
+            # ratio = log10(T_DSP / T_QK), valid only where both > 0
+            both_pos = pos_qk & pos_ds
+            if both_pos.any():
+                with np.errstate(divide='ignore', invalid='ignore'):
+                    log_r = np.where(
+                        both_pos,
+                        np.log10(np.where(both_pos, ds, 1.0))
+                        - np.log10(np.where(both_pos, qk, 1.0)),
+                        np.nan,
+                    )
+                finite_r = log_r[np.isfinite(log_r)]
+                r_panels.append({
+                    'log_data': log_r,
+                    'p_lo': float(np.nanpercentile(finite_r, 1.0)) if finite_r.size else 0.0,
+                    'p_hi': float(np.nanpercentile(finite_r, 99.0)) if finite_r.size else 0.0,
+                    'sidx': int(sidx),
+                })
+            else:
+                r_panels.append(None)
 
-        for s_idx, idx in enumerate(slice_indices):
-            super_row = s_idx // cpr
-            col       = s_idx %  cpr
-            r0        = 3 * super_row
+        valid_T = [p for p in t_panels if p is not None]
+        if not valid_T:
+            print('TemperatureSlicesTask: all T panels empty, skipping')
+            return
+        log_vmin_T = min(p['p_lo'] for p in valid_T)
+        log_vmax_T = max(p['p_hi'] for p in valid_T)
 
-            Tq_slice = self._take_slice(T_q, idx)
-            Td_slice = self._take_slice(T_d, idx)
-            ratio    = np.log10(np.maximum(Td_slice, 1.0) /
-                                np.maximum(Tq_slice, 1.0))
+        valid_R = [p for p in r_panels if p is not None]
+        if valid_R:
+            r_extreme = max(max(abs(p['p_lo']), abs(p['p_hi'])) for p in valid_R)
+            r_lim     = max(min(r_extreme, self.ratio_clip_dex), 0.1)
+        else:
+            r_lim = self.ratio_clip_dex
 
-            axes[r0,     col].imshow(Tq_slice, origin='lower', extent=extent,
-                                     norm=t_norm, cmap=self.cmap, aspect='equal')
-            im_d = axes[r0 + 1, col].imshow(Td_slice, origin='lower', extent=extent,
-                                            norm=t_norm, cmap=self.cmap, aspect='equal')
-            im_r = axes[r0 + 2, col].imshow(ratio,    origin='lower', extent=extent,
-                                            cmap='RdBu_r', vmin=-1, vmax=1, aspect='equal')
+        # Interleave for plotting:  QK_0, DSP_0, R_0, QK_1, DSP_1, R_1, ...
+        plot_order: list[tuple[str, dict | None]] = []
+        for i in range(n_slices):
+            plot_order.append(('T', t_panels[2 * i]))      # T_QK
+            plot_order.append(('T', t_panels[2 * i + 1]))  # T_DSP
+            plot_order.append(('R', r_panels[i]))          # ratio
 
-            axes[r0,     col].set_title(f'{self.slice_axis}_idx = {idx}', fontsize=11)
-            axes[r0 + 2, col].set_xlabel(f'{plot_horiz} [pc]')
-
-        # Row labels on the leftmost panel of every super-row.
-        for sr in range(n_super_rows):
-            r0 = 3 * sr
-            axes[r0,     0].set_ylabel(f'T$_{{\\rm QUOKKA}}$\n{plot_vert} [pc]', fontsize=10)
-            axes[r0 + 1, 0].set_ylabel(f'T$_{{\\rm DESPOTIC}}$\n{plot_vert} [pc]', fontsize=10)
-            axes[r0 + 2, 0].set_ylabel(
-                r'$\log_{10}(T_{\rm DESP}/T_{\rm QUO})$'
-                f'\n{plot_vert} [pc]',
-                fontsize=10,
-            )
-
-        # Hide any leftover empty subplots in the bottom super-row (when
-        # n_slices is not a multiple of cpr).
-        used_in_last_row = n_slices - (n_super_rows - 1) * cpr
-        if used_in_last_row < cpr:
-            r0 = 3 * (n_super_rows - 1)
-            for c in range(used_in_last_row, cpr):
-                for r in (r0, r0 + 1, r0 + 2):
-                    axes[r, c].set_visible(False)
-
-        # Colorbars: one T + one ratio per super-row, placed on the right of
-        # that super-row. Sharing a single colorbar across non-contiguous
-        # axes lists causes them to overlap, so we give each super-row its own.
-        for sr in range(n_super_rows):
-            r0 = 3 * sr
-            t_axes = [axes[r0,     c] for c in range(cpr) if axes[r0,     c].get_visible()] + \
-                     [axes[r0 + 1, c] for c in range(cpr) if axes[r0 + 1, c].get_visible()]
-            r_axes = [axes[r0 + 2, c] for c in range(cpr) if axes[r0 + 2, c].get_visible()]
-            t_label = 'T [K]'
-            r_label = (r'$\log_{10}(T_{\rm DESPOTIC}/T_{\rm QUOKKA})$' '\n'
-                       '(red: DESP hotter; blue: cooler)') if sr == n_super_rows - 1 else \
-                       r'$\log_{10}(T_{\rm DESP}/T_{\rm QUO})$'
-            fig.colorbar(im_d, ax=t_axes, label=t_label, shrink=0.85, pad=0.02)
-            fig.colorbar(im_r, ax=r_axes, label=r_label, shrink=0.85, pad=0.02)
-
-        fig.suptitle(
-            r'T$_{\rm QUOKKA}$ (raw ideal gas) vs '
-            r'T$_{\rm DESPOTIC}$ (table: n$_H$, N$_H$, dV/dr)'
-            f'  —  slices along {self.slice_axis}-axis',
-            fontsize=12,
+        n_panels = len(plot_order)
+        fig, axes = plt.subplots(
+            1, n_panels,
+            figsize=(2.4 * n_panels, 12),
+            sharey=True,
+            gridspec_kw={'wspace': 0.08, 'top': 0.86, 'bottom': 0.06},
         )
 
-        out = self.config.output_dir / 'temperature_slices.png'
-        fig.savefig(str(out), dpi=150, bbox_inches='tight')
+        for ax, (kind, st) in zip(axes, plot_order):
+            if st is None:
+                ax.set_title('(empty)', fontsize=9)
+                continue
+            if kind == 'T':
+                im = ax.imshow(
+                    st['log_data'],
+                    origin='lower', extent=ext_plot, aspect='auto',
+                    cmap=_CMAP_T, norm=Normalize(vmin=log_vmin_T, vmax=log_vmax_T),
+                )
+                label = st['label']
+            else:  # 'R'
+                im = ax.imshow(
+                    st['log_data'],
+                    origin='lower', extent=ext_plot, aspect='auto',
+                    cmap=_CMAP_RATIO, norm=Normalize(vmin=-r_lim, vmax=+r_lim),
+                )
+                label = _T_LABEL_RATIO
+
+            ax.tick_params(axis='both', labelsize=8)
+            divider = make_axes_locatable(ax)
+            cax = divider.append_axes('top', size='2.5%', pad=0.55)
+            cbar = fig.colorbar(im, cax=cax, orientation='horizontal')
+            cbar.ax.tick_params(labelsize=8, top=True, bottom=False,
+                                labeltop=True, labelbottom=False)
+            cax.set_title(f'{label}\n{self.slice_axis} idx = {st["sidx"]}',
+                          fontsize=9, pad=4)
+
+        plane = {'x': ('y', 'z'), 'y': ('x', 'z'), 'z': ('x', 'y')}[self.slice_axis]
+        axes[0].set_ylabel(f'{plane[1]} [{self.figure_units}]', fontsize=10)
+        for ax in axes:
+            ax.set_xlabel(f'{plane[0]} [{self.figure_units}]', fontsize=9)
+
+        out = context.config.output_dir / self.filename
+        fig.savefig(str(out), dpi=200, bbox_inches='tight')
         plt.close(fig)
         print(f'Saved: {out}')
-
-    def _take_slice(self, cube: np.ndarray, idx: int) -> np.ndarray:
-        if self.slice_axis == 'x':
-            return cube[idx, :, :]
-        if self.slice_axis == 'y':
-            return cube[:, idx, :]
-        return cube[:, :, idx]
-
-    def _resolve_indices(self, cube: np.ndarray) -> tuple[int, ...]:
-        """Return slice indices: explicit override if given, else `n_slices`
-        evenly-spaced positions across the slice axis (skipping the edges)."""
-        if self._explicit_idx is not None:
-            return self._explicit_idx
-        axis_idx = {'x': 0, 'y': 1, 'z': 2}[self.slice_axis]
-        n_cells  = cube.shape[axis_idx]
-        # n_slices+2 points then strip first/last so we avoid the boundary cell.
-        return tuple(np.linspace(0, n_cells - 1, self.n_slices + 2)
-                       .astype(int)[1:-1].tolist())
-
-    def _plane_axis_labels(self) -> tuple[str, str]:
-        if self.slice_axis == 'x':
-            return ('y', 'z')
-        if self.slice_axis == 'y':
-            return ('x', 'z')
-        return ('x', 'y')

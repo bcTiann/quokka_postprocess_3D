@@ -3,7 +3,6 @@ from yt.units import K, mp, kb, mh, planck_constant, cm, m, s, g, erg
 from ..prep.physics_fields import add_all_fields
 from ..prep import config as cfg
 from ...data_handling import YTDataProvider
-from ...despotic_tables import compute_average
 from ...analysis import along_sight_cumulation
 from ...tables.lookup import TableLookup
 from ...tables import load_table
@@ -19,18 +18,22 @@ def ensure_table_lookup(path: str | None) -> TableLookup:
     return TABLE_LOOKUP_CACHE
 
 def _Avg_column_density_H(n_H, dx, dy, dz):
-    Nx_p = along_sight_cumulation(n_H * dx, axis="x", sign="+")
-    Ny_p = along_sight_cumulation(n_H * dy, axis="y", sign="+")
-    Nz_p = along_sight_cumulation(n_H * dz, axis="z", sign="+")
-    Nx_n = along_sight_cumulation(n_H * dx, axis="x", sign="-")
-    Ny_n = along_sight_cumulation(n_H * dy, axis="y", sign="-")
-    Nz_n = along_sight_cumulation(n_H * dz, axis="z", sign="-")
-
-    average_N_3d = compute_average(
-        [Nx_p, Ny_p, Nz_p, Nx_n, Ny_n, Nz_n],
-        method="harmonic",
-    )
-    return average_N_3d.to('cm**-2')
+    # Streaming harmonic mean (same shape as _column_density_H).
+    inv_sum = None
+    for axis, sign, d in (
+        ("x", "+", dx), ("x", "-", dx),
+        ("y", "+", dy), ("y", "-", dy),
+        ("z", "+", dz), ("z", "-", dz),
+    ):
+        N = along_sight_cumulation(n_H * d, axis=axis, sign=sign)
+        inc = 1.0 / N
+        del N
+        if inv_sum is None:
+            inv_sum = inc
+        else:
+            inv_sum = inv_sum + inc
+        del inc
+    return (6.0 / inv_sum).to('cm**-2')
 
 
 def _temperature(n_H, ColDen_H):

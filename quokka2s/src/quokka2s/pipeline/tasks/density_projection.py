@@ -29,18 +29,12 @@ class DensityProjectionTask(AnalysisTask):
         self.xlabel, self.ylabel = make_axis_labels(self.axis, self.figure_units)
         self.title = title
         self.filename = filename
-        self._rho_3d = None
-        self._extent = None
         self._norm = LogNorm()
 
-    def prepare(self, context: PipelinePlotContext) -> None:
-        provider = context.provider
-        self._rho_3d, self._extent = provider.get_slab_z(("gas", "density"))
-
     def compute(self, context: PipelinePlotContext):
-        density_projection = np.sum(self._rho_3d, axis=self.axis_idx)
-        context.results["density_projection"] = density_projection
-        return {"map": density_projection, "extent": self._extent[self.axis]}
+        rho_3d, extent = context.provider.get_slab_z(("gas", "density"))
+        density_projection = np.sum(rho_3d, axis=self.axis_idx)
+        return {"map": density_projection, "extent": extent[self.axis]}
 
     def plot(self, context: PipelinePlotContext, results):
         output = self.config.output_dir / self.filename

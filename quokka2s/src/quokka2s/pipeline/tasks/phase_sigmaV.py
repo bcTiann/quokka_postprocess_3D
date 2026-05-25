@@ -44,20 +44,26 @@ class PhaseSigmaVTask(AnalysisTask):
 
     def __init__(self, config):
         super().__init__(config)
-        self._vx = self._vy = self._rho = self._T = None
 
-    def prepare(self, context: PipelinePlotContext) -> None:
-        p = context.provider
-        self._vx,  _ = p.get_slab_z(('gas', 'velocity_x'))
-        self._vy,  _ = p.get_slab_z(('gas', 'velocity_y'))
-        self._rho, _ = p.get_slab_z(('gas', 'density'))
-        self._T,   _ = p.get_slab_z(('gas', 'temperature_despotic'))
+    # ── Histogram binning controls ────────────────────────────────────────
+    # Pre-compute per-phase velocity PDFs in compute() so the task intermediate
+    # only stores binned counts (kilobytes), not the raw 3D velocity / density
+    # / T cubes (gigabytes).
+    HIST_N_BINS  = 120
+    HIST_PCT_LO  = 0.5     # percentile bracket used to set bin range per phase
+    HIST_PCT_HI  = 99.5
 
     def compute(self, context: PipelinePlotContext) -> dict:
-        vx  = self._vx.in_units('km/s').value.ravel()
-        vy  = self._vy.in_units('km/s').value.ravel()
-        rho = self._rho.value.ravel()
-        T   = self._T.in_units('K').value.ravel()
+        p = context.provider
+        vx_u,  _ = p.get_slab_z(('gas', 'velocity_x'))
+        vy_u,  _ = p.get_slab_z(('gas', 'velocity_y'))
+        rho_u, _ = p.get_slab_z(('gas', 'density'))
+        T_u,   _ = p.get_slab_z(('gas', 'temperature_despotic'))
+        vx  = vx_u.in_units('km/s').value.ravel()
+        vy  = vy_u.in_units('km/s').value.ravel()
+        rho = rho_u.value.ravel()
+        T   = T_u.in_units('K').value.ravel()
+        del vx_u, vy_u, rho_u, T_u
 
         phase_x = mass_weighted_sigma_by_phase(vx, rho, T)
         phase_y = mass_weighted_sigma_by_phase(vy, rho, T)
@@ -71,8 +77,35 @@ class PhaseSigmaVTask(AnalysisTask):
                   f'{px["sigma"]:>14.2f} {py["sigma"]:>14.2f}')
         print('=====================================\n')
 
-        return {'phase_x': phase_x, 'phase_y': phase_y,
-                'vx': vx, 'vy': vy, 'rho': rho, 'T': T}
+        # Pre-bin the histograms here so we don't have to cache the raw cubes.
+        masks = classify_temperature_phase(T)
+        histograms = {}  # {LOS: {phase: {'bin_centers', 'pdf'}}}
+        for vel_arr, los in ((vx, 'x'), (vy, 'y')):
+            histograms[los] = {}
+            for p in PHASE_ORDER:
+                m = masks[p]
+                if not m.any():
+                    histograms[los][p] = {
+                        'bin_centers': np.zeros(0),
+                        'pdf':         np.zeros(0),
+                    }
+                    continue
+                v = vel_arr[m]
+                lo, hi = np.percentile(v, [self.HIST_PCT_LO, self.HIST_PCT_HI])
+                bin_edges = np.linspace(lo, hi, self.HIST_N_BINS + 1)
+                # density=True + weights=rho[m] reproduces what _plot_hist drew.
+                counts, _ = np.histogram(v, bins=bin_edges,
+                                         weights=rho[m], density=True)
+                histograms[los][p] = {
+                    'bin_centers': 0.5 * (bin_edges[:-1] + bin_edges[1:]),
+                    'pdf':         counts,
+                }
+
+        return {
+            'phase_x':    phase_x,
+            'phase_y':    phase_y,
+            'histograms': histograms,
+        }
 
     def plot(self, context: PipelinePlotContext, results: dict) -> None:
         self._plot_bar(results)
@@ -106,30 +139,28 @@ class PhaseSigmaVTask(AnalysisTask):
         print(f'Saved: {out}')
 
     def _plot_hist(self, results: dict) -> None:
-        masks = classify_temperature_phase(results['T'])
-        rho   = results['rho']
-
-        n_phases = len(PHASE_ORDER)
-        fig, axes = plt.subplots(n_phases, 2, figsize=(13, 3.2 * n_phases))
-        for col, (vel, los, phase_dict) in enumerate([
-            (results['vx'], 'x', results['phase_x']),
-            (results['vy'], 'y', results['phase_y']),
+        histograms = results['histograms']
+        n_phases   = len(PHASE_ORDER)
+        fig, axes  = plt.subplots(n_phases, 2, figsize=(13, 3.2 * n_phases))
+        for col, (los, phase_dict) in enumerate([
+            ('x', results['phase_x']),
+            ('y', results['phase_y']),
         ]):
             for row, p in enumerate(PHASE_ORDER):
-                ax = axes[row, col]
-                m  = masks[p]
-                if m.sum() == 0:
+                ax    = axes[row, col]
+                hist  = histograms[los][p]
+                centers = hist['bin_centers']
+                pdf     = hist['pdf']
+                if centers.size == 0:
                     ax.text(0.5, 0.5, f'{p}: no cells',
                             transform=ax.transAxes, ha='center', va='center')
                     continue
                 v_mean = phase_dict[p]['v_mean']
-                v  = vel[m]
-                lo, hi = np.percentile(v, [0.5, 99.5])
-                bins   = np.linspace(lo, hi, 120)
-                ax.hist(v, bins=bins, weights=rho[m], density=True,
-                        histtype='step', lw=1.6, color=PHASE_COLOR[p])
-                sig = phase_dict[p]['sigma']
-                mf  = phase_dict[p]['mass_frac']
+                sig    = phase_dict[p]['sigma']
+                mf     = phase_dict[p]['mass_frac']
+                # Step plot from pre-binned histogram (same visual as ax.hist).
+                ax.step(centers, pdf, where='mid',
+                        lw=1.6, color=PHASE_COLOR[p])
                 ax.axvline(v_mean,       color='gray',          ls=':',  lw=0.8, alpha=0.5)
                 ax.axvline(v_mean - sig, color=PHASE_COLOR[p],  ls='--', lw=0.9, alpha=0.6)
                 ax.axvline(v_mean + sig, color=PHASE_COLOR[p],  ls='--', lw=0.9, alpha=0.6)

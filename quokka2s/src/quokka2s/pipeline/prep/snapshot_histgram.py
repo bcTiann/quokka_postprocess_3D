@@ -2,12 +2,11 @@ import numpy as np
 import matplotlib.pyplot as plt
 from ...tables import load_table, plot_sampling_histogram
 import yt
-from yt.units import mh
+from yt.units import mh, kpc
 from . import config as cfg
 from ...data_handling import YTDataProvider
 from ...analysis import along_sight_cumulation
 from . import physics_fields as phys
-from ...despotic_tables import compute_average
 
 table = load_table(cfg.DESPOTIC_TABLE_PATH)
 
@@ -52,18 +51,38 @@ dz_3d, dz_3d_extent = provider.get_slab_z(
     field=('boxlib', 'dz')
 )
 
-Nx_p = along_sight_cumulation(n_H_3d * dx_3d, axis="x", sign="+") 
-Ny_p = along_sight_cumulation(n_H_3d * dy_3d, axis="y", sign="+") 
-Nz_p = along_sight_cumulation(n_H_3d * dz_3d, axis="z", sign="+")
+# Streaming harmonic mean (same as _column_density_H in physics_fields.py).
+# Lateral ±x, ±y rays get the box-exterior extension  L_ext * <n_H>(z); ±z
+# does not (the stratified box already covers the disk vertically).  Keep
+# this in sync with cfg.COLUMN_EXTENSION_LATERAL_KPC and physics_fields.py.
+L_ext_kpc = float(cfg.COLUMN_EXTENSION_LATERAL_KPC)
+if L_ext_kpc > 0.0:
+    L_ext_qty   = (L_ext_kpc * kpc).in_units('cm')        # unyt, cm
+    n_bar_z     = n_H_3d.mean(axis=(0, 1))                # unyt, cm^-3
+    N_ext_lat_3d = (L_ext_qty * n_bar_z)[None, None, :]   # unyt, cm^-2
+else:
+    N_ext_lat_3d = None
 
-Nx_n = along_sight_cumulation(n_H_3d * dx_3d, axis="x", sign="-")
-Ny_n = along_sight_cumulation(n_H_3d * dy_3d, axis="y", sign="-")
-Nz_n = along_sight_cumulation(n_H_3d * dz_3d, axis="z", sign="-")
-
-average_N_3d = compute_average(
-    [Nx_p, Ny_p, Nz_p, Nx_n, Ny_n, Nz_n],
-    method="harmonic",
-)
+inv_sum = None
+for axis, sign, dxyz, lateral in (
+    ("x", "+", dx_3d, True),
+    ("x", "-", dx_3d, True),
+    ("y", "+", dy_3d, True),
+    ("y", "-", dy_3d, True),
+    ("z", "+", dz_3d, False),
+    ("z", "-", dz_3d, False),
+):
+    N = along_sight_cumulation(n_H_3d * dxyz, axis=axis, sign=sign)
+    if lateral and N_ext_lat_3d is not None:
+        N = N + N_ext_lat_3d
+    inc = 1.0 / N
+    del N
+    if inv_sum is None:
+        inv_sum = inc
+    else:
+        inv_sum = inv_sum + inc
+    del inc
+average_N_3d = 6.0 / inv_sum
 
 n_H_array = n_H_3d.ravel()
 col_den_array = average_N_3d.ravel()

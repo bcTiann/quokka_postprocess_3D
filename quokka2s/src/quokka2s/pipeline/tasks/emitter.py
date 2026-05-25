@@ -20,44 +20,26 @@ class EmitterTask(AnalysisTask):
         self.axis_idx = axis_index(self.axis)
         self.figure_units = figure_units or config.figure_units
         self.xlabel, self.ylabel = make_axis_labels(self.axis, self.figure_units)
-        self._rho_3d = None
-        self._T_3d = None
-        self._dx_3d = None
-        self._extent = None
-        self._CO_lum_3d = None
-        self._Cplus_lum_3d = None
-        self._Halpha_lum_3d = None
-        self._HI_lum_3d = None
-
-    def prepare(self, context: PipelinePlotContext) -> None:
-        provider = context.provider
-        self._CO_lum_3d,     self._extent = provider.get_slab_z(("gas", "CO_luminosity"))
-        self._Cplus_lum_3d,  _            = provider.get_slab_z(("gas", "C+_luminosity"))
-        self._Halpha_lum_3d, _            = provider.get_slab_z(("gas", "H_alpha_luminosity"))
-        self._HI_lum_3d,     _            = provider.get_slab_z(("gas", "HI_luminosity"))
-        self._dx_3d, _ = provider.get_slab_z(("boxlib", "dx"))
-
-        # density-weighted projected temperature
-        self._rho_3d, _ = provider.get_slab_z(("gas", "density"))
-        self._T_3d, _   = provider.get_slab_z(("gas", "temperature_despotic"))
 
     def compute(self, context: PipelinePlotContext):
+        p = context.provider
+        CO_lum,     extent = p.get_slab_z(("gas", "CO_luminosity"))
+        Cplus_lum,  _      = p.get_slab_z(("gas", "C+_luminosity"))
+        Halpha_lum, _      = p.get_slab_z(("gas", "H_alpha_luminosity"))
+        HI_lum,     _      = p.get_slab_z(("gas", "HI_luminosity"))
+        dx,  _ = p.get_slab_z(("boxlib", "dx"))
+        rho, _ = p.get_slab_z(("gas", "density"))
+        T,   _ = p.get_slab_z(("gas", "temperature_despotic"))
 
-        ############### Luminosity (LOS sum) ################
-        CO_sb     = np.sum(self._CO_lum_3d     * self._dx_3d, axis=0)
-        Cplus_sb  = np.sum(self._Cplus_lum_3d  * self._dx_3d, axis=0)
-        Halpha_sb = np.sum(self._Halpha_lum_3d * self._dx_3d, axis=0)
-        HI_sb     = np.sum(self._HI_lum_3d     * self._dx_3d, axis=0)
+        # Luminosity (LOS sum)
+        CO_sb     = np.sum(CO_lum     * dx, axis=0)
+        Cplus_sb  = np.sum(Cplus_lum  * dx, axis=0)
+        Halpha_sb = np.sum(Halpha_lum * dx, axis=0)
+        HI_sb     = np.sum(HI_lum     * dx, axis=0)
 
-        ############### Density-weighted T projection ################
-        mass_column = np.sum(self._rho_3d * self._dx_3d, axis=0)
-        T_proj = np.sum(self._T_3d * self._rho_3d * self._dx_3d, axis=0) / mass_column
-
-        context.results["CO"]     = CO_sb
-        context.results["Cplus"]  = Cplus_sb
-        context.results["Halpha"] = Halpha_sb
-        context.results["HI"]     = HI_sb
-        context.results["T_proj"] = T_proj
+        # Density-weighted T projection
+        mass_column = np.sum(rho * dx, axis=0)
+        T_proj = np.sum(T * rho * dx, axis=0) / mass_column
 
         return {
             "CO":     CO_sb,
@@ -65,7 +47,7 @@ class EmitterTask(AnalysisTask):
             "Halpha": Halpha_sb,
             "HI":     HI_sb,
             "T_proj": T_proj,
-            "extent": self._extent[self.axis],
+            "extent": extent[self.axis],
         }
 
     def plot(self, context: PipelinePlotContext, results):

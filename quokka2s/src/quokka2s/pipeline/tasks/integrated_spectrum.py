@@ -8,17 +8,16 @@ Both dΣ/dv curves are plotted on the same axes for each species.
 """
 from __future__ import annotations
 
-import numpy as np
-from scipy.optimize import curve_fit
-from yt.units import m, s, km
-import matplotlib.pyplot as plt
 from concurrent.futures import ThreadPoolExecutor
 
-from ..prep.physics_fields import build_spectral_cube
+import numpy as np
+from scipy.optimize import curve_fit
+import matplotlib.pyplot as plt
+
 from ..prep import config as _cfg
 from ...utils.axes import axis_index
 from ..base import AnalysisTask, PipelinePlotContext
-from ..utils import make_axis_labels, apply_spectral_lsf
+from ..utils import make_axis_labels
 
 
 def _gaussian(v, A, v0, sigma):
@@ -94,99 +93,51 @@ class IntegratedSpectrumTask(AnalysisTask):
         self.figure_units = figure_units or config.figure_units
         self.xlabel, self.ylabel = make_axis_labels(self.axis, self.figure_units)
         self.R = R if R is not None else _cfg.SPECTRAL_RESOLUTION_R
-        self._doppler_x   = None
-        self._doppler_y   = None
-        self._volume_3d   = None
-        self._cell_area   = {}   # {'yz': float, 'xz': float}
-        self._sp_data: dict[str, dict] = {}
-        self._vel_x: np.ndarray | None = None
-        self._vel_y: np.ndarray | None = None
-        self._rho:   np.ndarray | None = None
 
-    def prepare(self, context: PipelinePlotContext) -> None:
+    def compute(self, context: PipelinePlotContext) -> dict:
         provider = context.provider
-        self._doppler_x, _ = provider.get_slab_z(('gas', 'Bulk_Doppler_factor_x'))
-        self._doppler_y, _ = provider.get_slab_z(('gas', 'Bulk_Doppler_factor_y'))
-        dx, _ = provider.get_slab_z(('boxlib', 'dx'))
-        dy, _ = provider.get_slab_z(('boxlib', 'dy'))
-        dz, _ = provider.get_slab_z(('boxlib', 'dz'))
-        self._volume_3d = dx * dy * dz
-        self._cell_area['yz'] = (dy * dz)[0, 0, 0].in_units('cm**2').value
-        self._cell_area['xz'] = (dx * dz)[0, 0, 0].in_units('cm**2').value
+        # σ_gas annotation: needs vx, vy, density. Released when compute returns.
+        vel_x_u, _ = provider.get_slab_z(('gas', 'velocity_x'))
+        vel_y_u, _ = provider.get_slab_z(('gas', 'velocity_y'))
+        rho_u,   _ = provider.get_slab_z(('gas', 'density'))
+        vel_x = vel_x_u.in_units('km/s').value
+        vel_y = vel_y_u.in_units('km/s').value
+        rho   = rho_u.value
+        del vel_x_u, vel_y_u, rho_u
 
-        vel_x, _ = provider.get_slab_z(('gas', 'velocity_x'))
-        vel_y, _ = provider.get_slab_z(('gas', 'velocity_y'))
-        rho,   _ = provider.get_slab_z(('gas', 'density'))
-        self._vel_x = vel_x.in_units('km/s').value
-        self._vel_y = vel_y.in_units('km/s').value
-        self._rho   = rho.value
+        sigma_x = _mass_weighted_sigma(vel_x, rho)
+        sigma_y = _mass_weighted_sigma(vel_y, rho)
+        print(f'  σ_gas: x={sigma_x:.2f} km/s, y={sigma_y:.2f} km/s')
+        del vel_x, vel_y, rho   # 3 GB freed before spectrum builds
+
+        # One species at a time: fresh SpectrumStore + fresh yt covering_grid
+        # per species.  Dropping the SpectrumStore alone is not enough — yt
+        # caches every field on provider._cached_grid, so without the explicit
+        # evict the covering_grid would accumulate ~6 GB of species-specific
+        # fields (lum, width, freq, ...) per species. That accumulation pushes
+        # macOS into compressed memory + swap at down=1.
+        import gc
+        from ..services import SpectrumStore
+        los_for_proj = {'yz': 'x', 'xz': 'y'}
+        out = {'yz': {}, 'xz': {}, 'sigma_v_data': {'yz': sigma_x, 'xz': sigma_y}}
 
         for sp in SPECIES_CFG:
             name = sp['name']
-            freq,  _ = provider.get_slab_z(('gas', sp['freq_field']))
-            lum,   _ = provider.get_slab_z(('gas', sp['lum_field']))
-            width, _ = provider.get_slab_z(('gas', sp['width_field']))
-            self._sp_data[name] = {'freq': freq, 'lum': lum, 'width': width}
-
-    def _build_cube(self, sp_name: str, doppler) -> tuple[np.ndarray, np.ndarray]:
-        """Return (spec_cube [n_chan, N1, N2], v_axis [km/s])."""
-        c       = 3.0e8 * m / s
-        v_range = V_RANGE_KMS * km / s
-
-        freq_3d = self._sp_data[sp_name]['freq'].in_units('Hz')
-        nu_0    = freq_3d[0, 0, 0]
-        lum_3d  = (self._sp_data[sp_name]['lum'] * self._volume_3d).in_units('erg/s')
-        therm   = self._sp_data[sp_name]['width'].in_units('cm/s')
-        shifted = (freq_3d * doppler).in_units('Hz')
-
-        bw_hz      = nu_0 * (v_range / c) * 2.0
-        freq_edges = np.linspace(nu_0 - bw_hz / 2, nu_0 + bw_hz / 2, N_CHANNELS + 1)
-        freq_ctr   = 0.5 * (freq_edges[:-1] + freq_edges[1:])
-
-        cube = build_spectral_cube(
-            shifted.in_units('Hz').value,
-            lum_3d.in_units('erg/s').value,
-            therm.in_units('cm/s').value,
-            freq_edges.in_units('Hz').value,
-            c.in_units('cm/s').value,
-        )
-
-        v_axis = (c * (nu_0 - freq_ctr) / nu_0).in_units('km/s').value
-        return cube, v_axis
-
-    def _compute_one(self, sp_name: str, proj_key: str, doppler) -> tuple[str, str, dict]:
-        """Build cube for one (species, projection) pair. Returns (sp_name, proj_key, data)."""
-        print(f'  [{sp_name}] {proj_key} building cube ...')
-        cube, v_axis = self._build_cube(sp_name, doppler)
-        _, n1, n2    = cube.shape
-
-        total_lum      = cube.sum(axis=(1, 2))
-        total_area_cm2 = n1 * n2 * self._cell_area[proj_key]
-        dsigma_dv      = total_lum / total_area_cm2
-
-        dv_per_channel = abs(v_axis[1] - v_axis[0])
-        dsigma_dv_obs  = apply_spectral_lsf(dsigma_dv, dv_per_channel, self.R, axis=0)
-        print(f'  [{sp_name}] {proj_key} peak intrinsic={dsigma_dv.max():.3e}  observed={dsigma_dv_obs.max():.3e} erg/s/Hz/cm²')
-        return sp_name, proj_key, {'v_axis': v_axis, 'dsigma_dv': dsigma_dv, 'dsigma_dv_obs': dsigma_dv_obs}
-
-    def compute(self, context: PipelinePlotContext) -> dict:
-        print('IntegratedSpectrumTask: building spectral cubes (6 tasks in parallel) ...')
-        sigma_x = _mass_weighted_sigma(self._vel_x, self._rho)
-        sigma_y = _mass_weighted_sigma(self._vel_y, self._rho)
-        print(f'  σ_gas: x={sigma_x:.2f} km/s, y={sigma_y:.2f} km/s')
-
-        proj_doppler = [('yz', self._doppler_x), ('xz', self._doppler_y)]
-        out = {'yz': {}, 'xz': {}, 'sigma_v_data': {'yz': sigma_x, 'xz': sigma_y}}
-
-        with ThreadPoolExecutor(max_workers=6) as pool:
-            futures = [
-                pool.submit(self._compute_one, sp['name'], proj_key, doppler)
-                for sp in SPECIES_CFG
-                for proj_key, doppler in proj_doppler
-            ]
-            for fut in futures:
-                sp_name, proj_key, data = fut.result()
-                out[proj_key][sp_name] = data
+            store = SpectrumStore(provider)
+            for proj_key in ('yz', 'xz'):
+                los = los_for_proj[proj_key]
+                v_axis, dsigma_dv     = store.get_spectrum(name, los, R=float('inf'))
+                _,      dsigma_dv_obs = store.get_spectrum(name, los, R=self.R)
+                out[proj_key][name] = {
+                    'v_axis':         v_axis,
+                    'dsigma_dv':      dsigma_dv,
+                    'dsigma_dv_obs':  dsigma_dv_obs,
+                }
+                print(f'  [{name}] {proj_key} peak intrinsic={dsigma_dv.max():.3e}'
+                      f'  observed={dsigma_dv_obs.max():.3e} erg/s/Hz/cm²')
+            del store
+            provider._cached_grid = None
+            gc.collect()
 
         return out
 

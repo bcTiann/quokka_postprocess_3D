@@ -47,6 +47,12 @@ class TableLookup:
             fill_value=np.nan,
         )
 
+    # Chunk size for _eval — process this many cells per scipy call. Tuned
+    # so the per-chunk transient (log_points + scipy internal state) stays
+    # well under 1 GB at float64.  Lowering further only saves trivial RAM
+    # but pays Python-loop overhead.
+    _EVAL_CHUNK = 4_000_000
+
     def _eval(
         self,
         token: str,
@@ -57,11 +63,28 @@ class TableLookup:
         if token not in self._interpolators:
             raise KeyError(f"Field '{token}' not registered in TableLookup.")
 
-        log_points = np.column_stack(
-            (np.log10(nH_cgs).ravel(), np.log10(colDen_cgs).ravel(), np.log10(dVdr_cgs).ravel())
-        )
-        values = self._interpolators[token](log_points)
-        return values.reshape(nH_cgs.shape)
+        interp = self._interpolators[token]
+        out_shape = nH_cgs.shape
+        nH_flat   = nH_cgs.ravel()
+        col_flat  = colDen_cgs.ravel()
+        dv_flat   = dVdr_cgs.ravel()
+        n         = nH_flat.size
+
+        # Chunked interpolation: a 134 M-cell snapshot at down=1 makes a single
+        # `np.column_stack(log10(...), ...)` allocate ~3 GB and scipy's
+        # RegularGridInterpolator another ~10 GB transient.  Splitting into
+        # 4 M-cell chunks keeps each call's working set ~0.1 GB.
+        values = np.empty(n, dtype=float)
+        for start in range(0, n, self._EVAL_CHUNK):
+            end = min(start + self._EVAL_CHUNK, n)
+            pts = np.column_stack((
+                np.log10(nH_flat[start:end]),
+                np.log10(col_flat[start:end]),
+                np.log10(dv_flat[start:end]),
+            ))
+            values[start:end] = interp(pts)
+            del pts
+        return values.reshape(out_shape)
 
     def mu(self, nH_cgs: np.ndarray, colDen_cgs: np.ndarray, dVdr_cgs: np.ndarray) -> np.ndarray:
         """Interpolates the mean molecular weight (mu)."""

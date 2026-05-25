@@ -1,10 +1,13 @@
 # data_handling.py
 import yt
 import numpy as np
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
 from unyt import unyt_array
 
 from .utils.axes import axis_index, axis_label
+# Note: ``.pipeline.cache`` is imported lazily inside the cache-hook methods
+# below to avoid a circular import (pipeline/__init__.py → base.py → this file).
 
 
 # Primitive fields that the GOW chemistry / temperature derived-field chain
@@ -172,9 +175,31 @@ def make_downsampled_dataset(ds_orig: 'yt.Dataset', factor: int) -> 'yt.Dataset'
 
 
 class YTDataProvider:
-    def __init__(self, ds):
+    def __init__(self, ds,
+                 cache_root: Optional[Path] = None,
+                 cache_key: Optional[str] = None,
+                 force_recompute: bool = False):
+        """
+        Parameters
+        ----------
+        ds : yt.Dataset
+            The (possibly downsampled) dataset to provide data from.
+        cache_root : Path | None
+            Root directory for the Level 1 derived-field disk cache. When None,
+            disk caching is disabled and behaviour matches the pre-cache code.
+        cache_key : str | None
+            Identity hash for the current (snapshot + table + downsample +
+            schema-version) combination. Cache entries with mismatching keys
+            are treated as stale. Required when cache_root is set.
+        force_recompute : bool
+            When True, bypass cache reads (still write fresh entries on miss
+            so subsequent runs benefit).
+        """
         self.ds = ds
         self._cached_grid = None  # populated lazily by _get_full_grid()
+        self.cache_root = Path(cache_root) if cache_root is not None else None
+        self.cache_key = cache_key
+        self.force_recompute = bool(force_recompute)
 
     def _get_full_grid(self):
         """Return (and lazily create) the full-domain covering_grid.
@@ -408,23 +433,27 @@ class YTDataProvider:
         num_z_pixels = np.round(slab_width / pixel_widths[2]).astype(int)
         dims = np.array([dims_xy[0], dims_xy[1], num_z_pixels]) * 2**level
 
-        if use_full_grid:
-            # Reuse the cached full-domain grid.  yt looks up the field in its
-            # internal cache on this object; if it was already computed by a
-            # previous get_slab_z call the result is returned immediately.
-            grid = self._get_full_grid()
+        # Level 1 disk-cache fast path (full-domain default slab only).
+        cached = self._maybe_load_cached(field, use_full_grid)
+        if cached is not None:
+            data_slab = cached
         else:
-            # Sub-domain or non-default level: construct a fresh grid as before.
-            box_region = self.ds.box(left_edge, right_edge)
-            grid = self.ds.covering_grid(
-                level=level,
-                left_edge=left_edge,
-                dims=dims,
-                data_source=box_region,
-            )
-
-        data_slab = grid[field].in_cgs()
-        # print(f"Retrieved data slab for field '{field}' with shape {data_slab.shape}")
+            if use_full_grid:
+                # Reuse the cached full-domain grid.  yt looks up the field in its
+                # internal cache on this object; if it was already computed by a
+                # previous get_slab_z call the result is returned immediately.
+                grid = self._get_full_grid()
+            else:
+                # Sub-domain or non-default level: construct a fresh grid as before.
+                box_region = self.ds.box(left_edge, right_edge)
+                grid = self.ds.covering_grid(
+                    level=level,
+                    left_edge=left_edge,
+                    dims=dims,
+                    data_source=box_region,
+                )
+            data_slab = grid[field].in_cgs()
+            self._maybe_save_cached(field, data_slab, use_full_grid)
 
         extents = {
             'x': [left_edge[1], right_edge[1], left_edge[2], right_edge[2]],
@@ -433,6 +462,80 @@ class YTDataProvider:
         }
 
         return data_slab, extents
+
+    # ── Level 1 cache hooks ────────────────────────────────────────────────
+    def _cache_enabled(self, use_full_grid: bool, field: Tuple[str, str]) -> bool:
+        from .pipeline.cache import CACHED_FIELDS  # lazy: avoid circular import
+        return (
+            use_full_grid
+            and self.cache_root is not None
+            and self.cache_key is not None
+            and field in CACHED_FIELDS
+        )
+
+    def _maybe_load_cached(self, field, use_full_grid):
+        """Try the Level 1 disk cache. Returns a unyt_array or None on miss."""
+        if not self._cache_enabled(use_full_grid, field):
+            return None
+        if self.force_recompute:
+            return None
+        from .pipeline.cache import field_cache_path, load_field_array
+        path = field_cache_path(self.cache_root, field)
+        result = load_field_array(path, self.cache_key)
+        if result is None:
+            return None
+        arr, units_str = result
+        print(f'[intermediate] hit  {field[0]}/{field[1]}  ←  {path.name}')
+        return unyt_array(arr, units_str)
+
+    def _maybe_save_cached(self, field, data_slab, use_full_grid):
+        if not self._cache_enabled(use_full_grid, field):
+            return
+        from .pipeline.cache import field_cache_path, save_field_array
+        path = field_cache_path(self.cache_root, field)
+        units_str = str(getattr(data_slab, 'units', ''))
+        arr = np.asarray(data_slab)
+        save_field_array(path, arr, units_str, self.cache_key, field)
+        print(f'[intermediate] save {field[0]}/{field[1]}  →  {path.name}')
+        # Opportunistic flush: yt's derived-field chain may have computed
+        # other CACHED_FIELDS (e.g. column_density_H is a dependency of
+        # temperature_despotic). They now live in covering_grid.field_data;
+        # save them too while we still have the cube in memory.
+        self._flush_pending_cached_fields()
+
+    def _flush_pending_cached_fields(self):
+        """Persist any CACHED_FIELDS that yt has materialised on the cached
+        covering_grid but we haven't written to disk yet.  Doesn't trigger
+        any new yt compute — only saves what's already there."""
+        if self._cached_grid is None or self.cache_root is None or self.cache_key is None:
+            return
+        from .pipeline.cache import CACHED_FIELDS, field_cache_path, save_field_array
+        try:
+            yt_field_data = self._cached_grid.field_data
+        except AttributeError:
+            return
+        import h5py
+        for f in CACHED_FIELDS:
+            if f not in yt_field_data:
+                continue
+            path = field_cache_path(self.cache_root, f)
+            # Skip only if a file with the CURRENT cache_key is already on
+            # disk (already saved this run).  Otherwise overwrite — the
+            # existing file may be stale from a previous downsample/schema.
+            if path.exists():
+                try:
+                    with h5py.File(path, 'r') as _fh:
+                        if str(_fh.attrs.get('cache_key', '')) == self.cache_key:
+                            continue
+                except (OSError, KeyError):
+                    pass
+            try:
+                arr = yt_field_data[f].in_cgs()
+                save_field_array(path, np.asarray(arr), str(arr.units),
+                                 self.cache_key, f)
+                print(f'[intermediate] save {f[0]}/{f[1]}  →  {path.name}  (flushed)')
+            except Exception as e:
+                print(f'[intermediate] skip {f[0]}/{f[1]} flush: {e}')
 
 
 
