@@ -23,6 +23,10 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 from ..base import AnalysisTask, PipelinePlotContext
 from .temperature_lext_diff import _glob_one_taskcache, _load_results
+from ..prep import config as cfg
+
+# Averaging method used by column_density_H (for the N_H panel label).
+_NH_MEAN = getattr(cfg, 'COLUMN_DENSITY_MEAN', 'harmonic')
 
 
 # Constants used by the projection modes below.
@@ -40,7 +44,7 @@ _PANELS = [
     ('rho_slice',  ('gas', 'density'),              r'$\log_{10}\,\rho$ [g cm$^{-3}$]',                  'inferno', 'slice',              None, None, None),
     ('T_qk_slice', ('gas', 'temperature_quokka'),   r'$\log_{10}\,T_{\rm QUOKKA}$ [K]',                  'turbo',   'slice',              2.0, 8.0, 'T'),
     ('T_dsp_slice',('gas', 'temperature_despotic'), r'$\log_{10}\,T_{\rm DESPOTIC}$ [K]',                'turbo',   'slice',              2.0, 8.0, 'T'),
-    ('NH_proj',    ('gas', 'density'),              r'$\log_{10}\,N_{\rm H}$ [cm$^{-2}$]',                'inferno', 'NH_cgs',             None, None, None),
+    ('NH_slice',   ('gas', 'column_density_H'),     rf'$\log_{{10}}\,N_{{\rm H}}$ (6-dir {_NH_MEAN}, +$L_{{\rm ext}}$) [cm$^{{-2}}$]', 'inferno', 'slice', None, None, None),
     ('CO_proj',    ('gas', 'CO_luminosity'),        r'$\log_{10}\,I_{\rm CO}$ [erg s$^{-1}$ pc$^{-2}$]',      'viridis', 'projection_erg_pc2', None, None, None),
     ('Cp_proj',    ('gas', 'C+_luminosity'),        r'$\log_{10}\,I_{\rm C^+}$ [erg s$^{-1}$ pc$^{-2}$]',     'viridis', 'projection_erg_pc2', None, None, None),
     ('Ha_proj',    ('gas', 'H_alpha_luminosity'),   r'$\log_{10}\,I_{\rm H\alpha}$ [erg s$^{-1}$ pc$^{-2}$]', 'viridis', 'projection_erg_pc2', None, None, None),
@@ -166,12 +170,13 @@ class MultiFieldSlicesTask(AnalysisTask):
         sib_slices = self._sibling_slices()
 
         def _panel_pctl(arr2d):
-            """(p0.5, p99.5) of log10(arr) over positive cells, or None if empty."""
+            """(min, max) of log10(arr) over positive cells, or None if empty.
+            Full data range (no percentile clip) per the project default."""
             pos = arr2d > 0
             if not pos.any():
                 return None
             lg = np.log10(arr2d[pos])
-            return float(np.nanpercentile(lg, 0.5)), float(np.nanpercentile(lg, 99.5))
+            return float(np.nanmin(lg)), float(np.nanmax(lg))
 
         # Pass A: compute log10(data) + per-panel percentile range. The range is
         # POOLED across the sibling-L_ext figures so the same panel shares
@@ -185,8 +190,8 @@ class MultiFieldSlicesTask(AnalysisTask):
                 continue
             # log10 of non-positive cells → NaN (drawn in cmap's bad-value colour).
             log_data = np.where(pos, np.log10(np.where(pos, data, 1.0)), np.nan)
-            p_lo = float(np.nanpercentile(log_data, 0.5))
-            p_hi = float(np.nanpercentile(log_data, 99.5))
+            p_lo = float(np.nanmin(log_data))                 # full data range (no percentile clip)
+            p_hi = float(np.nanmax(log_data))
             for sib in sib_slices:                            # pool across L_ext
                 if panel_key in sib:
                     sp = _panel_pctl(np.asarray(sib[panel_key]))

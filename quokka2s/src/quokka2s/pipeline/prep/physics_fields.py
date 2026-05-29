@@ -6,8 +6,8 @@ from scipy.special import erf as scipy_erf
 from yt.units import K, mp, kb, mh, planck_constant, cm, m, s, g, erg, amu, kpc
 from ...analysis import along_sight_cumulation
 from . import config as cfg
-from ...tables import load_table
-from ...tables.lookup import TableLookup
+from ...tables import load_table, load_table_4d
+from ...tables.lookup import TableLookup, TableLookup4D
 
 
 # --- Fundamental Physical Constants ---
@@ -17,6 +17,7 @@ h = planck_constant
 speed_of_light_value_in_ms = 299792458
 c = speed_of_light_value_in_ms * m / s
 TABLE_LOOKUP_CACHE: TableLookup | None = None
+TABLE_LOOKUP_4D_CACHE: TableLookup4D | None = None
 TABLE_LOOKUP_SPECIES: tuple[str, ...] = ()
 
 # Lower bound on |∇·v|/3 used as the LVG dVdr field. Cells with smaller
@@ -40,6 +41,21 @@ def ensure_table_lookup(path: str | None) -> TableLookup:
         table = load_table(path or cfg.DESPOTIC_TABLE_PATH)
         TABLE_LOOKUP_CACHE = TableLookup(table)
     return TABLE_LOOKUP_CACHE
+
+
+def ensure_table_lookup_4d(path: str | None) -> TableLookup4D:
+    """Lazily load the fixed-T 4D table (nH, N_H, dVdr, T) for the high-T branch."""
+    global TABLE_LOOKUP_4D_CACHE
+    if TABLE_LOOKUP_4D_CACHE is None:
+        table = load_table_4d(path or cfg.DESPOTIC_TABLE_4D_PATH)
+        TABLE_LOOKUP_4D_CACHE = TableLookup4D(table)
+    return TABLE_LOOKUP_4D_CACHE
+
+
+def _high_T_mask(data) -> np.ndarray:
+    """Boolean mask of cells where the high-T (μγ / 4D-table) branch applies."""
+    T_qk = data[('gas', 'temperature_quokka')].to('K').value
+    return T_qk > cfg.T_QK_HIGH_K
 
 
 def _number_density_H(field, data):
@@ -91,7 +107,8 @@ def _column_density_H(field, data):
     # Build one directional cumulation at a time, fold 1/N_k into the
     # reciprocal accumulator, then free it. Function-internal peak: ~5 GB
     # (vs ~22 GB for the original stack-then-aggregate version at down=1).
-    inv_sum = None
+    mean_method = getattr(cfg, 'COLUMN_DENSITY_MEAN', 'harmonic')
+    accum = None
     for axis, sign, dxyz, lateral in (
         ("x", "+", dx_3d, True),
         ("x", "-", dx_3d, True),
@@ -103,14 +120,30 @@ def _column_density_H(field, data):
         N = along_sight_cumulation(n_H_3d * dxyz, axis=axis, sign=sign)
         if lateral and N_ext_lat_3d is not None:
             N = N + N_ext_lat_3d
-        inc = 1.0 / N
+        # Streaming accumulator: depends on the chosen combination method.
+        #   arithmetic -> Σ N_k       (finalised as Σ/6)
+        #   harmonic   -> Σ 1/N_k     (finalised as 6/Σ)
+        #   max / min  -> running max / min of N_k       (no finalisation)
+        if mean_method == 'arithmetic':
+            inc = N
+        elif mean_method == 'max':
+            accum = N.copy() if accum is None else np.maximum(accum, N)
+            del N
+            continue
+        elif mean_method == 'min':
+            accum = N.copy() if accum is None else np.minimum(accum, N)
+            del N
+            continue
+        else:                                       # harmonic (default)
+            inc = 1.0 / N
         del N
-        if inv_sum is None:
-            inv_sum = inc
-        else:
-            inv_sum = inv_sum + inc
+        accum = inc if accum is None else accum + inc
         del inc
-    return (6.0 / inv_sum).to('cm**-2')
+    if mean_method == 'arithmetic':
+        return (accum / 6.0).to('cm**-2')          # (1/6) Σ N_k
+    if mean_method in ('max', 'min'):
+        return accum.to('cm**-2')                   # running max / min over 6 directions
+    return (6.0 / accum).to('cm**-2')               # 6 / Σ(1/N_k)
 
 
 def _dVdr_lvg(field, data):
@@ -143,12 +176,51 @@ def _dVdr_lvg(field, data):
 # --- YT Derived Fields ---
 
 
-def _temperature_despotic(field, data):
-    """Self-consistent gas temperature from the (nH, NH, dVdr) DESPOTIC table.
+def _internal_energy_density(field, data):
+    """QUOKKA gas internal energy density = total − kinetic (pure hydro, no B).
 
-    Direct interpolation of the table's tg_final field. The historical
-    bisection-on-eint logic was needed when T was a table *input*; with
-    T as an output, the lookup is unambiguous.
+    QUOKKA's on-disk ('boxlib','gasEnergy') is the TOTAL energy density (yt's
+    ('gas','total_energy_density') aliases it); there is no internal-energy
+    field on disk.  Subtracting the kinetic part recovers E_int [erg/cm^3].
+    """
+    e_tot = data[('gas', 'total_energy_density')].in_cgs()
+    e_kin = data[('gas', 'kinetic_energy_density')].in_cgs()
+    return (e_tot - e_kin).in_cgs()
+
+
+def _temperature_gamma_mu(field, data):
+    """Temperature inferred from QUOKKA internal energy via the μγ bisection.
+
+    Solves  e_int/ρ = k_B·T / [(γ(T)−1)·μ(T)·m_H]  for T, with μ(T)/γ(T) from
+    the fixed-T 4D DESPOTIC table.  Computed for all cells but only consumed
+    where the high-T branch applies (temperature_quokka > T_QK_HIGH_K).
+    """
+    lookup4d = ensure_table_lookup_4d(cfg.DESPOTIC_TABLE_4D_PATH)
+
+    n_H      = data[('gas', 'number_density_H')].in_cgs().value
+    colDen_H = data[('gas', 'column_density_H')].in_cgs().value
+    e_int    = data[('gas', 'internal_energy_density')].to('erg/cm**3').value
+    rho      = data[('gas', 'density')].to('g/cm**3').value
+
+    e_specific = e_int / rho   # erg/g
+
+    nH_min,  nH_max  = lookup4d.table.nH_values.min(),         lookup4d.table.nH_values.max()
+    col_min, col_max = lookup4d.table.col_density_values.min(), lookup4d.table.col_density_values.max()
+    n_H_safe = np.clip(n_H,      nH_min,  nH_max)
+    col_safe = np.clip(colDen_H, col_min, col_max)
+
+    T = lookup4d.temperature_gamma_mu(n_H_safe, col_safe, e_specific)
+    return T * K
+
+
+def _temperature_despotic(field, data):
+    """Gas temperature: DESPOTIC equilibrium tg_final, with an optional high-T
+    override.
+
+    Cold cells (temperature_quokka ≤ T_QK_HIGH_K, or HIGH_T_4D_BLEND off) use
+    direct interpolation of the (nH, NH, dVdr) table's tg_final.  Hot cells use
+    T_gamma_mu — the μγ-bisection temperature from QUOKKA's internal energy —
+    because tg_final saturates (~5e4 K) and is meaningless there.
     """
     lookup = ensure_table_lookup(cfg.DESPOTIC_TABLE_PATH)
 
@@ -164,7 +236,17 @@ def _temperature_despotic(field, data):
     col_safe = np.clip(colDen_H, col_min, col_max)
     dV_safe  = np.clip(dVdr,     dv_min,  dv_max)
 
-    return lookup.temperature(n_H_safe, col_safe, dV_safe) * K
+    tg_final = lookup.temperature(n_H_safe, col_safe, dV_safe)
+
+    if not cfg.HIGH_T_4D_BLEND:
+        return tg_final * K
+
+    hot = _high_T_mask(data)
+    if not np.any(hot):
+        return tg_final * K
+
+    T_gm = data[('gas', 'temperature_gamma_mu')].to('K').value
+    return np.where(hot, T_gm, tg_final) * K
 
 
 def build_spectral_cube(
@@ -243,12 +325,13 @@ def build_spectral_cube(
 def _make_luminosity_field(species: str):
     lookup = ensure_table_lookup(cfg.DESPOTIC_TABLE_PATH)
     yt_safe_name = species.replace('+', '_plus').replace('-','_minus')
+    cutoff = cfg.T_CUTOFF.get(species, cfg.T_CUTOFF_DEFAULT)
 
     def _field(field, data):
         n_H      = data[('gas','number_density_H')].to('cm**-3').value
         colDen_H = data[('gas','column_density_H')].to('cm**-2').value
         dVdr     = data[('gas','dVdr_lvg')].in_cgs().value
-        T        = data[('gas','temperature_despotic')].to('K').value  # for T_CUTOFF gating
+        T        = data[('gas','temperature_despotic')].to('K').value  # blended; for T_CUTOFF gating
 
         nH_min,  nH_max  = lookup.table.nH_values.min(),         lookup.table.nH_values.max()
         col_min, col_max = lookup.table.col_density_values.min(), lookup.table.col_density_values.max()
@@ -258,9 +341,18 @@ def _make_luminosity_field(species: str):
         col_safe = np.clip(colDen_H, col_min, col_max)
         dV_safe  = np.clip(dVdr,     dv_min,  dv_max)
 
-        lumPerH = lookup.line_field(species, "lumPerH", n_H_safe, col_safe, dV_safe)
+        lumPerH = np.asarray(lookup.line_field(species, "lumPerH", n_H_safe, col_safe, dV_safe), dtype=float)
 
-        lumPerH[T > cfg.T_CUTOFF.get(species, cfg.T_CUTOFF_DEFAULT)] = 0.0
+        # High-T branch: hot cells take lumPerH from the fixed-T 4D table at T_gamma_mu.
+        if cfg.HIGH_T_4D_BLEND:
+            hot = _high_T_mask(data)
+            if np.any(hot):
+                lookup4d = ensure_table_lookup_4d(cfg.DESPOTIC_TABLE_4D_PATH)
+                T_gm = data[('gas', 'temperature_gamma_mu')].to('K').value
+                lumPerH_4d = lookup4d.line_field(species, "lumPerH", n_H_safe, col_safe, dV_safe, T_gm)
+                lumPerH = np.where(hot, np.nan_to_num(lumPerH_4d, nan=0.0), lumPerH)
+
+        lumPerH[T > cutoff] = 0.0
         lumPerH = np.nan_to_num(lumPerH, nan=0.0)
 
         return (n_H_safe * lumPerH) * (erg / s / cm**3)
@@ -278,7 +370,7 @@ def _make_number_density_field(species: str):
         n_H      = data[('gas','number_density_H')].to('cm**-3').value
         colDen_H = data[('gas','column_density_H')].to('cm**-2').value
         dVdr     = data[('gas','dVdr_lvg')].in_cgs().value
-        T        = data[('gas','temperature_despotic')].to('K').value  # for high-T mask
+        T        = data[('gas','temperature_despotic')].to('K').value  # blended; for high-T mask
 
         nH_min,  nH_max  = lookup.table.nH_values.min(),         lookup.table.nH_values.max()
         col_min, col_max = lookup.table.col_density_values.min(), lookup.table.col_density_values.max()
@@ -288,11 +380,20 @@ def _make_number_density_field(species: str):
         col_safe = np.clip(colDen_H, col_min, col_max)
         dV_safe  = np.clip(dVdr,     dv_min,  dv_max)
 
-        densities = lookup.number_densities([token], n_H_safe, col_safe, dV_safe)
-        densities[token] = np.nan_to_num(densities[token], nan=0.0)
-        densities[token][T > 100000.0] = 0.0
+        val = np.nan_to_num(lookup.number_densities([token], n_H_safe, col_safe, dV_safe)[token], nan=0.0)
+        val[T > 100000.0] = 0.0   # cold-path legacy gating (kept for backward-compat)
 
-        return densities[token] * cm**-3
+        # High-T branch: hot cells take the abundance from the fixed-T 4D table
+        # at T_gamma_mu (real hot chemistry — H+/e- → ~nH, cold tracers → 0).
+        if cfg.HIGH_T_4D_BLEND:
+            hot = _high_T_mask(data)
+            if np.any(hot):
+                lookup4d = ensure_table_lookup_4d(cfg.DESPOTIC_TABLE_4D_PATH)
+                T_gm = data[('gas', 'temperature_gamma_mu')].to('K').value
+                val_4d = lookup4d.number_densities([token], n_H_safe, col_safe, dV_safe, T_gm)[token]
+                val = np.where(hot, np.nan_to_num(val_4d, nan=0.0), val)
+
+        return val * cm**-3
 
     _field.__name__ = f"_number_density_{yt_safe_name}"
     return yt_safe_name, _field
@@ -426,6 +527,12 @@ def add_all_fields(ds):
     def _temperature_quokka(field, data):
         return data[('boxlib', 'temperature')] * K
     ds.add_field(name=('gas', 'temperature_quokka'), function=_temperature_quokka,
+                 sampling_type="cell", units="K", force_override=True)
+
+    # Internal energy + μγ-bisection temperature for the high-T branch.
+    ds.add_field(name=('gas', 'internal_energy_density'), function=_internal_energy_density,
+                 sampling_type="cell", units="erg/cm**3", force_override=True)
+    ds.add_field(name=('gas', 'temperature_gamma_mu'), function=_temperature_gamma_mu,
                  sampling_type="cell", units="K", force_override=True)
 
     ds.add_field(name=('gas', 'temperature_despotic'), function=_temperature_despotic, sampling_type="cell", units="K", force_override=True)

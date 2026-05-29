@@ -21,6 +21,12 @@ YT_DATASET_PATH = "/Users/baochen/quokka_postprocessing/plt0655228" #new 8GB
 DESPOTIC_TABLE_PATH_LVG    = "/Users/baochen/quokka_postprocessing/output_tables_3D_GOW_LVG/despotic_table.npz"
 DESPOTIC_TABLE_PATH_SPHERE = "/Users/baochen/quokka_postprocessing/output_tables_3D_GOW_sphere/despotic_table.npz"
 
+# Fixed-T 4D table (nH, N_H, dVdr, T): chemistry solved with evolveTemp="fixed".
+# Used only for the high-T μγ branch (see HIGH_T_4D_BLEND below). Built by
+# `python -m quokka2s.tables.build_table_4d`.
+DESPOTIC_TABLE_4D_PATH_LVG    = "/Users/baochen/quokka_postprocessing/output_tables_4D_GOW_LVG/despotic_table.npz"
+DESPOTIC_TABLE_4D_PATH_SPHERE = "/Users/baochen/quokka_postprocessing/output_tables_4D_GOW_sphere/despotic_table.npz"
+
 # Switch via env var: `DESPOTIC_GEOM=sphere python -m quokka2s.pipeline.tasks.run_pipeline`
 # Default = LVG so existing workflows are unchanged.
 _DESPOTIC_GEOM = os.environ.get("DESPOTIC_GEOM", "LVG").lower()
@@ -52,6 +58,19 @@ T_CUTOFF = {
     'HCO+': 2.0e7,
 }
 T_CUTOFF_DEFAULT = 2.0e7
+
+# --- High-T temperature override (μγ bisection + fixed-T 4D table) ---
+# In hot gas QUOKKA's internal energy is trusted but DESPOTIC's equilibrium
+# tg_final saturates (~5e4 K) and is meaningless. When HIGH_T_4D_BLEND is True,
+# cells with temperature_quokka > T_QK_HIGH_K get their temperature and all
+# table-derived fields (species, luminosities) recomputed from QUOKKA's internal
+# energy via the μγ bisection, looked up in the fixed-T 4D table at T_gamma_mu.
+# Set HIGH_T_4D_BLEND = False to switch this off entirely — the pipeline then
+# behaves exactly as before (pure equilibrium tg_final, 3D table only; the 4D
+# table is never loaded).
+HIGH_T_4D_BLEND = False  # temporarily off: this regen verifies the pure tg_final = table(nH, column_density_H, dVdr) path
+T_QK_HIGH_K = 1.0e4  # K; threshold on temperature_quokka for the high-T branch
+
 X_H = 0.74  # Mass fraction of Hydrogen
 A_LAMBDA_OVER_NH = 4e-22 * cm**2  # Dust extinction cross-section (mag * cm^2 / N_H)
 
@@ -69,6 +88,14 @@ PROJECTION_AXIS = 'x'     # Axis for projection ('x', 'y', or 'z')
 # harmonic mean (no extension).
 COLUMN_EXTENSION_LATERAL_KPC = 9.0
 
+# How the 6 directional columns N_k are combined into column_density_H:
+#   'harmonic'   -> 6 / Σ(1/N_k)   (min-dominated: effective shielding = thinnest direction)
+#   'arithmetic' -> (1/6) Σ N_k    (plain mean of all 6 directions)
+#   'max'        -> max_k N_k      (most-shielded / thickest direction)
+#   'min'        -> min_k N_k      (least-shielded / thinnest direction)
+# Folded into the cache key (cache.py) so each method keeps separate caches.
+COLUMN_DENSITY_MEAN = 'harmonic'
+
 # OUTPUT_DIR is derived after COLUMN_EXTENSION_LATERAL_KPC so the directory
 # name encodes the L_ext value — different L_ext runs land in sibling dirs
 # (e.g. plt0655228_down2_Lext0kpc/ vs plt0655228_down2_Lext9kpc/) and do not
@@ -77,9 +104,11 @@ COLUMN_EXTENSION_LATERAL_KPC = 9.0
 _LEXT_TAG = f"_Lext{COLUMN_EXTENSION_LATERAL_KPC:g}kpc"
 if _DESPOTIC_GEOM == "sphere":
     DESPOTIC_TABLE_PATH = DESPOTIC_TABLE_PATH_SPHERE
+    DESPOTIC_TABLE_4D_PATH = DESPOTIC_TABLE_4D_PATH_SPHERE
     OUTPUT_DIR = f"{_OUTPUT_ROOT}/{_DATASET_BASENAME}_down{DOWNSAMPLE_FACTOR}{_LEXT_TAG}_sphere/"
 else:
     DESPOTIC_TABLE_PATH = DESPOTIC_TABLE_PATH_LVG
+    DESPOTIC_TABLE_4D_PATH = DESPOTIC_TABLE_4D_PATH_LVG
     OUTPUT_DIR = f"{_OUTPUT_ROOT}/{_DATASET_BASENAME}_down{DOWNSAMPLE_FACTOR}{_LEXT_TAG}/"
 
 # --- Instrument / Observational Parameters ---

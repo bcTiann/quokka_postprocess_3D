@@ -4,8 +4,12 @@ import numpy as np
 from scipy.interpolate import RegularGridInterpolator
 from typing import Sequence
 
-from .models import DespoticTable, SpeciesRecord
+from .models import DespoticTable, DespoticTable4D, SpeciesRecord
 from .solver import LINE_RESULT_FIELDS
+
+# CGS constants for the μγ bisection (kept local so lookup.py has no yt dep).
+_M_H_CGS = 1.6726219e-24   # g   (hydrogen mass, matches yt.units.mh.in_cgs())
+_K_B_CGS = 1.380649e-16    # erg/K
 
 
 class TableLookup:
@@ -158,3 +162,153 @@ class TableLookup:
             available = ", ".join(self._species_meta)
             raise ValueError(f"Species '{species}' not found. Available species: {available}")
         return self._species_meta[species]
+
+
+class TableLookup4D:
+    """Sampler for the fixed-T 4D table in log10(nH, N_H, dVdr, T) space.
+
+    Mirrors :class:`TableLookup` but with a fourth (temperature) axis.  Adds
+    :meth:`temperature_gamma_mu`, the per-cell μγ bisection that inverts
+    QUOKKA's specific internal energy into a chemistry-consistent temperature.
+    """
+
+    _EVAL_CHUNK = 4_000_000
+
+    def __init__(self, table: DespoticTable4D):
+        self.table = table
+
+        log_nH   = np.log10(table.nH_values)
+        log_col  = np.log10(table.col_density_values)
+        log_dvdr = np.log10(table.dVdr_values)
+        log_T    = np.log10(table.T_values)
+        self._axes = (log_nH, log_col, log_dvdr, log_T)
+
+        self._interpolators: dict[str, RegularGridInterpolator] = {}
+        self._species_meta: dict[str, SpeciesRecord] = dict(table.species_data)
+
+        self._register_field("mu", table.mu_values)
+        self._register_field("cv", table.cv_values)
+        self._register_field("Eint", table.Eint_values)
+
+        # g(T) = T / [(γ-1)·μ] = T·cv/μ  (monotone in T → unique bisection root).
+        with np.errstate(invalid="ignore", divide="ignore"):
+            g_values = (table.T_values[None, None, None, :]
+                        * table.cv_values / table.mu_values)
+        self._register_field("g", g_values)
+
+        for name, record in self._species_meta.items():
+            self._register_field(f"species:{name}:abundance", record.abundance)
+            if record.is_emitter and record.line is not None:
+                for fld in LINE_RESULT_FIELDS:
+                    self._register_field(f"species:{name}:line:{fld}", getattr(record.line, fld))
+                self._register_field(f"species:{name}:lumPerH", record.line.lumPerH)
+        if table.energy_terms:
+            for term, values in table.energy_terms.items():
+                self._register_field(f"energy:{term}", values)
+
+    def _register_field(self, token: str, values: np.ndarray) -> None:
+        self._interpolators[token] = RegularGridInterpolator(
+            self._axes,
+            np.asarray(values, dtype=float),
+            method="linear",
+            bounds_error=False,
+            fill_value=np.nan,
+        )
+
+    def _eval(self, token: str, nH, colDen, dVdr, T) -> np.ndarray:
+        if token not in self._interpolators:
+            raise KeyError(f"Field '{token}' not registered in TableLookup4D.")
+        interp = self._interpolators[token]
+        out_shape = np.asarray(nH).shape
+        nH_flat  = np.asarray(nH, dtype=float).ravel()
+        col_flat = np.asarray(colDen, dtype=float).ravel()
+        dv_flat  = np.broadcast_to(np.asarray(dVdr, dtype=float), nH_flat.shape).ravel()
+        T_flat   = np.asarray(T, dtype=float).ravel()
+        n = nH_flat.size
+
+        values = np.empty(n, dtype=float)
+        for start in range(0, n, self._EVAL_CHUNK):
+            end = min(start + self._EVAL_CHUNK, n)
+            pts = np.column_stack((
+                np.log10(nH_flat[start:end]),
+                np.log10(col_flat[start:end]),
+                np.log10(dv_flat[start:end]),
+                np.log10(T_flat[start:end]),
+            ))
+            values[start:end] = interp(pts)
+            del pts
+        return values.reshape(out_shape)
+
+    def mu(self, nH, colDen, dVdr, T) -> np.ndarray:
+        return self._eval("mu", nH, colDen, dVdr, T)
+
+    def cv(self, nH, colDen, dVdr, T) -> np.ndarray:
+        return self._eval("cv", nH, colDen, dVdr, T)
+
+    def Eint(self, nH, colDen, dVdr, T) -> np.ndarray:
+        return self._eval("Eint", nH, colDen, dVdr, T)
+
+    def abundance(self, species, nH, colDen, dVdr, T) -> np.ndarray:
+        return self._eval(f"species:{species}:abundance", nH, colDen, dVdr, T)
+
+    def number_densities(self, species: Sequence[str], n_H, colDen, dVdr, T) -> dict[str, np.ndarray]:
+        return {sp: n_H * self.abundance(sp, n_H, colDen, dVdr, T) for sp in species}
+
+    def line_field(self, species: str, field_name: str, nH, colDen, dVdr, T) -> np.ndarray:
+        record = self._species_meta.get(species)
+        if record is None or not record.is_emitter or record.line is None:
+            raise ValueError(f"Species '{species}' has no line data registered")
+        if field_name not in LINE_RESULT_FIELDS:
+            raise ValueError(f"Unknown line field '{field_name}'. Expected one of {LINE_RESULT_FIELDS}")
+        return self._eval(f"species:{species}:line:{field_name}", nH, colDen, dVdr, T)
+
+    def field(self, token: str, nH, colDen, dVdr, T) -> np.ndarray:
+        return self._eval(token, nH, colDen, dVdr, T)
+
+    def species_record(self, species: str) -> SpeciesRecord:
+        if species not in self._species_meta:
+            available = ", ".join(self._species_meta)
+            raise ValueError(f"Species '{species}' not found. Available species: {available}")
+        return self._species_meta[species]
+
+    def temperature_gamma_mu(
+        self,
+        nH_cgs: np.ndarray,
+        colDen_cgs: np.ndarray,
+        e_specific_cgs: np.ndarray,
+        dVdr_cgs: float | np.ndarray | None = None,
+        n_iter: int = 40,
+    ) -> np.ndarray:
+        """Invert specific internal energy → temperature via the μγ relation.
+
+        Solves   g(T) ≡ T / [(γ(T)−1)·μ(T)] = e_specific · m_H / k_B
+        for T at each cell, by bisection in log10(T) over the table's T range.
+        μ and γ=(cv+1)/cv come from the table; ``g`` is precomputed and monotone
+        in T, so the root is unique.  μ/cv are dVdr-independent, so any dVdr
+        slice is used (default: the table's median dVdr).
+
+        Parameters are flat or N-D arrays in cgs (e_specific in erg/g).
+        Returns T in K, clipped to the table's [T_min, T_max].
+        """
+        nH = np.asarray(nH_cgs, dtype=float)
+        col = np.asarray(colDen_cgs, dtype=float)
+        target = np.asarray(e_specific_cgs, dtype=float) * (_M_H_CGS / _K_B_CGS)  # K
+
+        if dVdr_cgs is None:
+            dVdr_cgs = float(self.table.dVdr_values[len(self.table.dVdr_values) // 2])
+
+        log_T_lo = np.log10(self.table.T_values.min())
+        log_T_hi = np.log10(self.table.T_values.max())
+        lo = np.full(nH.shape, log_T_lo, dtype=float)
+        hi = np.full(nH.shape, log_T_hi, dtype=float)
+
+        for _ in range(n_iter):
+            mid = 0.5 * (lo + hi)
+            g_mid = self._eval("g", nH, col, dVdr_cgs, np.power(10.0, mid))
+            # g increasing in T: if g(mid) < target, root is higher → raise lo.
+            go_up = g_mid < target
+            lo = np.where(go_up, mid, lo)
+            hi = np.where(go_up, hi, mid)
+
+        T = np.power(10.0, 0.5 * (lo + hi))
+        return np.clip(T, self.table.T_values.min(), self.table.T_values.max())

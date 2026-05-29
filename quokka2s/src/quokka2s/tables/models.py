@@ -195,5 +195,58 @@ class DespoticTable:
                 buffers[field] = np.array(getattr(record.line, field), copy=True)
             field_map[name] = buffers
         return field_map
+
+
+@dataclass(frozen=True)
+class DespoticTable4D:
+    """Fixed-T DESPOTIC lookup table on a 4D grid (nH, N_H, dVdr, T).
+
+    Unlike :class:`DespoticTable` (where T is the self-consistent *output*
+    ``tg_final`` of ``evolveTemp="iterateDust"``), here T is an *input* axis:
+    each grid point is solved with ``evolveTemp="fixed"`` at the grid T, so
+    ``mu_values``/``cv_values``/``Eint_values`` and species abundances are the
+    chemistry values at that imposed temperature.  There is no ``tg_final``.
+
+    All stored arrays (mu/cv/Eint, per-species abundance, per-line fields) have
+    shape ``(n_nH, n_col, n_dVdr, n_T)``.  μ/cv/Eint/abundance are independent
+    of dVdr (broadcast across that axis at build time); only the line fields
+    vary with dVdr.  Consumed by ``TableLookup4D`` + the μγ bisection.
+    """
+
+    species_data: Mapping[str, SpeciesRecord]
+    nH_values: np.ndarray
+    col_density_values: np.ndarray
+    dVdr_values: np.ndarray
+    T_values: np.ndarray
+    mu_values: np.ndarray
+    cv_values: np.ndarray
+    Eint_values: np.ndarray
+    failure_mask: np.ndarray | None = None
+    energy_terms: Mapping[str, np.ndarray] | None = None
+    attempts: Tuple[AttemptRecord, ...] = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "species_data", MappingProxyType(dict(self.species_data)))
+        if self.failure_mask is not None and self.failure_mask.shape != self.mu_values.shape:
+            raise ValueError("failure_mask shape must match mu_values shape.")
+        if self.energy_terms is not None:
+            object.__setattr__(self, "energy_terms", MappingProxyType(dict(self.energy_terms)))
+
+    @property
+    def species(self) -> Tuple[str, ...]:
+        return tuple(self.species_data.keys())
+
+    @property
+    def abundances(self) -> Mapping[str, np.ndarray]:
+        return {name: record.abundance for name, record in self.species_data.items()}
+
+    def require_species(self, name: str) -> SpeciesRecord:
+        record = self.species_data.get(name)
+        if record is None:
+            available = ", ".join(self.species)
+            raise ValueError(
+                f"Requested species '{name}' not found; available species: {available}"
+            )
+        return record
     
 

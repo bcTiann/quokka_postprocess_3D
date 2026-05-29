@@ -107,6 +107,7 @@ def calculate_single_despotic_point(
     row_idx: int | None = None,
     col_idx: int | None = None,
     Tg_init: float = 100.0,
+    Tg_fixed: float | None = None,
     attempt_log: list[AttemptRecord] | None = None,
     escape_geom: str = 'LVG',
 ) -> Tuple[
@@ -129,6 +130,12 @@ def calculate_single_despotic_point(
     1.  Solve chemistry + thermal balance once via
         ``cell.setChemEq(evolveTemp="iterateDust")`` at a canonical dVdr.
     2.  For each dVdr in ``dvdr_grid``: set ``cell.dVdr`` and call
+
+    Fixed-T mode (``Tg_fixed`` given): the gas temperature is pinned to
+    ``Tg_fixed`` and chemistry is solved with ``evolveTemp="fixed"`` (no
+    thermal balance).  ``mu/cv/Eint`` and abundances are then the values at
+    that imposed T, and ``final_Tg == Tg_fixed``.  This is the build mode for
+    the (nH, N_H, dVdr, T) table consumed by the μγ bisection.
         ``cell.lineLum(species, escapeProbGeom='LVG')``. Internally this
         re-solves level populations and escape probabilities (cheap)
         without rerunning chemistry.
@@ -171,7 +178,7 @@ def calculate_single_despotic_point(
         cell = cloud()
         cell.nH = nH_val
         cell.colDen = colDen_val
-        cell.Tg = Tg_init
+        cell.Tg = Tg_init if Tg_fixed is None else float(Tg_fixed)
         cell.dVdr = canonical_dvdr
 
         cell.sigmaNT = 2.0e5
@@ -192,14 +199,30 @@ def calculate_single_despotic_point(
         cell.rad.ionRate = 2.0e-17
         cell.rad.chi = 1.0
 
+        # Initialise composition-derived quantities (mu, cv, ...) before
+        # setChemEq. NL99's dxdt reads cloud.comp.mu (for sound speed); without
+        # this call mu is 0 and every cell hits ZeroDivisionError. GOW's dxdt
+        # doesn't depend on mu so it didn't surface there.
+        cell.comp.computeDerived(cell.nH)
+
         with contextlib.redirect_stdout(stdout_buffer):
-            converged = cell.setChemEq(
-                network=chem_network,
-                evolveTemp="iterateDust",
-                tol=1e-6,
-                maxTime=1e22,
-                maxTempIter=200,
-            )
+            if Tg_fixed is None:
+                converged = cell.setChemEq(
+                    network=chem_network,
+                    evolveTemp="iterateDust",
+                    tol=1e-6,
+                    maxTime=1e22,
+                    maxTempIter=200,
+                )
+            else:
+                # Pin T; solve chemistry only (no thermal balance).
+                cell.Tg = float(Tg_fixed)
+                converged = cell.setChemEq(
+                    network=chem_network,
+                    evolveTemp="fixed",
+                    tol=1e-6,
+                    maxTime=1e22,
+                )
         _log_despotic_stdout(stdout_buffer)
 
         cell.comp.computeDerived(cell.nH)

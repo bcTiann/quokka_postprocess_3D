@@ -37,11 +37,32 @@ def main():
                     help='plot every dVdr index (default: 5 evenly-spaced)')
     ap.add_argument('-n', '--n-slices', type=int, default=5,
                     help='number of evenly-spaced dVdr slices (default 5)')
-    ap.add_argument('-o', '--out-root', default='TablePlots',
-                    help='output root directory (default: TablePlots/)')
+    ap.add_argument('-o', '--out-root', default=None,
+                    help='output root directory; if omitted, auto-derived from '
+                         'the table\'s parent dir as TablePlots_<basename> '
+                         '(strips leading "output_tables_3D_" if present)')
+    ap.add_argument('--table', default=None,
+                    help='path to the despotic_table.npz to view '
+                         '(default: cfg.DESPOTIC_TABLE_PATH)')
     args = ap.parse_args()
 
-    table = load_table(cfg.DESPOTIC_TABLE_PATH)
+    table_path = args.table or cfg.DESPOTIC_TABLE_PATH
+    print(f"[view_table] loading: {table_path}")
+    table = load_table(table_path)
+
+    # Auto-derive output dir from the table source so different tables never
+    # silently land in the same generic TablePlots/ bin.
+    if args.out_root is None:
+        src_dir_name = Path(table_path).parent.name
+        # strip the boilerplate prefix if present, so the suffix carries the
+        # network/geom info (e.g. output_tables_3D_GOW_LVG -> GOW_LVG).
+        tag = src_dir_name
+        for prefix in ('output_tables_3D_', 'output_tables_4D_', 'output_tables_'):
+            if tag.startswith(prefix):
+                tag = tag[len(prefix):]
+                break
+        args.out_root = f'TablePlots_{tag}'
+        print(f"[view_table] -o auto-derived: {args.out_root}/")
 
     samples_path = "/Users/baochen/quokka_postprocessing/log_samples.npy"
     if Path(samples_path).exists():

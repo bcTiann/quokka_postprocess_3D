@@ -42,7 +42,7 @@ import numpy as np
 LOG_RHO_MIN   = -23.0      # cold+dense mask: log10(ρ [g/cm³]) >  this
 LOG_TQK_MAX   = 4.0        # cold+dense mask: log10(T_QK [K])  <  this
 BIN_DEX       = 0.5        # stratified-sampling bin width on (logρ, logT_QK)
-N_TARGET      = 200        # number of cells to run real DESPOTIC on
+N_TARGET      = 400        # number of cells to run real DESPOTIC on (per method)
 RNG_SEED      = 42
 
 _SRC = Path(__file__).resolve().parents[1] / 'src'
@@ -133,9 +133,33 @@ def _stratified_sample(log_rho, log_Tqk, mask, rng):
     return idx[chosen]                              # flat cube indices of the sample
 
 
+def _proportional_sample(mask, rng):
+    """Method A — representative draw of ~N_TARGET masked cells.
+
+    Pick cells uniformly at random over the WHOLE masked set (no binning).
+    Because each cell is equally likely, the number drawn from any (ρ, T_QK)
+    region is proportional to how many cells actually live there — so the
+    sample reproduces the true cold+dense distribution (the bulk of the gas
+    gets the most points, rare corners get few).  Contrast _stratified_sample,
+    which flattens the distribution by taking an equal quota per bin.
+    """
+    idx = np.flatnonzero(mask)
+    k = min(N_TARGET, idx.size)
+    print(f'[sample:prop] drawing {k} cells uniformly from {idx.size} masked cells '
+          f'(∝ population)')
+    return rng.choice(idx, size=k, replace=False)
+
+
 def main():
     t0 = time.time()
     rng = np.random.default_rng(RNG_SEED)
+
+    # Optional L_ext override (so we can loop 0/9/99 without editing config.py).
+    _lext = os.environ.get('VALIDATE_LEXT')
+    if _lext is not None:
+        cfg.COLUMN_EXTENSION_LATERAL_KPC = float(_lext)
+        print(f'[override] COLUMN_EXTENSION_LATERAL_KPC = '
+              f'{cfg.COLUMN_EXTENSION_LATERAL_KPC} (from VALIDATE_LEXT)')
 
     rho, n_H, T_qk, colden, dvdr = _load_cubes()
     print(f'[load] done in {time.time() - t0:.1f}s  ({rho.size} cells)')
@@ -152,114 +176,110 @@ def main():
     print(f'[mask] cold+dense (logρ>{LOG_RHO_MIN}, logT_QK<{LOG_TQK_MAX}): '
           f'{int(mask.sum())} cells')
 
-    sample = _stratified_sample(log_rho, log_Tqk, mask, rng)
-    print(f'[sample] selected {sample.size} cells')
+    # Two sampling methods: 'even' (stratified, equal quota per bin) and
+    # 'prop' (representative, ∝ population).
+    samples = {
+        'even': _stratified_sample(log_rho, log_Tqk, mask, rng),
+        'prop': _proportional_sample(mask, rng),
+    }
 
-    # Table-interpolated T_DSP for the whole sample at once.
     lookup = phys.ensure_table_lookup(cfg.DESPOTIC_TABLE_PATH)
-    nH_s   = n_H[sample]
-    col_s  = colden[sample]
-    dv_s   = dvdr[sample]
-    Tqk_s  = T_qk[sample]
-    T_tab  = lookup.temperature(nH_s, col_s, dv_s)
 
-    # Real DESPOTIC, one cell at a time.
-    print(f'[despotic] solving {sample.size} cells with real setChemEq '
-          f'(GOW, iterateDust)…')
-    T_real = np.full(sample.size, np.nan)
-    failed = np.zeros(sample.size, dtype=bool)
-    for i in range(sample.size):
-        ts = time.time()
+    # Solve real DESPOTIC once per UNIQUE cell across both samples — cells that
+    # appear in both methods are solved only once.
+    union = np.unique(np.concatenate(list(samples.values())))
+    print(f'[despotic] solving {union.size} unique cells (union of even+prop) '
+          f'with real setChemEq (GOW, iterateDust)…')
+    Treal_map: dict[int, float] = {}
+    failed_map: dict[int, bool] = {}
+    for i, fi in enumerate(union):
+        fi = int(fi)
         out = calculate_single_despotic_point(
-            float(nH_s[i]), float(col_s[i]), [float(dv_s[i])],
+            float(n_H[fi]), float(colden[fi]), [float(dvdr[fi])],
             chem_network=GOW, log_failures=False,
         )
-        T_real[i] = out[6]      # final_Tg
-        failed[i] = bool(out[8])
-        print(f'  [{i+1:2d}/{sample.size}] nH={nH_s[i]:.3e} colDen={col_s[i]:.3e} '
-              f'T_QK={Tqk_s[i]:.1f}  '
-              f'T_tab={T_tab[i]:.1f}  T_real={T_real[i]:.1f}  '
-              f'{"FAILED" if failed[i] else f"{time.time()-ts:.1f}s"}')
+        Treal_map[fi] = out[6]      # final_Tg
+        failed_map[fi] = bool(out[8])
+        if (i + 1) % 50 == 0 or (i + 1) == union.size:
+            print(f'  [{i+1:4d}/{union.size}]  ({time.time()-t0:.0f}s elapsed)')
 
-    # --- write CSV ---  (filename encodes down + L_ext so the two L_ext runs
-    #                      don't overwrite each other)
-    tag = f'd{cfg.DOWNSAMPLE_FACTOR}_Lext{cfg.COLUMN_EXTENSION_LATERAL_KPC:g}kpc'
-    out_dir = Path(cfg._OUTPUT_ROOT) / 'despotic_validation'
-    out_dir.mkdir(parents=True, exist_ok=True)
-    csv_path = out_dir / f'despotic_validation_cold_dense_{tag}.csv'
-
-    with np.errstate(divide='ignore', invalid='ignore'):
-        dex_tab_real = np.log10(T_tab / T_real)
-        dex_real_qk  = np.log10(T_real / Tqk_s)
-
-    header = ('flat_idx,log_rho,n_H,colDen,dVdr,'
-              'T_QK,T_DSP_table,T_DSP_real,dex_table_over_real,dex_real_over_QK,failed')
-    rows = np.column_stack([
-        sample.astype(float), log_rho[sample], nH_s, col_s, dv_s,
-        Tqk_s, T_tab, T_real, dex_tab_real, dex_real_qk, failed.astype(float),
-    ])
-    np.savetxt(csv_path, rows, delimiter=',', header=header, comments='',
-               fmt='%.6e')
-    print(f'[out] {csv_path}')
-
-    # --- scatter plot ---
     import matplotlib
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
     from matplotlib.colors import Normalize
 
-    ok = ~failed & np.isfinite(T_real) & (T_real > 0) & (Tqk_s > 0) & (T_tab > 0)
-    fig, ax = plt.subplots(figsize=(7.2, 6.8))
-    lr = np.log10(Tqk_s[ok]); lt_tab = np.log10(T_tab[ok]); lt_real = np.log10(T_real[ok])
-    lo = np.floor(min(lr.min(), lt_tab.min(), lt_real.min()))
-    hi = np.ceil(max(lr.max(), lt_tab.max(), lt_real.max()))
-
-    ax.grid(True, ls=':', lw=0.5, alpha=0.35, zorder=0)
-    ax.plot([lo, hi], [lo, hi], 'k--', lw=1.0, zorder=1,
-            label=r'$T_{\rm DESPOTIC} = T_{\rm QUOKKA}$')
-
-    cval = np.log10(col_s[ok])                      # colour by log10 colDen (N_H)
-    cnorm = Normalize(vmin=float(cval.min()), vmax=float(cval.max()))
-    # real-time = small filled circle; table = hollow ring on top, so the two
-    # estimates per cell are distinguishable even at 200 points.
-    sc = ax.scatter(lr, lt_real, c=cval, cmap='viridis', norm=cnorm,
-                    marker='o', s=22, alpha=0.85, linewidth=0.0, zorder=3,
-                    label=r'$T_{\rm DESPOTIC}$ (real-time)')
-    ax.scatter(lr, lt_tab, facecolors='none', edgecolors='k',
-               marker='o', s=48, linewidth=0.6, alpha=0.6, zorder=2,
-               label=r'$T_{\rm DESPOTIC}$ (table)')
-    cb = fig.colorbar(sc, ax=ax, fraction=0.046, pad=0.02)
-    cb.set_label(r'$\log_{10} N_{\rm H}$ [cm$^{-2}$]', fontsize=10)
-
-    ax.set_xlim(lo, hi); ax.set_ylim(lo, hi)
-    ax.set_xlabel(r'$\log_{10}\,T_{\rm QUOKKA}$ [K]', fontsize=11)
-    ax.set_ylabel(r'$\log_{10}\,T_{\rm DESPOTIC}$ [K]', fontsize=11)
-    ax.set_title(
-        'Cold+dense validation: table vs real DESPOTIC\n'
-        f'mask:  $\\log_{{10}}\\rho$ > {LOG_RHO_MIN:g}   &   '
-        f'$\\log_{{10}}T_{{\\rm QK}}$ < {LOG_TQK_MAX:g}    '
-        f'(stratified {int(ok.sum())} cells)\n'
-        f'down={cfg.DOWNSAMPLE_FACTOR},  '
-        f'$L_{{\\rm ext}}$ = {cfg.COLUMN_EXTENSION_LATERAL_KPC:g} kpc',
-        fontsize=9)
-    ax.legend(fontsize=8.5, loc='lower right', framealpha=0.9)
-    ax.set_aspect('equal', 'box')
+    tag = f'd{cfg.DOWNSAMPLE_FACTOR}_Lext{cfg.COLUMN_EXTENSION_LATERAL_KPC:g}kpc'
+    out_dir = Path(cfg._OUTPUT_ROOT) / 'despotic_validation'
+    out_dir.mkdir(parents=True, exist_ok=True)
     plots_dir = out_dir / 'plots'
     plots_dir.mkdir(parents=True, exist_ok=True)
-    png_path = plots_dir / f'despotic_validation_cold_dense_{tag}.png'
-    fig.savefig(str(png_path), dpi=200, bbox_inches='tight')
-    print(f'[out] {png_path}')
+    method_label = {'even': 'stratified (even per bin)',
+                    'prop': 'proportional (representative)'}
 
-    # --- summary ---
-    n_fail = int(failed.sum())
-    med_interp_err = float(np.nanmedian(np.abs(dex_tab_real[ok])))
-    frac_real_hotter = float(np.mean(T_real[ok] > Tqk_s[ok]))
-    print('\n================ summary ================')
-    print(f'  cells solved        : {sample.size}  ({n_fail} failed)')
-    print(f'  median |log10(table/real)| (interp error) : {med_interp_err:.3f} dex')
-    print(f'  fraction T_real > T_QK                    : {frac_real_hotter:.1%}')
-    print(f'  total wall time     : {time.time() - t0:.1f}s')
-    print('=========================================')
+    for method, sample in samples.items():
+        nH_s, col_s, dv_s, Tqk_s = n_H[sample], colden[sample], dvdr[sample], T_qk[sample]
+        T_tab  = lookup.temperature(nH_s, col_s, dv_s)
+        T_real = np.array([Treal_map[int(fi)]  for fi in sample])
+        failed = np.array([failed_map[int(fi)] for fi in sample])
+
+        with np.errstate(divide='ignore', invalid='ignore'):
+            dex_tab_real = np.log10(T_tab / T_real)
+            dex_real_qk  = np.log10(T_real / Tqk_s)
+
+        csv_path = out_dir / f'despotic_validation_cold_dense_{tag}_{method}.csv'
+        header = ('flat_idx,log_rho,n_H,colDen,dVdr,'
+                  'T_QK,T_DSP_table,T_DSP_real,dex_table_over_real,dex_real_over_QK,failed')
+        rows = np.column_stack([
+            sample.astype(float), log_rho[sample], nH_s, col_s, dv_s,
+            Tqk_s, T_tab, T_real, dex_tab_real, dex_real_qk, failed.astype(float),
+        ])
+        np.savetxt(csv_path, rows, delimiter=',', header=header, comments='', fmt='%.6e')
+        print(f'[out] {csv_path}')
+
+        # per-(method, L_ext) scatter
+        ok = ~failed & np.isfinite(T_real) & (T_real > 0) & (Tqk_s > 0) & (T_tab > 0)
+        fig, ax = plt.subplots(figsize=(7.2, 6.8))
+        lr = np.log10(Tqk_s[ok]); lt_tab = np.log10(T_tab[ok]); lt_real = np.log10(T_real[ok])
+        lo = np.floor(min(lr.min(), lt_tab.min(), lt_real.min()))
+        hi = np.ceil(max(lr.max(), lt_tab.max(), lt_real.max()))
+        ax.grid(True, ls=':', lw=0.5, alpha=0.35, zorder=0)
+        ax.plot([lo, hi], [lo, hi], 'k--', lw=1.0, zorder=1,
+                label=r'$T_{\rm DESPOTIC} = T_{\rm QUOKKA}$')
+        cval = np.log10(col_s[ok])
+        cnorm = Normalize(vmin=float(cval.min()), vmax=float(cval.max()))
+        sc = ax.scatter(lr, lt_real, c=cval, cmap='viridis', norm=cnorm,
+                        marker='o', s=22, alpha=0.85, linewidth=0.0, zorder=3,
+                        label=r'$T_{\rm DESPOTIC}$ (real-time)')
+        ax.scatter(lr, lt_tab, facecolors='none', edgecolors='k',
+                   marker='o', s=48, linewidth=0.6, alpha=0.6, zorder=2,
+                   label=r'$T_{\rm DESPOTIC}$ (table)')
+        cb = fig.colorbar(sc, ax=ax, fraction=0.046, pad=0.02)
+        cb.set_label(r'$\log_{10} N_{\rm H}$ [cm$^{-2}$]', fontsize=10)
+        ax.set_xlim(lo, hi); ax.set_ylim(lo, hi)
+        ax.set_xlabel(r'$\log_{10}\,T_{\rm QUOKKA}$ [K]', fontsize=11)
+        ax.set_ylabel(r'$\log_{10}\,T_{\rm DESPOTIC}$ [K]', fontsize=11)
+        ax.set_title(
+            f'Cold+dense validation: table vs real DESPOTIC — {method_label[method]}\n'
+            f'mask:  $\\log_{{10}}\\rho$ > {LOG_RHO_MIN:g}   &   '
+            f'$\\log_{{10}}T_{{\\rm QK}}$ < {LOG_TQK_MAX:g}   ({int(ok.sum())} cells)\n'
+            f'down={cfg.DOWNSAMPLE_FACTOR},  '
+            f'$L_{{\\rm ext}}$ = {cfg.COLUMN_EXTENSION_LATERAL_KPC:g} kpc',
+            fontsize=9)
+        ax.legend(fontsize=8.5, loc='lower right', framealpha=0.9)
+        ax.set_aspect('equal', 'box')
+        png_path = plots_dir / f'despotic_validation_cold_dense_{tag}_{method}.png'
+        fig.savefig(str(png_path), dpi=200, bbox_inches='tight')
+        plt.close(fig)
+        print(f'[out] {png_path}')
+
+        n_fail = int(failed.sum())
+        med_interp_err = float(np.nanmedian(np.abs(dex_tab_real[ok])))
+        frac_real_hotter = float(np.mean(T_real[ok] > Tqk_s[ok]))
+        print(f'  [{method}] {sample.size} cells ({n_fail} failed)  '
+              f'median|log10(table/real)|={med_interp_err:.3f} dex  '
+              f'frac(T_real>T_QK)={frac_real_hotter:.1%}')
+
+    print(f'\n[done] {tag}  total wall time {time.time() - t0:.1f}s')
 
 
 if __name__ == '__main__':

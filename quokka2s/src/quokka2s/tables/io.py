@@ -21,9 +21,10 @@ from typing import Iterable, Mapping
 
 import numpy as np
 
-from .models import AttemptRecord, DespoticTable, SpeciesLineGrid, SpeciesRecord
+from .models import AttemptRecord, DespoticTable, DespoticTable4D, SpeciesLineGrid, SpeciesRecord
 
 TABLE_VERSION = 4
+TABLE_VERSION_4D = 1
 _LINE_FIELDS = ("freq", "intIntensity", "intTB", "lumPerH", "tau", "tauDust")
 
 def _attempts_to_array(attempts: Iterable[AttemptRecord]) -> np.ndarray:
@@ -163,6 +164,104 @@ def load_table(path: str | Path) -> DespoticTable:
         nH_values=nH_values,
         col_density_values=col_density_values,
         dVdr_values=dVdr_values,
+        mu_values=mu_values,
+        cv_values=cv_values,
+        Eint_values=Eint_values,
+        attempts=attempts,
+        failure_mask=failure_mask,
+        energy_terms=energy_fields,
+    )
+
+
+def save_table_4d(table: DespoticTable4D, path: str | Path) -> None:
+    """Persist a fixed-T 4D table (nH, N_H, dVdr, T). Mirrors save_table but
+    stores T_values + 4D arrays and has no tg_final."""
+    path = Path(path)
+    payload: dict[str, np.ndarray] = {
+        "version": np.array([TABLE_VERSION_4D], dtype=np.int32),
+        "nH_values": np.array(table.nH_values),
+        "col_density_values": np.array(table.col_density_values),
+        "dVdr_values": np.array(table.dVdr_values),
+        "T_values": np.array(table.T_values),
+
+        "mu_values": np.array(table.mu_values),
+        "cv_values": np.array(table.cv_values),
+        "Eint_values": np.array(table.Eint_values),
+
+        "failure_mask": np.asarray(table.failure_mask) if table.failure_mask is not None else None,
+        "species_names": np.array(table.species, dtype=object),
+        "species_is_emitter": np.array([table.species_data[name].is_emitter for name in table.species], dtype=np.bool_),
+        "attempts": _attempts_to_array(table.attempts),
+    }
+    for species, record in table.species_data.items():
+        payload[f"{species}_abundance"] = np.array(record.abundance)
+        if record.is_emitter and record.line is not None:
+            for field in _LINE_FIELDS:
+                payload[f"{species}_{field}"] = np.array(getattr(record.line, field))
+    if table.energy_terms:
+        payload["energy_term_names"] = np.array(list(table.energy_terms.keys()), dtype=object)
+        for name, grid in table.energy_terms.items():
+            payload[f"energy::{name}"] = np.asarray(grid)
+
+    payload = {key: value for key, value in payload.items() if value is not None}
+    np.savez_compressed(path, **payload)
+
+
+def load_table_4d(path: str | Path) -> DespoticTable4D:
+    path = Path(path)
+    blob = np.load(path, allow_pickle=True)
+    version = int(blob["version"])
+    if version != TABLE_VERSION_4D:
+        raise ValueError(f"Unsupported 4D table version: {version} (expected {TABLE_VERSION_4D})")
+
+    nH_values = np.array(blob["nH_values"], dtype=float)
+    col_density_values = np.array(blob["col_density_values"], dtype=float)
+    dVdr_values = np.array(blob["dVdr_values"], dtype=float)
+    T_values = np.array(blob["T_values"], dtype=float)
+
+    mu_values = np.array(blob["mu_values"], dtype=float)
+    cv_values = np.array(blob["cv_values"], dtype=float)
+    Eint_values = np.array(blob["Eint_values"], dtype=float)
+
+    failure_mask = blob.get("failure_mask")
+    if failure_mask is not None:
+        failure_mask = np.array(failure_mask, dtype=bool)
+
+    energy_fields = None
+    energy_names = blob.get("energy_term_names")
+    if energy_names is not None:
+        energy_fields = {
+            str(name): np.array(blob[f"energy::{name}"], dtype=float)
+            for name in energy_names
+        }
+
+    species_names = [str(x) for x in blob["species_names"]]
+    emitter_flags = np.array(blob["species_is_emitter"], dtype=bool)
+    species_data: dict[str, SpeciesRecord] = {}
+    for name, is_emitter in zip(species_names, emitter_flags):
+        abundance = np.array(blob[f"{name}_abundance"], dtype=float)
+        line_grid = None
+        if is_emitter:
+            fields: Mapping[str, np.ndarray] = {
+                field: np.array(blob[f"{name}_{field}"], dtype=float)
+                for field in _LINE_FIELDS
+            }
+            line_grid = SpeciesLineGrid(**fields, abundance=abundance)
+        species_data[name] = SpeciesRecord(
+            name=name,
+            abundance=abundance,
+            line=line_grid,
+            is_emitter=bool(is_emitter),
+        )
+
+    attempts = _attempts_from_array(blob["attempts"])
+
+    return DespoticTable4D(
+        species_data=species_data,
+        nH_values=nH_values,
+        col_density_values=col_density_values,
+        dVdr_values=dVdr_values,
+        T_values=T_values,
         mu_values=mu_values,
         cv_values=cv_values,
         Eint_values=Eint_values,

@@ -89,6 +89,13 @@ def compute_cache_key(
     by _column_density_H; folding it in lets L_ext=0 vs L_ext=9 runs keep
     independent intermediate caches.
     """
+    # Fold in the column-density averaging method (harmonic vs arithmetic) so
+    # the two keep independent caches without touching every caller.
+    try:
+        from .prep import config as _cfg
+        _colden_mean = getattr(_cfg, 'COLUMN_DENSITY_MEAN', 'harmonic')
+    except Exception:
+        _colden_mean = 'harmonic'
     h = hashlib.sha1()
     for component in (
         str(Path(dataset_path).resolve()),
@@ -97,6 +104,7 @@ def compute_cache_key(
         f'{_file_mtime(despotic_table_path):.0f}',
         f'downsample={int(downsample_factor)}',
         f'L_ext_kpc={float(column_extension_lateral_kpc):g}',
+        f'colden_mean={_colden_mean}',
         f'schema={CACHE_SCHEMA_VERSION}',
     ):
         h.update(component.encode())
