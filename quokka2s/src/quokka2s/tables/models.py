@@ -134,6 +134,8 @@ class AttemptRecord:
     converged: bool
     message: str | None = None
     duration: float | None = None
+    dvdr_idx: int | None = None    # added 2026-05-29: per-dVdr solve traceability
+    dvdr: float | None = None
 
 
 @dataclass(frozen=True)

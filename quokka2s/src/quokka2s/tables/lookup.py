@@ -284,8 +284,14 @@ class TableLookup4D:
         Solves   g(T) ≡ T / [(γ(T)−1)·μ(T)] = e_specific · m_H / k_B
         for T at each cell, by bisection in log10(T) over the table's T range.
         μ and γ=(cv+1)/cv come from the table; ``g`` is precomputed and monotone
-        in T, so the root is unique.  μ/cv are dVdr-independent, so any dVdr
-        slice is used (default: the table's median dVdr).
+        in T, so the root is unique.
+
+        ``dVdr_cgs`` should be the per-cell LVG velocity gradient (same array
+        shape as nH).  Pre-2026-05-29 the 4D build broadcast μ/cv across dVdr
+        so any slice worked; the new builder solves chemistry per-dVdr so this
+        argument is now physically meaningful.  If ``None`` (legacy callers),
+        fall back to the table's median dVdr with a warning-worthy note in
+        the docstring.
 
         Parameters are flat or N-D arrays in cgs (e_specific in erg/g).
         Returns T in K, clipped to the table's [T_min, T_max].
@@ -295,6 +301,8 @@ class TableLookup4D:
         target = np.asarray(e_specific_cgs, dtype=float) * (_M_H_CGS / _K_B_CGS)  # K
 
         if dVdr_cgs is None:
+            # Legacy fallback for old call sites — μ/cv are now genuinely
+            # dVdr-dependent so callers should pass the cell's real dVdr.
             dVdr_cgs = float(self.table.dVdr_values[len(self.table.dVdr_values) // 2])
 
         log_T_lo = np.log10(self.table.T_values.min())

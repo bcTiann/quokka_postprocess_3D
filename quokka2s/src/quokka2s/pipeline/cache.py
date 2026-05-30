@@ -46,7 +46,10 @@ import numpy as np
 # changes (e.g. the DESPOTIC table's `tg_final` computation, the chemistry
 # network, the column-density direction symmetrisation). All cached files
 # stamped with an older value will be silently invalidated and rebuilt.
-CACHE_SCHEMA_VERSION = 3  # was 2; bumped for lateral colDen extension (Sec. <ref>).
+CACHE_SCHEMA_VERSION = 4  # 2026-05-29: bumped for solver emitter+true-3D-solve rebuild;
+                          # earlier tables had a missing-emitter bug that made CNM Tg
+                          # systematically too hot by 1–2.5 dex.  All caches keyed on
+                          # older table mtimes are now stale.
 
 
 # ── Fields worth caching to disk ─────────────────────────────────────────────
@@ -89,13 +92,33 @@ def compute_cache_key(
     by _column_density_H; folding it in lets L_ext=0 vs L_ext=9 runs keep
     independent intermediate caches.
     """
-    # Fold in the column-density averaging method (harmonic vs arithmetic) so
-    # the two keep independent caches without touching every caller.
+    # Pull every config setting that changes the cached field's *value* so
+    # toggling any of them invalidates the cache. Lazy import keeps this
+    # module free of the heavy pipeline-prep imports for non-pipeline callers.
     try:
         from .prep import config as _cfg
-        _colden_mean = getattr(_cfg, 'COLUMN_DENSITY_MEAN', 'harmonic')
+        _colden_mean    = getattr(_cfg, 'COLUMN_DENSITY_MEAN', 'harmonic')
+        _high_t_blend   = bool(getattr(_cfg, 'HIGH_T_4D_BLEND', False))
+        _t_qk_high      = float(getattr(_cfg, 'T_QK_HIGH_K', 1.0e4))
+        # T_CUTOFF: dict-keyed by species; sort so order doesn't matter.
+        _t_cutoff_dict  = getattr(_cfg, 'T_CUTOFF', {})
+        _t_cutoff_str   = ';'.join(f'{k}={v:g}' for k, v in sorted(_t_cutoff_dict.items()))
+        _t_cutoff_def   = float(getattr(_cfg, 'T_CUTOFF_DEFAULT', 2.0e7))
+        _table_4d_path  = str(getattr(_cfg, 'DESPOTIC_TABLE_4D_PATH', ''))
+        _table_4d_mtime = _file_mtime(_table_4d_path) if _table_4d_path else 0.0
     except Exception:
         _colden_mean = 'harmonic'
+        _high_t_blend = False
+        _t_qk_high = 1.0e4
+        _t_cutoff_str = ''
+        _t_cutoff_def = 2.0e7
+        _table_4d_path = ''
+        _table_4d_mtime = 0.0
+    # DVDR_FLOOR is defined in physics_fields rather than config; import lazily.
+    try:
+        from .prep.physics_fields import DVDR_FLOOR as _dvdr_floor
+    except Exception:
+        _dvdr_floor = 1e-18
     h = hashlib.sha1()
     for component in (
         str(Path(dataset_path).resolve()),
@@ -105,6 +128,13 @@ def compute_cache_key(
         f'downsample={int(downsample_factor)}',
         f'L_ext_kpc={float(column_extension_lateral_kpc):g}',
         f'colden_mean={_colden_mean}',
+        f'high_t_4d_blend={_high_t_blend}',
+        f't_qk_high={_t_qk_high:g}',
+        f't_cutoff={_t_cutoff_str}',
+        f't_cutoff_default={_t_cutoff_def:g}',
+        f'table_4d_path={_table_4d_path}',
+        f'table_4d_mtime={_table_4d_mtime:.0f}',
+        f'dvdr_floor={float(_dvdr_floor):g}',
         f'schema={CACHE_SCHEMA_VERSION}',
     ):
         h.update(component.encode())

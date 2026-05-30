@@ -59,17 +59,21 @@ def build_table(
     workers: int | None = None,
     escape_geom: str = 'LVG',
 ) -> DespoticTable:
-    """Build a 3D DESPOTIC table on (nH, colDen, dVdr).
+    """Build a 3D DESPOTIC table on (nH, colDen, dVdr) — true 3-input solve.
 
-    Architecture (validated empirically):
-    - Outer loop over (nH, colDen): chemistry + thermal balance is solved
-      ONCE per (nH, colDen) point with `evolveTemp="iterateDust"`.
-    - Inner loop over dVdr: only line emission is recomputed
-      (`cell.lineLum(escapeProbGeom='LVG')`) — no chemistry rerun.
-    - Tg, abundances, mu, cv, Eint do not depend on dVdr; they are
-      broadcast across the dVdr axis at storage time.
-    - Line fields (lumPerH, tau, intIntensity, intTB, tauDust, freq)
-      are genuinely 3D.
+    Architecture (rewritten 2026-05-29):
+    - Every cell in the (nH × colDen × dVdr) grid does an independent
+      ``setChemEq(evolveTemp="iterateDust")`` solve at its own (nH, colDen,
+      dVdr) triple.  No more canonical-dVdr broadcast.
+    - Emitters (CO, C+, C, HCO+, O) are added with zero abundance BEFORE
+      setChemEq, so ``setTempEq`` inside iterateDust actually includes line
+      cooling — without this, CNM cells were ~10⁴ K (~100× too hot).
+    - Per-cell energy_terms include ``LambdaLine.<species>`` so each
+      emitter's contribution to the cooling budget is recoverable.
+
+    Parallelization: rows over the nH axis (matches the old structure for
+    minimal disruption).  Each row independently solves
+    ``num_cols * num_dvdr`` setChemEq calls.
     """
 
     specs = tuple(species_specs)
@@ -98,22 +102,13 @@ def build_table(
     }
     energy_fields: dict[str, np.ndarray] = {}
 
-    def _flatten_energy(term: str, value, target: dict[str, np.ndarray], col_i: int) -> None:
-        """Flatten one (col, dVdr-broadcast) energy-term entry into target."""
-        if isinstance(value, Mapping):
-            for sub_key, sub_value in value.items():
-                _flatten_energy(f"{term}.{sub_key}", sub_value, target, col_i)
-            return
-        grid = target.setdefault(term, np.full((num_cols, num_dvdr), np.nan, dtype=float))
-        grid[col_i, :] = float(value)
-
     def _solve_row(row_idx: int) -> tuple[
         int,
         np.ndarray,                                # tg_row (num_cols, num_dvdr)
         np.ndarray,                                # failure_row
         dict[str, dict[str, np.ndarray]],          # line_rows
         dict[str, np.ndarray],                     # abundance_rows
-        dict[str, np.ndarray],                     # energy_rows
+        dict[str, np.ndarray],                     # energy_rows (per-term 2D arrays)
         np.ndarray, np.ndarray, np.ndarray,        # mu/cv/eint
         list[AttemptRecord],
     ]:
@@ -136,46 +131,48 @@ def build_table(
         emitter_names = [spec.name for spec in specs if spec.is_emitter]
 
         for col_idx, col_val in enumerate(col_vals):
-            line_results, _emit_abunds, chem_abunds, mu_val, cv_val, eint_val, final_tg, energy_terms, failed = (
-                calculate_single_despotic_point(
-                    nH_val=nH_vals[row_idx],
-                    colDen_val=col_val,
-                    dvdr_grid=tuple(dvdr_vals.tolist()),
-                    species=emitter_names,
-                    abundance_only=tuple(spec.name for spec in specs if not spec.is_emitter),
-                    chem_network=chem_network,
-                    row_idx=row_idx,
-                    col_idx=col_idx,
-                    Tg_init=100.0,
-                    log_failures=True,
-                    attempt_log=attempts_row,
-                    escape_geom=escape_geom,
+            for d_idx, dvdr_val in enumerate(dvdr_vals):
+                line_results, _emit_abunds, chem_abunds, mu_val, cv_val, eint_val, final_tg, energy_terms, failed = (
+                    calculate_single_despotic_point(
+                        nH_val=nH_vals[row_idx],
+                        colDen_val=col_val,
+                        dvdr_val=float(dvdr_val),
+                        species=emitter_names,
+                        abundance_only=tuple(spec.name for spec in specs if not spec.is_emitter),
+                        chem_network=chem_network,
+                        row_idx=row_idx,
+                        col_idx=col_idx,
+                        dvdr_idx=d_idx,
+                        Tg_init=100.0,
+                        log_failures=True,
+                        attempt_log=attempts_row,
+                        escape_geom=escape_geom,
+                    )
                 )
-            )
 
-            # 2D fields broadcast across the dvdr axis.
-            tg_row[col_idx, :]      = final_tg
-            failure_row[col_idx, :] = failed
-            mu_row[col_idx, :]      = mu_val
-            cv_row[col_idx, :]      = cv_val
-            eint_row[col_idx, :]    = eint_val
+                tg_row[col_idx, d_idx]      = final_tg
+                failure_row[col_idx, d_idx] = failed
+                mu_row[col_idx, d_idx]      = mu_val
+                cv_row[col_idx, d_idx]      = cv_val
+                eint_row[col_idx, d_idx]    = eint_val
 
-            for spec in specs:
-                abundance_rows[spec.name][col_idx, :] = chem_abunds.get(spec.name, float("nan"))
+                for spec in specs:
+                    abundance_rows[spec.name][col_idx, d_idx] = chem_abunds.get(spec.name, float("nan"))
 
-            # 3D line fields filled per dvdr index.
-            for spec in specs:
-                if not spec.is_emitter:
-                    continue
-                results_list = line_results.get(spec.name, [DEFAULT_LINE_RESULT] * num_dvdr)
-                for d_idx, result in enumerate(results_list):
-                    if d_idx >= num_dvdr:
-                        break
+                # Line fields per-cell.
+                for spec in specs:
+                    if not spec.is_emitter:
+                        continue
+                    result = line_results.get(spec.name, DEFAULT_LINE_RESULT)
                     for field in LINE_RESULT_FIELDS:
                         line_rows[spec.name][field][col_idx, d_idx] = getattr(result, field)
 
-            for term, value in energy_terms.items():
-                _flatten_energy(term, value, energy_rows, col_idx)
+                # Energy terms are now flat from solver._flatten_energy_terms
+                # (includes LambdaLine.CO, LambdaLine.C+ etc.).
+                for term, value in energy_terms.items():
+                    grid = energy_rows.setdefault(term,
+                                                  np.full((num_cols, num_dvdr), np.nan, dtype=float))
+                    grid[col_idx, d_idx] = float(value)
 
         return row_idx, tg_row, failure_row, line_rows, abundance_rows, energy_rows, mu_row, cv_row, eint_row, attempts_row
 
@@ -274,12 +271,11 @@ def build_table_4d(
 ) -> DespoticTable4D:
     """Build a fixed-T 4D DESPOTIC table on (nH, colDen, dVdr, T).
 
-    Unlike :func:`build_table` (which solves thermal balance with
-    ``evolveTemp="iterateDust"`` and stores the equilibrium ``tg_final``), this
-    pins the gas temperature to each grid T and solves chemistry only
-    (``evolveTemp="fixed"``).  Per (nH, colDen, T) the chemistry — and thus
-    mu/cv/Eint/abundances — is solved once and broadcast across the dVdr axis;
-    only line fields are recomputed per dVdr.  Consumed by the μγ bisection.
+    Same per-cell architecture as :func:`build_table`: each (nH, colDen, dVdr, T)
+    cell does its own ``setChemEq(evolveTemp="fixed", Tg_fixed=T)`` call, with
+    emitters pre-added so line cooling is included in dEdt() output.  No
+    dVdr broadcast.  ~35× slower than the old broadcast build but physically
+    correct.
     """
     specs = tuple(species_specs)
     nH_vals   = nH_grid.sample()
@@ -302,14 +298,6 @@ def build_table_4d(
     }
     energy_fields: dict[str, np.ndarray] = {}
 
-    def _flatten_energy(term: str, value, target: dict[str, np.ndarray], col_i: int, t_i: int) -> None:
-        if isinstance(value, Mapping):
-            for sub_key, sub_value in value.items():
-                _flatten_energy(f"{term}.{sub_key}", sub_value, target, col_i, t_i)
-            return
-        grid = target.setdefault(term, np.full((num_cols, num_dvdr, num_T), np.nan, dtype=float))
-        grid[col_i, :, t_i] = float(value)
-
     emitter_names = [spec.name for spec in specs if spec.is_emitter]
 
     def _solve_row(row_idx: int):
@@ -328,45 +316,46 @@ def build_table_4d(
         attempts_row: list[AttemptRecord] = []
 
         for col_idx, col_val in enumerate(col_vals):
-            for t_idx, T_val in enumerate(T_vals):
-                line_results, _emit_abunds, chem_abunds, mu_val, cv_val, eint_val, _final_tg, energy_terms, failed = (
-                    calculate_single_despotic_point(
-                        nH_val=nH_vals[row_idx],
-                        colDen_val=col_val,
-                        dvdr_grid=tuple(dvdr_vals.tolist()),
-                        species=emitter_names,
-                        abundance_only=tuple(spec.name for spec in specs if not spec.is_emitter),
-                        chem_network=chem_network,
-                        row_idx=row_idx,
-                        col_idx=col_idx,
-                        Tg_fixed=float(T_val),
-                        log_failures=True,
-                        attempt_log=attempts_row,
-                        escape_geom=escape_geom,
+            for d_idx, dvdr_val in enumerate(dvdr_vals):
+                for t_idx, T_val in enumerate(T_vals):
+                    line_results, _emit_abunds, chem_abunds, mu_val, cv_val, eint_val, _final_tg, energy_terms, failed = (
+                        calculate_single_despotic_point(
+                            nH_val=nH_vals[row_idx],
+                            colDen_val=col_val,
+                            dvdr_val=float(dvdr_val),
+                            species=emitter_names,
+                            abundance_only=tuple(spec.name for spec in specs if not spec.is_emitter),
+                            chem_network=chem_network,
+                            row_idx=row_idx,
+                            col_idx=col_idx,
+                            dvdr_idx=d_idx,
+                            Tg_fixed=float(T_val),
+                            log_failures=True,
+                            attempt_log=attempts_row,
+                            escape_geom=escape_geom,
+                        )
                     )
-                )
 
-                # Chemistry-derived scalars broadcast across the dVdr axis.
-                mu_row[col_idx, :, t_idx]   = mu_val
-                cv_row[col_idx, :, t_idx]   = cv_val
-                eint_row[col_idx, :, t_idx] = eint_val
-                failure_row[col_idx, :, t_idx] = failed
-                for spec in specs:
-                    abundance_rows[spec.name][col_idx, :, t_idx] = chem_abunds.get(spec.name, float("nan"))
+                    mu_row[col_idx, d_idx, t_idx]   = mu_val
+                    cv_row[col_idx, d_idx, t_idx]   = cv_val
+                    eint_row[col_idx, d_idx, t_idx] = eint_val
+                    failure_row[col_idx, d_idx, t_idx] = failed
 
-                # Line fields genuinely vary with dVdr.
-                for spec in specs:
-                    if not spec.is_emitter:
-                        continue
-                    results_list = line_results.get(spec.name, [DEFAULT_LINE_RESULT] * num_dvdr)
-                    for d_idx, result in enumerate(results_list):
-                        if d_idx >= num_dvdr:
-                            break
+                    for spec in specs:
+                        abundance_rows[spec.name][col_idx, d_idx, t_idx] = chem_abunds.get(spec.name, float("nan"))
+
+                    for spec in specs:
+                        if not spec.is_emitter:
+                            continue
+                        result = line_results.get(spec.name, DEFAULT_LINE_RESULT)
                         for field in LINE_RESULT_FIELDS:
                             line_rows[spec.name][field][col_idx, d_idx, t_idx] = getattr(result, field)
 
-                for term, value in energy_terms.items():
-                    _flatten_energy(term, value, energy_rows, col_idx, t_idx)
+                    for term, value in energy_terms.items():
+                        grid = energy_rows.setdefault(term,
+                                                      np.full((num_cols, num_dvdr, num_T),
+                                                              np.nan, dtype=float))
+                        grid[col_idx, d_idx, t_idx] = float(value)
 
         return row_idx, mu_row, cv_row, eint_row, failure_row, line_rows, abundance_rows, energy_rows, attempts_row
 

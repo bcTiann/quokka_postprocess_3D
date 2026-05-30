@@ -199,6 +199,7 @@ def _temperature_gamma_mu(field, data):
 
     n_H      = data[('gas', 'number_density_H')].in_cgs().value
     colDen_H = data[('gas', 'column_density_H')].in_cgs().value
+    dVdr     = data[('gas', 'dVdr_lvg')].in_cgs().value
     e_int    = data[('gas', 'internal_energy_density')].to('erg/cm**3').value
     rho      = data[('gas', 'density')].to('g/cm**3').value
 
@@ -206,10 +207,14 @@ def _temperature_gamma_mu(field, data):
 
     nH_min,  nH_max  = lookup4d.table.nH_values.min(),         lookup4d.table.nH_values.max()
     col_min, col_max = lookup4d.table.col_density_values.min(), lookup4d.table.col_density_values.max()
+    dv_min,  dv_max  = lookup4d.table.dVdr_values.min(),       lookup4d.table.dVdr_values.max()
     n_H_safe = np.clip(n_H,      nH_min,  nH_max)
     col_safe = np.clip(colDen_H, col_min, col_max)
+    dV_safe  = np.clip(dVdr,     dv_min,  dv_max)
 
-    T = lookup4d.temperature_gamma_mu(n_H_safe, col_safe, e_specific)
+    # Pass cell dVdr — μ/cv are now genuinely dVdr-dependent after the
+    # 2026-05-29 builder rewrite (per-dVdr setChemEq instead of broadcast).
+    T = lookup4d.temperature_gamma_mu(n_H_safe, col_safe, e_specific, dVdr_cgs=dV_safe)
     return T * K
 
 
@@ -381,7 +386,12 @@ def _make_number_density_field(species: str):
         dV_safe  = np.clip(dVdr,     dv_min,  dv_max)
 
         val = np.nan_to_num(lookup.number_densities([token], n_H_safe, col_safe, dV_safe)[token], nan=0.0)
-        val[T > 100000.0] = 0.0   # cold-path legacy gating (kept for backward-compat)
+        # NOTE 2026-05-29: removed legacy `val[T > 1e5 K] = 0.0` blanket gating.
+        # That line zeroed ALL species (including e-, H+) in hot ionized gas,
+        # which killed Hα emission everywhere T > 1e5 K regardless of the
+        # HIGH_T_4D_BLEND path.  Hot-gas behaviour now goes through the proper
+        # 4D-table override below (or, with blend off, through the saturated
+        # tg_final interpolation — accepting that limitation explicitly).
 
         # High-T branch: hot cells take the abundance from the fixed-T 4D table
         # at T_gamma_mu (real hot chemistry — H+/e- → ~nH, cold tracers → 0).
@@ -411,9 +421,6 @@ def _Halpha_luminosity(field, data):
    
     n_e = data[('gas', 'e-')]
     n_ion = data[('gas', 'H+')]
-    # n_H = (density_3d * cfg.X_H) / m_H
-    print("n_e finite?", np.isfinite(n_e).any(), "min/max", n_e.min(), n_e.max())
-    print("n_ion finite?", np.isfinite(n_ion).any(), "min/max", n_ion.min(), n_ion.max())   
     Z = 1.0
     T4 = temp / (1e4 * yt.units.K)
 

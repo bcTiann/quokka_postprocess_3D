@@ -58,9 +58,8 @@ def _nan_line_result() -> LineLumResult:
     return _NAN_LINE_RESULT
 
 
-def _empty_line_results_per_dvdr(species: Sequence[str], num_dvdr: int) -> dict[str, list[LineLumResult]]:
-    """Return a dict of species → list of NaN LineLumResults (one per dVdr point)."""
-    return {sp: [_nan_line_result()] * num_dvdr for sp in species}
+def _empty_line_results(species: Sequence[str]) -> dict[str, LineLumResult]:
+    return {sp: _nan_line_result() for sp in species}
 
 def _extract_line_result(transitions: Sequence[Mapping[str, float]]) -> LineLumResult:
     if not transitions:
@@ -94,11 +93,31 @@ def _log_despotic_stdout(output: io.StringIO | str) -> None:
         LOGGER.warning("DESPOTIC: %s", stripped)
 
 
+def _flatten_energy_terms(rates: Mapping[str, object], prefix: str = "") -> dict[str, float]:
+    """Flatten dEdt() output into a single-level {key: float} dict.
+
+    DESPOTIC's ``cell.dEdt()`` returns a dict with one nested dict
+    (``LambdaLine`` → {emitter_name: rate}); everything else is scalar. We
+    flatten ``LambdaLine`` into ``LambdaLine.CO``, ``LambdaLine.C+`` etc. so the
+    full per-species line cooling is preserved in the table for later analysis.
+    """
+    out: dict[str, float] = {}
+    for k, v in rates.items():
+        key = f"{prefix}{k}" if prefix else k
+        if isinstance(v, Mapping):
+            out.update(_flatten_energy_terms(v, prefix=f"{key}."))
+        else:
+            try:
+                out[key] = float(v)
+            except (TypeError, ValueError):
+                pass
+    return out
+
 
 def calculate_single_despotic_point(
     nH_val: float,
     colDen_val: float,
-    dvdr_grid: Sequence[float],
+    dvdr_val: float,
     *,
     species: Sequence[str] = DEFAULT_SPECIES,
     abundance_only: Sequence[str] = ("e-", ),
@@ -106,12 +125,13 @@ def calculate_single_despotic_point(
     log_failures: bool = True,
     row_idx: int | None = None,
     col_idx: int | None = None,
+    dvdr_idx: int | None = None,
     Tg_init: float = 100.0,
     Tg_fixed: float | None = None,
     attempt_log: list[AttemptRecord] | None = None,
     escape_geom: str = 'LVG',
 ) -> Tuple[
-    Mapping[str, list[LineLumResult]],
+    Mapping[str, LineLumResult],
     Mapping[str, float],
     Mapping[str, float],
     float, float, float,
@@ -119,49 +139,69 @@ def calculate_single_despotic_point(
     Mapping[str, float],
     bool,
 ]:
-    """Run DESPOTIC at one (nH, colDen) point and sweep dVdr for line emission.
+    """Run DESPOTIC at a single (nH, colDen, dVdr) point — true 3-input solve.
 
-    Two-stage build optimization (verified empirically: at fixed nH, colDen,
-    Tg and chemical abundances are independent of dVdr because dVdr enters
-    DESPOTIC only via LVG escape probabilities, which feed back into thermal
-    balance only through line cooling — empirically a sub-dominant cooling
-    channel across the whole physical ISM range):
+    Re-architected 2026-05-29 to fix two critical bugs in the old builder:
 
-    1.  Solve chemistry + thermal balance once via
-        ``cell.setChemEq(evolveTemp="iterateDust")`` at a canonical dVdr.
-    2.  For each dVdr in ``dvdr_grid``: set ``cell.dVdr`` and call
+    1.  **Emitters were never added before setChemEq.** GOW's
+        ``applyAbundances(addEmitters=True)`` only auto-adds emitters that are
+        already in ``cell.emitters`` via DESPOTIC's case-insensitive lookup
+        (it overwrites existing ones rather than creating new ones).  Without
+        a pre-population call, ``cell.emitters`` stayed empty throughout
+        ``setChemEq``'s ``iterateDust`` loop, so ``setTempEq``'s ``dEdt`` saw
+        zero line cooling from CO/C+/C/HCO+/O — the dominant ISM coolants.
+        This pushed CNM cells to ~10⁴ K (the dust+CR+PE equilibrium) instead
+        of ~10²–10³ K (with C+ 158 μm cooling).  Verified empirically: at
+        nH=10, NH=1e20, Tg was 9379 K without pre-add and 74 K with pre-add
+        (127× error).
+
+        Fix: before ``setChemEq``, call ``cell.addEmitter(sp, 0.0)`` for each
+        species we want in the line-cooling sum (CO, C+, C, HCO+, O).  The
+        zero is a placeholder; ``applyAbundances`` updates it to the
+        equilibrium abundance during the chemistry solve.
+
+    2.  **The dVdr axis was broadcast, not solved.** A "two-stage" build
+        optimization set ``cell.dVdr = canonical_dvdr`` (median of the grid),
+        solved chemistry + thermal balance once, and broadcast Tg/μ/cv/Eint/
+        abundances across the 35 dVdr storage indices.  This was justified by
+        an empirical claim that line cooling is a sub-dominant channel — but
+        with bug #1 above, line cooling was literally zero, so the claim was
+        trivially satisfied.  With #1 fixed, line cooling re-enters dEdt and
+        dVdr genuinely affects thermal balance via LVG escape probabilities.
+
+        Fix: ``calculate_single_despotic_point`` now takes a single
+        ``dvdr_val`` (no more grid).  The builder calls it once per
+        (nH, colDen, dVdr) cell, so every point in the 35³ table is the
+        product of an independent ``setChemEq`` solve.
 
     Fixed-T mode (``Tg_fixed`` given): the gas temperature is pinned to
     ``Tg_fixed`` and chemistry is solved with ``evolveTemp="fixed"`` (no
     thermal balance).  ``mu/cv/Eint`` and abundances are then the values at
     that imposed T, and ``final_Tg == Tg_fixed``.  This is the build mode for
     the (nH, N_H, dVdr, T) table consumed by the μγ bisection.
-        ``cell.lineLum(species, escapeProbGeom='LVG')``. Internally this
-        re-solves level populations and escape probabilities (cheap)
-        without rerunning chemistry.
 
     Returns
     -------
-    line_results : Mapping[str, list[LineLumResult]]
-        For each emitting species, a list of LineLumResult (one per
-        entry in ``dvdr_grid``, in order).
+    line_results : Mapping[str, LineLumResult]
+        For each emitting species, the line-luminosity result at this dVdr.
     species_abundances, chem_abundances : Mapping[str, float]
-        Single-value-per-species mappings (independent of dVdr).
+        Per-species composition (abundance per H nucleus) at the converged
+        chemistry.
     mu, cv, eint : float
-        Single-value composition derivatives (independent of dVdr).
+        Composition derivatives evaluated at the final Tg.
     final_Tg : float
-        Self-consistent gas temperature from setChemEq.
+        Self-consistent gas temperature from setChemEq (or Tg_fixed).
     energy_terms : Mapping[str, float]
-        Single-cell dEdt() dictionary at convergence.
+        Flattened ``cell.dEdt()`` output — includes ``LambdaLine.CO``,
+        ``LambdaLine.C+`` etc. so per-emitter cooling is preserved.
     failed : bool
         True if setChemEq did not converge or an exception occurred.
     """
     species_order = tuple(species)
-    num_dvdr = len(dvdr_grid)
-    canonical_dvdr = float(dvdr_grid[num_dvdr // 2]) if num_dvdr > 0 else 1e-14
+    dvdr_val = float(dvdr_val)
 
     # Failure-mode defaults.
-    last_line_results: dict[str, list[LineLumResult]] = _empty_line_results_per_dvdr(species_order, num_dvdr)
+    last_line_results: dict[str, LineLumResult] = _empty_line_results(species_order)
     last_abundances: dict[str, float] = {sp: float("nan") for sp in species_order}
     last_chem_abundances: dict[str, float] = {}
     last_energy_terms: dict[str, float] = {}
@@ -179,7 +219,7 @@ def calculate_single_despotic_point(
         cell.nH = nH_val
         cell.colDen = colDen_val
         cell.Tg = Tg_init if Tg_fixed is None else float(Tg_fixed)
-        cell.dVdr = canonical_dvdr
+        cell.dVdr = dvdr_val
 
         cell.sigmaNT = 2.0e5
         cell.comp.xoH2 = 0.1
@@ -199,12 +239,29 @@ def calculate_single_despotic_point(
         cell.rad.ionRate = 2.0e-17
         cell.rad.chi = 1.0
 
+        # CRITICAL FIX #1: pre-add line-cooling emitters so setTempEq inside
+        # iterateDust actually sees CO/C+/C/HCO+/O contributions.  Abundance
+        # 0.0 is a placeholder — applyAbundances overwrites it with the
+        # network's equilibrium value during the chemistry solve.  See the
+        # docstring above for the full rationale.
+        for sp in species_order:
+            cell.addEmitter(sp, 0.0)
+
         # Initialise composition-derived quantities (mu, cv, ...) before
         # setChemEq. NL99's dxdt reads cloud.comp.mu (for sound speed); without
         # this call mu is 0 and every cell hits ZeroDivisionError. GOW's dxdt
         # doesn't depend on mu so it didn't surface there.
         cell.comp.computeDerived(cell.nH)
 
+        # CRITICAL FIX #3 (2026-05-30): pass escapeProbGeom through to setTempEq.
+        # Without this, setChemEq's inner setTempEq() defaults to sphere
+        # geometry — and sphere escape probability does NOT read cell.dVdr
+        # (only LVG does, emitter.py:684).  So Tg ends up dVdr-invariant even
+        # though we set cell.dVdr per call.  Passing tempEqParam pipes the
+        # caller's escape_geom all the way down to em.setLevPopEscapeProb
+        # inside _gdTempResid → dEdt, so thermal balance uses the same
+        # geometry as our post-solve lineLum call.
+        _temp_eq_param = {'escapeProbGeom': escape_geom}
         with contextlib.redirect_stdout(stdout_buffer):
             if Tg_fixed is None:
                 converged = cell.setChemEq(
@@ -213,6 +270,7 @@ def calculate_single_despotic_point(
                     tol=1e-6,
                     maxTime=1e22,
                     maxTempIter=200,
+                    tempEqParam=_temp_eq_param,
                 )
             else:
                 # Pin T; solve chemistry only (no thermal balance).
@@ -231,32 +289,30 @@ def calculate_single_despotic_point(
         last_eint_val = float(cell.comp.computeEint(cell.Tg))
         last_chem_abundances = dict(cell.chemabundances)
         last_final_tg = float(cell.Tg)
-        last_energy_terms = dict(cell.dEdt())
 
-        # Add all emitters once at the converged abundances.
+        # Capture per-emitter line cooling in energy_terms (this is why
+        # addEmitter was moved before setChemEq — so cell.emitters is
+        # populated when dEdt iterates over them at line 979 of cloud.py).
         species_abundances: dict[str, float] = {}
         for sp in species_order:
-            cell.addEmitter(sp, cell.chemabundances[sp])
-            species_abundances[sp] = float(cell.emitters[sp].abundance)
+            if sp in cell.emitters:
+                species_abundances[sp] = float(cell.emitters[sp].abundance)
+            else:
+                species_abundances[sp] = float(cell.chemabundances.get(sp, float("nan")))
         last_abundances = species_abundances
 
-        # Compute line emission. LVG: sweep dVdr; sphere: compute once then
-        # broadcast across the dVdr axis (sphere τ formula doesn't read dVdr).
-        line_results: dict[str, list[LineLumResult]] = {sp: [] for sp in species_order}
-        if escape_geom == 'LVG':
-            for dvdr in dvdr_grid:
-                cell.dVdr = float(dvdr)
-                with contextlib.redirect_stdout(stdout_buffer):
-                    for sp in species_order:
-                        transitions = cell.lineLum(sp, escapeProbGeom='LVG')
-                        line_results[sp].append(_extract_line_result(transitions))
-                _log_despotic_stdout(stdout_buffer)
-        elif escape_geom == 'sphere':
+        # dEdt returns LambdaLine as a nested dict {emitter_name: rate}; we
+        # flatten it to LambdaLine.CO, LambdaLine.C+ etc. so all per-species
+        # cooling channels live in the same flat energy_terms namespace.
+        last_energy_terms = _flatten_energy_terms(dict(cell.dEdt()))
+
+        # Line emission at this (single) dVdr.
+        line_results: dict[str, LineLumResult] = {}
+        if escape_geom in ('LVG', 'sphere'):
             with contextlib.redirect_stdout(stdout_buffer):
                 for sp in species_order:
-                    transitions = cell.lineLum(sp, escapeProbGeom='sphere')
-                    single = _extract_line_result(transitions)
-                    line_results[sp] = [single] * num_dvdr
+                    transitions = cell.lineLum(sp, escapeProbGeom=escape_geom)
+                    line_results[sp] = _extract_line_result(transitions)
             _log_despotic_stdout(stdout_buffer)
         else:
             raise ValueError(f"unknown escape_geom: {escape_geom!r}; expected 'LVG' or 'sphere'")
@@ -276,6 +332,8 @@ def calculate_single_despotic_point(
                     converged=converged,
                     message="Success" if converged else "Did not converge",
                     duration=time.perf_counter() - attempt_start_time,
+                    dvdr_idx=dvdr_idx,
+                    dvdr=dvdr_val,
                 )
             )
 
@@ -292,13 +350,16 @@ def calculate_single_despotic_point(
                     converged=False,
                     message=str(exc),
                     duration=time.perf_counter() - attempt_start_time,
+                    dvdr_idx=dvdr_idx,
+                    dvdr=dvdr_val,
                 )
             )
         if log_failures:
-            LOGGER.warning("Exception at nH=%s colDen=%s: %s", nH_val, colDen_val, exc)
+            LOGGER.warning("Exception at nH=%s colDen=%s dVdr=%s: %s",
+                           nH_val, colDen_val, dvdr_val, exc)
 
     if failed and log_failures:
-        LOGGER.warning("Failed at nH=%s colDen=%s", nH_val, colDen_val)
+        LOGGER.warning("Failed at nH=%s colDen=%s dVdr=%s", nH_val, colDen_val, dvdr_val)
 
     return (
         MappingProxyType(last_line_results),
