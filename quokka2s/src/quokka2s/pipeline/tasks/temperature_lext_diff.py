@@ -56,10 +56,53 @@ def _glob_one_taskcache(dirpath: Path, task_class_name: str) -> Path | None:
     return max(candidates, key=lambda p: p.stat().st_mtime)
 
 
-def _load_results(path: Path) -> dict:
-    """Read a task-intermediate HDF5 file without checking the cache key."""
+def _load_results(path: Path, expected_key: str | None = None) -> dict:
+    """Read a task-intermediate HDF5 file.
+
+    By default the cache key is NOT validated.  This reader is shared with the
+    cross-L_ext diff tasks (``TemperatureLextDiffTask`` / ``EmitterLextDiffTask``),
+    which deliberately read sibling dirs whose ``cache_key`` DIFFERS — L_ext is
+    folded into the key by design, and that difference is the whole comparison.
+    Blanket-guarding here would make every diff panel look "stale" and silently
+    zero the comparison, so validation stays OPT-IN.
+
+    Same-L_ext callers (the plot-time aggregators reading their own run's
+    siblings) pass ``expected_key`` to opt in: a mismatch raises, so a
+    schema-stale sibling is caught instead of being silently plotted.  Build the
+    value with `_expected_sibling_key()`.
+    """
     with h5py.File(path, 'r') as f:
-        return _read_nested(f)
+        data = _read_nested(f)
+        if expected_key is not None:
+            stored = f.attrs.get('cache_key')
+            if isinstance(stored, bytes):
+                stored = stored.decode()
+            if str(stored) != expected_key:
+                raise ValueError(
+                    f'cache_key mismatch reading {path.name}: expected '
+                    f'{expected_key!r}, found {stored!r} — sibling is stale; '
+                    f're-run its task before composing this plot.'
+                )
+    return data
+
+
+def _expected_sibling_key(config, sibling_filename: str) -> str | None:
+    """Level-2 cache_key a sibling intermediate in the SAME output dir should
+    carry, for opt-in validation by same-L_ext readers (the aggregators).
+
+    Returns None when L2 caching is disabled (no despotic table) — callers then
+    skip validation.  Mirrors ``AnalysisTask._l2_cache_key``.
+    """
+    table = getattr(config, 'despotic_table_path', None)
+    if table is None or not getattr(config, 'cache_enabled', True):
+        return None
+    from ..cache import compute_cache_key
+    return compute_cache_key(
+        dataset_path                 = config.dataset_path,
+        despotic_table_path          = table,
+        downsample_factor            = config.downsample_factor,
+        column_extension_lateral_kpc = config.column_extension_lateral_kpc,
+    ) + ':' + sibling_filename
 
 
 class TemperatureLextDiffTask(AnalysisTask):

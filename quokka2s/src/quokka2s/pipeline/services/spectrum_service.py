@@ -37,7 +37,7 @@ _C_CGS = 2.99792458e10   # cm/s
 
 
 class SpectrumStore:
-    """Memoised 1D-spectrum builder shared across tasks in one pipeline run."""
+    """Memoised 1D-spectrum builder, task-local (one store per ``compute()``)."""
 
     # Which yz/xz plane belongs to each LOS choice.
     _PLANE_FOR_LOS = {'x': 'yz', 'y': 'xz'}
@@ -164,10 +164,16 @@ class SpectrumStore:
                 self._species_freq0[species] = float(freq.in_units('Hz')[0, 0, 0])
 
     def _get_phase_masks(self) -> dict[str, np.ndarray]:
-        """Classify T into 5 phase masks once per store lifetime."""
+        """Classify T into 5 phase masks once per store lifetime.
+
+        Uses ``temperature_two_regime`` (2026-06-18): T_DESPOTIC saturates at
+        ~5×10⁴ K, so all real HIM cells (T_QUOKKA > 10⁵·⁵ K) were getting
+        misclassified as WIM.  Switching to the unified T field keeps the
+        spectrum's phase masks consistent with VelocityPhaseTask's PDFs.
+        """
         with self._load_lock:
             if self._phase_masks is None:
-                T, _ = self.provider.get_slab_z(('gas', 'temperature_despotic'))
+                T, _ = self.provider.get_slab_z(('gas', 'temperature_two_regime'))
                 self._phase_masks = classify_temperature_phase(np.asarray(T.in_units('K')))
             return self._phase_masks
 

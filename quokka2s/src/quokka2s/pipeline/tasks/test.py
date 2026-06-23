@@ -1,3 +1,8 @@
+# ============================================================================
+# DEPRECATED 2026-06-23 — kept in-tree for reference (wrap-don't-delete).
+# Scratch/sandbox file: no AnalysisTask subclass, never imported or registered.
+# ============================================================================
+r'''
 import yt
 from yt.units import K, mp, kb, mh, planck_constant, cm, m, s, g, erg
 from ..prep.physics_fields import add_all_fields
@@ -141,5 +146,4 @@ q2s.create_plot(
     cbar_label="H-alpha lumniosity",
     norm=LogNorm(),
 )
-
-
+'''

@@ -199,6 +199,13 @@ class DespoticTable:
         return field_map
 
 
+# ============================================================================
+# DEPRECATED 2026-06-23 — kept in-tree for reference (wrap-don't-delete).
+# 4D (nH,NH,dVdr,μγ) DESPOTIC table path was retired in cache schema v5
+# (2026-06-13); no pipeline task references any 4D table.  To revive:
+# restore the 4D exports in tables/__init__.py and un-wrap these defs.
+# ============================================================================
+r'''
 @dataclass(frozen=True)
 class DespoticTable4D:
     """Fixed-T DESPOTIC lookup table on a 4D grid (nH, N_H, dVdr, T).
@@ -251,4 +258,4 @@ class DespoticTable4D:
             )
         return record
     
-
+'''

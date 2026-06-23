@@ -1,3 +1,10 @@
+# ============================================================================
+# DEPRECATED 2026-06-23 — kept in-tree for reference (wrap-don't-delete).
+# 4D (nH,NH,dVdr,μγ) DESPOTIC table path was retired in cache schema v5
+# (2026-06-13); no pipeline task references any 4D table.  To revive:
+# restore the 4D exports in tables/__init__.py and un-wrap these defs.
+# ============================================================================
+r'''
 from __future__ import annotations
 from pathlib import Path
 from . import LogGrid, build_table_4d, save_table_4d
@@ -45,3 +52,4 @@ if __name__ == "__main__":
     table_path.parent.mkdir(parents=True, exist_ok=True)
     save_table_4d(table, table_path)
     print(f"[build_table_4d] saved → {table_path}")
+'''

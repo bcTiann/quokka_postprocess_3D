@@ -64,12 +64,17 @@ def main():
         args.out_root = f'TablePlots_{tag}'
         print(f"[view_table] -o auto-derived: {args.out_root}/")
 
-    samples_path = "/Users/baochen/quokka_postprocessing/log_samples.npy"
-    if Path(samples_path).exists():
-        samples = np.load(samples_path)
-    else:
-        print(f"Warning: {samples_path} not found. Skipping sampling overlay.")
-        samples = None
+    # Prefer the 3D samples (per-dVdr slice filter via plotting.py).  Fall back
+    # to 2D file (overlay is then identical on every slice).
+    samples = None
+    for sp in ("/Users/baochen/quokka_postprocessing/log_samples_3d.npy",
+               "/Users/baochen/quokka_postprocessing/log_samples.npy"):
+        if Path(sp).exists():
+            samples = np.load(sp)
+            print(f"[view_table] samples loaded from {sp}  shape={samples.shape}")
+            break
+    if samples is None:
+        print("Warning: no log_samples file found. Skipping sampling overlay.")
 
     n_dvdr = len(table.dVdr_values)
     if args.all:
@@ -97,6 +102,13 @@ def main():
         out_dir = Path(f"{args.out_root}/dVdr_{d_val:.2e}")
         out_dir.mkdir(parents=True, exist_ok=True)
         for token, fig in zip(TOKENS, figs):
+            # Append dVdr label to each subplot's title so each frame
+            # carries the dVdr value when scrubbing through an MP4 sweep.
+            for ax in fig.axes:
+                old_title = ax.get_title()
+                if old_title:                       # skip colorbar axes etc.
+                    ax.set_title(f"{old_title}  |  frame {d_idx+1:02d}/{n_dvdr}  "
+                                 f"dVdr = {d_val:.2e} s$^{{-1}}$")
             fname = token.replace(":", "_") + ".png"
             fig.savefig(out_dir / fname, dpi=200)
             plt.close(fig)

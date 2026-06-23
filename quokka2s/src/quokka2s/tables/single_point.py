@@ -1,3 +1,9 @@
+# ============================================================================
+# DEPRECATED 2026-06-23 — kept in-tree for reference (wrap-don't-delete).
+# Legacy per-cell DESPOTIC solver invoker; superseded by
+# tables/builder.py + tables/solver.py.
+# ============================================================================
+r'''
 from despotic import cloud
 import matplotlib.pyplot as plt
 import numpy as np
@@ -128,4 +134,4 @@ print(f"Tg final = {cell.Tg}")
 # lines = cell.lineLum("C+")
 # cp_int_TB = lines[0]["intTB"]
 # print(f"C+_line_map = {cp_int_TB}")
-
+'''

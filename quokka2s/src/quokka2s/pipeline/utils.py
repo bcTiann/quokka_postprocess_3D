@@ -62,12 +62,12 @@ def classify_temperature_phase(T_K: np.ndarray) -> dict[str, np.ndarray]:
 # Single-line summary of the 5-phase thresholds, suitable for figure suptitles.
 # Auto-kept in sync with the T_*_MAX constants above.
 PHASE_LABEL_LINE = (
-    'Phase cuts (T/K):  '
-    f'CNM <{int(T_CNM_MAX)}  |  '
-    f'UNM {int(T_CNM_MAX)}–{int(T_UNM_MAX):,}  |  '
-    f'WNM {int(T_UNM_MAX):,}–{int(T_WNM_MAX):,}  |  '
-    f'WIM {int(T_WNM_MAX):,}–10$^{{5.5}}$  |  '
-    f'HIM ≥10$^{{5.5}}$'
+    'Phase cuts:  '
+    f'CNM < {int(T_CNM_MAX)} K  |  '
+    f'UNM {int(T_CNM_MAX)}–{int(T_UNM_MAX):,} K  |  '
+    f'WNM {int(T_UNM_MAX):,}–{int(T_WNM_MAX):,} K  |  '
+    f'WIM {int(T_WNM_MAX):,}–10$^{{5.5}}$ K  |  '
+    f'HIM ≥ 10$^{{5.5}}$ K'
 )
 
 

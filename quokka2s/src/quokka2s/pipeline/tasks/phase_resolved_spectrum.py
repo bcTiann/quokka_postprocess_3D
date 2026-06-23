@@ -41,7 +41,8 @@ class PhaseResolvedSpectrumTask(AnalysisTask):
 
     def compute(self, context: PipelinePlotContext) -> dict:
         # Sanity: print phase populations.  T cube is local; released on return.
-        T_unyt, _ = context.provider.get_slab_z(('gas', 'temperature_despotic'))
+        # T_two_regime so the printed phase populations match SpectrumStore (2026-06-18).
+        T_unyt, _ = context.provider.get_slab_z(('gas', 'temperature_two_regime'))
         T_K = T_unyt.in_units('K').value
         del T_unyt
         masks = classify_temperature_phase(T_K)

@@ -23,7 +23,9 @@ import matplotlib.colors as mcolors
 
 from ..base import AnalysisTask, PipelinePlotContext
 from ..prep import config as cfg
-from ..prep.config import T_CUTOFF, T_CUTOFF_DEFAULT
+
+# T_CUTOFF / T_CUTOFF_DEFAULT removed 2026-06-13 — no per-species
+# temperature gate on lumPerH anywhere in the pipeline.
 from ..prep.physics_fields import ensure_table_lookup
 from ..utils import make_axis_labels
 
@@ -95,13 +97,11 @@ class EmitterCompareTask(AnalysisTask):
             )
 
             for sp in SPECIES:
-                cutoff = T_CUTOFF.get(sp, T_CUTOFF_DEFAULT)
-
-                # lumPerH lookup — T_safe prevents NaN outside table bounds
+                # lumPerH lookup — T_safe prevents NaN outside table bounds.
+                # No per-species T cutoff applied (removed 2026-06-13): the
+                # table value is the table value.
                 lumPerH = lookup.line_field(sp, 'lumPerH', nH_safe, col_safe, T_safe)
                 lumPerH = np.nan_to_num(lumPerH, nan=0.0)
-                # Zero out cells above temperature cutoff (use raw T for physical criterion)
-                lumPerH[T_raw > cutoff] = 0.0
 
                 lum_density = nH_safe * lumPerH             # erg/s/cm³
                 results[f'{sp}_{T_name}'] = np.sum(lum_density * dx_raw, axis=0)

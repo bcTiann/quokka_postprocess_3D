@@ -21,7 +21,7 @@ from typing import Iterable, Mapping
 
 import numpy as np
 
-from .models import AttemptRecord, DespoticTable, DespoticTable4D, SpeciesLineGrid, SpeciesRecord
+from .models import AttemptRecord, DespoticTable, SpeciesLineGrid, SpeciesRecord  # DespoticTable4D dropped 2026-06-23 (4D deprecated; used only by wrapped save/load_table_4d below)
 
 TABLE_VERSION = 4
 TABLE_VERSION_4D = 1
@@ -173,6 +173,13 @@ def load_table(path: str | Path) -> DespoticTable:
     )
 
 
+# ============================================================================
+# DEPRECATED 2026-06-23 — kept in-tree for reference (wrap-don't-delete).
+# 4D (nH,NH,dVdr,μγ) DESPOTIC table path was retired in cache schema v5
+# (2026-06-13); no pipeline task references any 4D table.  To revive:
+# restore the 4D exports in tables/__init__.py and un-wrap these defs.
+# ============================================================================
+r'''
 def save_table_4d(table: DespoticTable4D, path: str | Path) -> None:
     """Persist a fixed-T 4D table (nH, N_H, dVdr, T). Mirrors save_table but
     stores T_values + 4D arrays and has no tg_final."""
@@ -269,3 +276,4 @@ def load_table_4d(path: str | Path) -> DespoticTable4D:
         failure_mask=failure_mask,
         energy_terms=energy_fields,
     )
+'''

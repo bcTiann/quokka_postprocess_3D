@@ -1,16 +1,27 @@
-"""MultiFieldSlicesTask: a single slice through the box visualised in 8 panels.
+"""MultiFieldSlicesTask: a single slice through the box visualised as N panels.
 
-For one snapshot, take one slice (default: x = mid) and plot side-by-side:
-    log10 ρ, log10 T_QUOKKA, log10 T_DESPOTIC, log10 N_H,
-    log10 I_CO, log10 I_{C+}, log10 I_{Hα}, log10 I_{HI}
+For one snapshot, take one slice (default: x = mid) and plot side-by-side
+(default 9-panel layout):
+    log10 ρ, log10 T_QUOKKA, log10 T_DESPOTIC, log10 T_two-regime,
+    log10 N_H, log10 ε_CO, log10 ε_{C+}, log10 ε_{Hα}, log10 ε_{HI}
 
-The first three are slices through the cube; N_H is a hydrogen-column
-projection; the last four are line surface brightnesses (∫ε·dl along the
-slice axis, in erg s⁻¹ pc⁻²).
+All panels are volumetric slices through the cube (no along-sight
+projection): T's in K, ρ in g/cm³, N_H field already contains the
+hydrogen column at that cell (because `column_density_H` is a
+yt-derived field that does the along-sight cumulation upstream — see
+`_column_density_H` in physics_fields.py).  The 4 luminosity panels
+are volumetric emissivities at the slice plane (erg/s/cm³).
 
-All fields are loaded from disk intermediates (or trivially from yt), so this
-is cheap to run after the rest of the pipeline has populated the cache.
-Output: multi_field_slices.png
+`mode='projection_erg_pc2'` and `'NH_cgs'` paths in compute() are kept
+for legacy / alternative panel sets, but the default `_PANELS` only
+uses `'slice'`.
+
+All fields are loaded via the yt provider; if cached as field
+intermediates upstream this is cheap to (re-)run.
+
+Output:
+    single-slice mode (slice_idx)   →  multi_field_slices.png
+    multi-slice mode (slice_indices)→  <subdir>/multi_field_slices_idxNNNN.png × N
 """
 from __future__ import annotations
 
@@ -34,6 +45,14 @@ _CM_PER_PC_SQ = (3.0857e18) ** 2          # cm² / pc²  (multiply g/cm² → g/
 _X_H          = 0.74                      # hydrogen mass fraction
 _M_H_GRAMS    = 1.6726e-24                # g per hydrogen nucleus
 
+# Per-panel display-time unit conversions.  Applied to the raw cgs field
+# value before log10/imshow.  Intermediates stay in cgs (so caches don't
+# need busting).  Add new entries here for any other displayed unit changes.
+#   dVdr_slice:  s⁻¹  →  km/s/pc      (1 pc / 1 km in cgs ≈ 3.0857e13)
+_DISPLAY_FACTOR = {
+    'dVdr_slice': 3.0857e13,
+}
+
 # (panel_key, field, label, cmap, mode, log10_vmin, log10_vmax, share_group)
 #   mode='slice'              → take a slice through the cube (volumetric units kept)
 #   mode='projection_erg_pc2' → sum(ε·dx)·(cm/pc)² → erg/s/pc²  (for luminosities)
@@ -44,11 +63,32 @@ _PANELS = [
     ('rho_slice',  ('gas', 'density'),              r'$\log_{10}\,\rho$ [g cm$^{-3}$]',                  'inferno', 'slice',              None, None, None),
     ('T_qk_slice', ('gas', 'temperature_quokka'),   r'$\log_{10}\,T_{\rm QUOKKA}$ [K]',                  'turbo',   'slice',              2.0, 8.0, 'T'),
     ('T_dsp_slice',('gas', 'temperature_despotic'), r'$\log_{10}\,T_{\rm DESPOTIC}$ [K]',                'turbo',   'slice',              2.0, 8.0, 'T'),
+    # T_two-regime added 2026-06-20: this is the unified T used by ALL hot-branch
+    # luminosity fields (Hα, HI 21cm, C+ 158μm), so it's the "T that actually
+    # drives the right 4 emission panels".  Shares the T colorbar group with
+    # T_QK and T_DSP so they're directly comparable.
+    ('T_2R_slice', ('gas', 'temperature_two_regime'), r'$\log_{10}\,T_{\rm two\text{-}regime}$ [K]',     'turbo',   'slice',              2.0, 8.0, 'T'),
     ('NH_slice',   ('gas', 'column_density_H'),     rf'$\log_{{10}}\,N_{{\rm H}}$ (6-dir {_NH_MEAN}, +$L_{{\rm ext}}$) [cm$^{{-2}}$]', 'inferno', 'slice', None, None, None),
-    ('CO_proj',    ('gas', 'CO_luminosity'),        r'$\log_{10}\,I_{\rm CO}$ [erg s$^{-1}$ pc$^{-2}$]',      'viridis', 'projection_erg_pc2', None, None, None),
-    ('Cp_proj',    ('gas', 'C+_luminosity'),        r'$\log_{10}\,I_{\rm C^+}$ [erg s$^{-1}$ pc$^{-2}$]',     'viridis', 'projection_erg_pc2', None, None, None),
-    ('Ha_proj',    ('gas', 'H_alpha_luminosity'),   r'$\log_{10}\,I_{\rm H\alpha}$ [erg s$^{-1}$ pc$^{-2}$]', 'viridis', 'projection_erg_pc2', None, None, None),
-    ('HI_proj',    ('gas', 'HI_luminosity'),        r'$\log_{10}\,I_{\rm HI}$ [erg s$^{-1}$ pc$^{-2}$]',      'viridis', 'projection_erg_pc2', None, None, None),
+    # 2026-06-01: right 4 panels changed from projection_erg_pc2 (sum along
+    # slice axis, surface brightness erg/s/pc²) to slice mode (volumetric
+    # emissivity erg/s/cm³ at the slice plane), so each slice frame actually
+    # varies across slice_idx in multi-slice / MP4-sweep mode.
+    ('CO_slice',   ('gas', 'CO_luminosity'),        r'$\log_{10}\,\varepsilon_{\rm CO}$ [erg s$^{-1}$ cm$^{-3}$]',      'viridis', 'slice', None, None, None),
+    ('Cp_slice',   ('gas', 'C+_luminosity'),        r'$\log_{10}\,\varepsilon_{\rm C^+}$ [erg s$^{-1}$ cm$^{-3}$]',     'viridis', 'slice', None, None, None),
+    ('Ha_slice',   ('gas', 'H_alpha_luminosity'),   r'$\log_{10}\,\varepsilon_{\rm H\alpha}$ [erg s$^{-1}$ cm$^{-3}$]', 'viridis', 'slice', None, None, None),
+    ('HI_slice',   ('gas', 'HI_luminosity'),        r'$\log_{10}\,\varepsilon_{\rm HI}$ [erg s$^{-1}$ cm$^{-3}$]',      'viridis', 'slice', None, None, None),
+]
+
+# Preset: the 3 table input axes (n_H, N_H, dVdr) + the two temperatures.
+# Useful for inspecting where each sim cell sits along the DESPOTIC table's
+# input axes vs the resulting Tg.  All slices (no projections).
+# Labels are kept short so they don't overflow with narrow aspect='equal' panels.
+TABLE_INPUT_PANELS = [
+    ('nH_slice',   ('gas', 'number_density_H'),    r'$\log_{10}\,n_{\rm H}\ [\rm cm^{-3}]$',               'inferno', 'slice', None, None, None),
+    ('NH_slice',   ('gas', 'column_density_H'),    r'$\log_{10}\,N_{\rm H}\ [\rm cm^{-2}]$',               'cividis', 'slice', None, None, None),
+    ('dVdr_slice', ('gas', 'dVdr_lvg'),            r'$\log_{10}\,dV/dr\ [\rm km\,s^{-1}\,pc^{-1}]$',       'plasma',  'slice', None, None, None),
+    ('T_qk_slice', ('gas', 'temperature_quokka'),  r'$\log_{10}\,T_{\rm QUOKKA}\ [\rm K]$',                'turbo',   'slice', 2.0, 8.0, 'T'),
+    ('T_dsp_slice',('gas', 'temperature_despotic'),r'$\log_{10}\,T_{\rm DESPOTIC}\ [\rm K]$',              'turbo',   'slice', 2.0, 8.0, 'T'),
 ]
 
 
@@ -58,18 +98,35 @@ class MultiFieldSlicesTask(AnalysisTask):
     def __init__(self, config,
                  slice_axis: str = 'x',
                  slice_idx: int | None = None,
+                 slice_indices: tuple[int, ...] | None = None,
                  figure_units: str = 'kpc',
                  share_lext_partners: tuple[float, ...] = (),
-                 filename: str = 'multi_field_slices.png'):
+                 filename: str = 'multi_field_slices.png',
+                 subdir: str | None = None,
+                 aspect: str = 'equal',
+                 panels=None):
         super().__init__(config)
+        # Panel set — defaults to the 8-panel "density/T/N_H/lines" layout;
+        # use TABLE_INPUT_PANELS for the 5-panel (n_H, N_H, dVdr, T_Q, T_D)
+        # variant, or pass a custom list of (key, field, label, cmap, mode,
+        # log_vmin, log_vmax, share_group) tuples.
+        self.panels = list(panels) if panels is not None else list(_PANELS)
         self.slice_axis = slice_axis           # axis perpendicular to the slice plane
-        self.slice_idx  = slice_idx            # None → midplane
+        self.slice_idx  = slice_idx            # None → midplane (legacy single-slice mode)
+        # New multi-slice mode: pass a tuple of indices (e.g. 10 evenly spaced)
+        # → produces one PNG per index in `<output_dir>/<subdir>/`.
+        self.slice_indices = (tuple(int(i) for i in slice_indices)
+                              if slice_indices is not None else None)
         self.figure_units = figure_units
         # L_ext values to pool each panel's colour range over (so the 0/9/99 kpc
         # figures share per-panel vmin/vmax and are directly comparable). Empty
         # = each figure auto-scales on its own (original behaviour).
         self.share_lext_partners = tuple(float(x) for x in share_lext_partners)
         self.filename = filename
+        self.subdir = subdir
+        # aspect='equal' shows physically correct box proportions (1×8 kpc for
+        # plt0655228); 'auto' fills the panel and squashes the 1:8 box visually.
+        self.aspect = aspect
         self._axis_idx = {'x': 0, 'y': 1, 'z': 2}[slice_axis]
 
     def _sibling_dir(self, l_ext: float) -> Path:
@@ -111,9 +168,19 @@ class MultiFieldSlicesTask(AnalysisTask):
         dx_cm = float(np.asarray(dx_along.in_cgs())[0, 0, 0])
         del dx_along
 
-        slices: dict[str, np.ndarray] = {}
+        # Determine list of slice indices to render.  Legacy single-slice
+        # path: slice_indices=None → use slice_idx (or midplane).
+        # Multi-slice path: slice_indices is a tuple.
+        # Projections (modes != 'slice') don't depend on slice_idx and are
+        # broadcast across every slice frame.
+        slice_idxs: list[int] | None = (
+            list(self.slice_indices) if self.slice_indices is not None else None
+        )
+        # slices_by_idx: idx → {panel_key: 2D array}
+        slices_by_idx: dict[int, dict[str, np.ndarray]] = {}
         extent_dict_kpc = None
-        for panel_key, field, _label, _cmap, mode, *_ in _PANELS:
+
+        for panel_key, field, _label, _cmap, mode, *_ in self.panels:
             arr, extent_dict = p.get_slab_z(field)
             arr_np = arr.in_cgs().value if hasattr(arr, 'in_cgs') else np.asarray(arr)
             if extent_dict_kpc is None:
@@ -121,33 +188,99 @@ class MultiFieldSlicesTask(AnalysisTask):
                     k: [float(v.in_units(self.figure_units).value) for v in extent_dict[k]]
                     for k in extent_dict
                 }
+                if slice_idxs is None:
+                    default = (self.slice_idx if self.slice_idx is not None
+                               else arr_np.shape[self._axis_idx] // 2)
+                    slice_idxs = [default]
+                for idx in slice_idxs:
+                    slices_by_idx.setdefault(idx, {})
+
             if mode == 'slice':
-                idx = self.slice_idx if self.slice_idx is not None else arr_np.shape[self._axis_idx] // 2
-                sl  = [slice(None)] * 3
-                sl[self._axis_idx] = idx
-                slices[panel_key] = np.asarray(arr_np[tuple(sl)]).copy()
+                sl = [slice(None)] * 3
+                for idx in slice_idxs:
+                    sl[self._axis_idx] = idx
+                    slices_by_idx[idx][panel_key] = np.asarray(arr_np[tuple(sl)]).copy()
             elif mode == 'projection_erg_pc2':
                 # ε [erg/s/cm³] · dx [cm] summed → erg/s/cm² ; × (cm/pc)² → erg/s/pc².
-                proj_cgs = arr_np.sum(axis=self._axis_idx) * dx_cm
-                slices[panel_key] = (proj_cgs * _CM_PER_PC_SQ).copy()
+                proj = (arr_np.sum(axis=self._axis_idx) * dx_cm * _CM_PER_PC_SQ).copy()
+                for idx in slice_idxs:
+                    slices_by_idx[idx][panel_key] = proj
             elif mode == 'NH_cgs':
                 # n_H = ρ · X_H / m_H [cm⁻³] ; ∫n_H dx → cm⁻².
-                proj_cgs = arr_np.sum(axis=self._axis_idx) * dx_cm
-                slices[panel_key] = (proj_cgs * _X_H / _M_H_GRAMS).copy()
+                proj = (arr_np.sum(axis=self._axis_idx) * dx_cm * _X_H / _M_H_GRAMS).copy()
+                for idx in slice_idxs:
+                    slices_by_idx[idx][panel_key] = proj
             else:
                 raise ValueError(f'unknown panel mode: {mode!r}')
             del arr, arr_np
 
+        # Free the provider's in-RAM covering grid (all materialised 3D fields,
+        # multi-GB at down=1) before returning — plot() needs only the small 2D
+        # slices held in `slices_by_idx`.  Frees memory ahead of the multi-figure
+        # plot loop on the 16 GB Mac (Pipeline also nulls it after the task).
+        import gc
+        p._cached_grid = None
+        gc.collect()
+
         return {
-            'slices':       slices,
-            'extent_kpc':   extent_dict_kpc[self.slice_axis],
-            'slice_axis':   self.slice_axis,
-            'slice_idx':    self.slice_idx,
+            # Multi-slice payload.
+            'slices_by_idx': slices_by_idx,
+            'extent_kpc':    extent_dict_kpc[self.slice_axis],
+            'slice_axis':    self.slice_axis,
+            'slice_indices': slice_idxs,
+            # Back-compat key for any consumer that reads the legacy single
+            # slice (e.g. lext_diff tasks).  Always points at the first idx.
+            'slices':        slices_by_idx[slice_idxs[0]],
+            'slice_idx':     slice_idxs[0],
         }
 
     def plot(self, context: PipelinePlotContext, results: dict) -> None:
-        slices = results['slices']
+        slice_indices = list(results['slice_indices'])
+        # When loaded from the HDF5 task-intermediate cache, dict keys come back
+        # as strings (h5py group child names).  Normalise to int so the lookup
+        # below works for both fresh-compute and cache-load paths.
+        raw = results['slices_by_idx']
+        slices_by_idx = {int(k): v for k, v in raw.items()}
         extent = results['extent_kpc']
+        # If exactly one slice, write a single PNG to the legacy filename in
+        # the OUTPUT_DIR root.  If multiple, write one PNG per index inside a
+        # subdir (`<output_dir>/<self.subdir>/`).
+        is_multi = len(slice_indices) > 1
+        if is_multi:
+            subdir_name = self.subdir or 'multi_field_slices_per_slice'
+            multi_out_dir = context.config.output_dir / subdir_name
+            multi_out_dir.mkdir(parents=True, exist_ok=True)
+            print(f'  multi-slice output: {multi_out_dir}/')
+
+        # Cross-slice colour pooling: when rendering many slice indices,
+        # compute global log10 min/max per panel across ALL indices so every
+        # frame in the animation shares the same colorbar (else each frame
+        # auto-scales to its own data range and the animation "breathes").
+        # T panels with explicit vmin/vmax in _PANELS keep their fixed range.
+        cross_slice_ranges: dict[str, tuple[float, float]] = {}
+        if is_multi:
+            for panel_key, *_ in self.panels:
+                conv = _DISPLAY_FACTOR.get(panel_key, 1.0)
+                lo, hi = +np.inf, -np.inf
+                for idx in slice_indices:
+                    arr = slices_by_idx[int(idx)][panel_key] * conv
+                    pos = arr > 0
+                    if not pos.any():
+                        continue
+                    lg = np.log10(arr[pos])
+                    lo = min(lo, float(np.nanmin(lg)))
+                    hi = max(hi, float(np.nanmax(lg)))
+                if np.isfinite(lo) and np.isfinite(hi):
+                    cross_slice_ranges[panel_key] = (lo, hi)
+
+        for idx in slice_indices:
+            idx_int = int(idx)
+            self._plot_one(context, slices_by_idx[idx_int], extent, idx_int,
+                            multi_out_dir if is_multi else None,
+                            cross_slice_ranges=cross_slice_ranges)
+
+    def _plot_one(self, context, slices, extent, slice_idx, multi_out_dir,
+                  cross_slice_ranges: dict[str, tuple[float, float]] | None = None):
         # extent_dict[slice_axis] from get_slab_z is
         #   [perp1_lo, perp1_hi, perp2_lo, perp2_hi]
         # which for slice_axis='x' is [y_lo, y_hi, z_lo, z_hi].
@@ -157,12 +290,21 @@ class MultiFieldSlicesTask(AnalysisTask):
         # = [y_lo, y_hi, z_lo, z_hi] = extent unchanged.
         ext_plot = [extent[0], extent[1], extent[2], extent[3]]
 
-        n_panels = len(_PANELS)
+        n_panels = len(self.panels)
+        # Layout: aspect='equal' panels are height-constrained at 1:8 phys aspect
+        # (for plt0655228 box).  Tuned 2026-06-01 for readability:
+        #   - bigger figure (height 16 in)
+        #   - tighter wspace (labels are now short enough)
+        #   - colorbars hugged closer to panels (top=0.94, less reserve)
+        per_panel_w = 2.8 if self.aspect == 'equal' else 2.4
+        wspace     = 0.05 if self.aspect == 'equal' else 0.08
+        top_margin = 0.93 if self.aspect == 'equal' else 0.86
+        bot_margin = 0.04 if self.aspect == 'equal' else 0.06
         fig, axes = plt.subplots(
             1, n_panels,
-            figsize=(2.4 * n_panels, 12),
+            figsize=(per_panel_w * n_panels, 18),
             sharey=True,
-            gridspec_kw={'wspace': 0.08, 'top': 0.86, 'bottom': 0.06},
+            gridspec_kw={'wspace': wspace, 'top': top_margin, 'bottom': bot_margin},
         )
 
         # Sibling-L_ext slices (for pooling each panel's colour range so the
@@ -182,8 +324,9 @@ class MultiFieldSlicesTask(AnalysisTask):
         # POOLED across the sibling-L_ext figures so the same panel shares
         # vmin/vmax across 0/9/99 kpc.
         panel_state: dict[str, dict | None] = {}
-        for panel_key, _field, _label, _cmap, _mode, _vmin, _vmax, _grp in _PANELS:
-            data = slices[panel_key].T                        # vertical = long axis
+        for panel_key, _field, _label, _cmap, _mode, _vmin, _vmax, _grp in self.panels:
+            conv = _DISPLAY_FACTOR.get(panel_key, 1.0)
+            data = slices[panel_key].T * conv                 # vertical = long axis; cgs → display unit
             pos  = data > 0
             if not pos.any():
                 panel_state[panel_key] = None
@@ -194,15 +337,18 @@ class MultiFieldSlicesTask(AnalysisTask):
             p_hi = float(np.nanmax(log_data))
             for sib in sib_slices:                            # pool across L_ext
                 if panel_key in sib:
-                    sp = _panel_pctl(np.asarray(sib[panel_key]))
+                    sp = _panel_pctl(np.asarray(sib[panel_key]) * conv)
                     if sp is not None:
                         p_lo = min(p_lo, sp[0]); p_hi = max(p_hi, sp[1])
+            if cross_slice_ranges is not None and panel_key in cross_slice_ranges:
+                cs_lo, cs_hi = cross_slice_ranges[panel_key]
+                p_lo = min(p_lo, cs_lo); p_hi = max(p_hi, cs_hi)
             panel_state[panel_key] = {'log_data': log_data, 'p_lo': p_lo, 'p_hi': p_hi}
 
         # Pass B: pool ranges across panels that share a group, so e.g. the two
         # T panels get the same vmin/vmax and become directly comparable.
         group_ranges: dict[str, dict[str, float]] = {}
-        for panel_key, *_, _vmin, _vmax, grp in _PANELS:
+        for panel_key, *_, _vmin, _vmax, grp in self.panels:
             st = panel_state.get(panel_key)
             if st is None or grp is None:
                 continue
@@ -214,7 +360,7 @@ class MultiFieldSlicesTask(AnalysisTask):
         #   1) explicit value in _PANELS (e.g. forcing T to [1, 7])
         #   2) shared-group pooled range
         #   3) per-panel percentile fallback
-        for ax, (panel_key, _f, label, cmap, _mode, log_vmin, log_vmax, grp) in zip(axes, _PANELS):
+        for ax, (panel_key, _f, label, cmap, _mode, log_vmin, log_vmax, grp) in zip(axes, self.panels):
             st = panel_state.get(panel_key)
             if st is None:
                 ax.set_title(f'{label}\n(empty)', fontsize=9)
@@ -226,7 +372,7 @@ class MultiFieldSlicesTask(AnalysisTask):
 
             im = ax.imshow(
                 st['log_data'],
-                origin='lower', extent=ext_plot, aspect='auto',
+                origin='lower', extent=ext_plot, aspect=self.aspect,
                 cmap=cmap, norm=Normalize(vmin=log_vmin, vmax=log_vmax),
             )
             ax.tick_params(axis='both', labelsize=8)
@@ -234,11 +380,23 @@ class MultiFieldSlicesTask(AnalysisTask):
             # Colourbar on top of each panel, with the field label above the
             # colourbar (away from the colourbar's tick labels below).
             divider = make_axes_locatable(ax)
-            cax = divider.append_axes('top', size='2.5%', pad=0.55)
+            cax = divider.append_axes('top', size='2.5%', pad=0.2)
             cbar = fig.colorbar(im, cax=cax, orientation='horizontal')
-            cbar.ax.tick_params(labelsize=8, top=True, bottom=False,
+            cbar.ax.tick_params(labelsize=7, top=True, bottom=False,
                                 labeltop=True, labelbottom=False)
-            cax.set_title(label, fontsize=9, pad=4)
+            # T panels: force INTEGER tick labels on the colourbar (2, 4, 6, 8).
+            # MaxNLocator alone doesn't always take effect on a horizontal cbar
+            # because matplotlib's colorbar replaces ticks during draw; use the
+            # explicit cbar.set_ticks API which it does respect.
+            if grp == 'T' and log_vmin is not None and log_vmax is not None:
+                import math
+                lo = int(math.ceil(log_vmin)); hi = int(math.floor(log_vmax))
+                # Pick every-2 step if the range is wider than 4, else every 1.
+                step = 2 if (hi - lo) > 4 else 1
+                cbar.set_ticks(list(range(lo, hi + 1, step)))
+            # Smaller title font for narrow equal-aspect panels (8 → 7) so
+            # long labels don't spill across into neighbour axes.
+            cax.set_title(label, fontsize=8 if self.aspect == 'equal' else 9, pad=2)
 
         # Axis labels on outer axes only.
         plane = {'x': ('y', 'z'), 'y': ('x', 'z'), 'z': ('x', 'y')}[self.slice_axis]
@@ -250,14 +408,19 @@ class MultiFieldSlicesTask(AnalysisTask):
         ds_name = os.path.basename(str(context.config.dataset_path))
         down = getattr(context.config, 'downsample_factor', '?')
         lext = getattr(context.config, 'column_extension_lateral_kpc', 0.0)
-        slice_pos = 'midplane' if self.slice_idx is None else f'index {self.slice_idx}'
+        slice_pos = f'index {slice_idx}'
         fig.suptitle(
             f'{ds_name}   (down={down},  $L_{{\\rm ext}}$ = {lext:g} kpc)\n'
             f'{plane[0]}–{plane[1]} slice at {self.slice_axis} = {slice_pos}',
-            fontsize=13, y=1.0,
+            fontsize=13, y=0.99,
         )
 
-        out = context.config.output_dir / self.filename
+        # Output path: single slice → legacy filename in OUTPUT_DIR root;
+        # multi-slice → numbered file in the subdir created by plot().
+        if multi_out_dir is None:
+            out = context.config.output_dir / self.filename
+        else:
+            out = multi_out_dir / f'multi_field_slices_idx{slice_idx:04d}.png'
         fig.savefig(str(out), dpi=200, bbox_inches='tight')
         plt.close(fig)
-        print(f'Saved: {out}')
+        print(f'  Saved: {out}')

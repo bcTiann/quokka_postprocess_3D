@@ -43,17 +43,35 @@ def _log_edges(vals):
 
 
 def main():
+    import argparse
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument('--table', default=None,
+                    help='path to despotic_table.npz (default cfg.DESPOTIC_TABLE_PATH)')
+    ap.add_argument('--out-tag', default=None,
+                    help='tag suffix for output PNG name (default: table dir basename)')
+    args = ap.parse_args()
+
     t0 = time.time()
-    table = load_table(cfg.DESPOTIC_TABLE_PATH)
+    table_path = args.table or cfg.DESPOTIC_TABLE_PATH
+    print(f'[table] {table_path}')
+    table = load_table(table_path)
     nH_v, col_v = table.nH_values, table.col_density_values
     fm = table.failure_mask
     if fm is None:
-        print('table has no failure_mask'); return
-    fail2d = fm[:, :, 0] if fm.ndim == 3 else fm        # (nH, NH)
-    # confirm dVdr-broadcast
-    if fm.ndim == 3:
-        same = np.all(fm == fm[:, :, :1], axis=2).all()
-        print(f'failure_mask dVdr-broadcast (same across dVdr): {same}')
+        fm = np.zeros(table.tg_final.shape, dtype=bool)
+
+    # "Bad" = failed OR NaN OR garbage (Tg > 1e6 K, see audit doc).
+    nan_mask = np.isnan(table.tg_final)
+    garbage_mask = np.isfinite(table.tg_final) & (table.tg_final > 1e6)
+    bad3d = fm | nan_mask | garbage_mask
+    fail2d = bad3d.any(axis=2) if bad3d.ndim == 3 else bad3d   # (nH, NH); collapsed
+    # Also report per-(nH,NH) what fraction of dVdr indices are bad
+    if bad3d.ndim == 3:
+        per_nhNH_frac = bad3d.mean(axis=2)
+        bad_all_dV = (bad3d.all(axis=2)).sum()
+        print(f'cells where ALL 35 dVdr indices are bad: {int(bad_all_dV)} / {fail2d.size}')
+        print(f'cells where ANY  dVdr index is bad:      {int(fail2d.sum())} / {fail2d.size}')
+        print(f'  fm-only: {int(fm.sum())}, NaN-only: {int(nan_mask.sum())}, garbage-only: {int(garbage_mask.sum())}')
 
     nfail = int(fail2d.sum()); ntot = fail2d.size
     print(f'table: {nH_v.size} x {col_v.size} = {ntot} (nH,NH) grid points;  '
@@ -68,6 +86,9 @@ def main():
     if cfg.DOWNSAMPLE_FACTOR > 1:
         ds = make_downsampled_dataset(ds, cfg.DOWNSAMPLE_FACTOR)
     phys.add_all_fields(ds)
+    # Cache key still uses cfg.DESPOTIC_TABLE_PATH (the canonical path) — that's
+    # what the on-disk intermediates were keyed on; passing args.table here would
+    # only force a fresh recompute if checking a non-canonical table.
     key = compute_cache_key(dataset_path=cfg.YT_DATASET_PATH,
                             despotic_table_path=cfg.DESPOTIC_TABLE_PATH,
                             downsample_factor=cfg.DOWNSAMPLE_FACTOR,
@@ -122,7 +143,8 @@ def main():
     if nfail:
         ax.legend(loc='lower right', framealpha=0.9)
     out = Path(cfg.OUTPUT_DIR); out.mkdir(parents=True, exist_ok=True)
-    png = out / 'table_failures_vs_coverage.png'
+    tag = args.out_tag or Path(table_path).parent.name
+    png = out / f'table_failures_vs_coverage_{tag}.png'
     fig.savefig(str(png), dpi=200, bbox_inches='tight')
     plt.close(fig)
     print(f'\n[out] {png}')

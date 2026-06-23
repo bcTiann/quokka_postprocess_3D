@@ -4,7 +4,7 @@ import numpy as np
 from scipy.interpolate import RegularGridInterpolator
 from typing import Sequence
 
-from .models import DespoticTable, DespoticTable4D, SpeciesRecord
+from .models import DespoticTable, SpeciesRecord  # DespoticTable4D dropped 2026-06-23 (4D deprecated; used only by wrapped TableLookup4D below)
 from .solver import LINE_RESULT_FIELDS
 
 # CGS constants for the μγ bisection (kept local so lookup.py has no yt dep).
@@ -164,6 +164,13 @@ class TableLookup:
         return self._species_meta[species]
 
 
+# ============================================================================
+# DEPRECATED 2026-06-23 — kept in-tree for reference (wrap-don't-delete).
+# 4D (nH,NH,dVdr,μγ) DESPOTIC table path was retired in cache schema v5
+# (2026-06-13); no pipeline task references any 4D table.  To revive:
+# restore the 4D exports in tables/__init__.py and un-wrap these defs.
+# ============================================================================
+r'''
 class TableLookup4D:
     """Sampler for the fixed-T 4D table in log10(nH, N_H, dVdr, T) space.
 
@@ -219,11 +226,17 @@ class TableLookup4D:
         if token not in self._interpolators:
             raise KeyError(f"Field '{token}' not registered in TableLookup4D.")
         interp = self._interpolators[token]
-        out_shape = np.asarray(nH).shape
-        nH_flat  = np.asarray(nH, dtype=float).ravel()
-        col_flat = np.asarray(colDen, dtype=float).ravel()
-        dv_flat  = np.broadcast_to(np.asarray(dVdr, dtype=float), nH_flat.shape).ravel()
-        T_flat   = np.asarray(T, dtype=float).ravel()
+        nH_arr = np.asarray(nH, dtype=float)
+        out_shape = nH_arr.shape
+        # Broadcast scalars / lower-rank arrays in the ORIGINAL ND-shape space
+        # before ravelling.  Previous code tried `broadcast_to(dVdr, flat_shape)`
+        # which silently worked when dVdr was a scalar (broadcasts () → (N,))
+        # but crashed when callers passed a same-shape ND array (yt now does:
+        # _temperature_gamma_mu passes the full 3D dVdr_lvg field).
+        nH_flat  = nH_arr.ravel()
+        col_flat = np.broadcast_to(np.asarray(colDen, dtype=float), out_shape).ravel()
+        dv_flat  = np.broadcast_to(np.asarray(dVdr,   dtype=float), out_shape).ravel()
+        T_flat   = np.broadcast_to(np.asarray(T,      dtype=float), out_shape).ravel()
         n = nH_flat.size
 
         values = np.empty(n, dtype=float)
@@ -320,3 +333,4 @@ class TableLookup4D:
 
         T = np.power(10.0, 0.5 * (lo + hi))
         return np.clip(T, self.table.T_values.min(), self.table.T_values.max())
+'''

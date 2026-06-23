@@ -1,3 +1,9 @@
+# ============================================================================
+# DEPRECATED 2026-06-23 — kept in-tree for reference (wrap-don't-delete).
+# Standalone Hα comparison task (HalphaComparisonTask): never imported in
+# tasks/__init__.py or registered.  Live Hα path = the H_alpha_luminosity field.
+# ============================================================================
+r'''
 from __future__ import annotations
 
 from typing import Dict
@@ -69,3 +75,4 @@ class HalphaComparisonTask(AnalysisTask):
             norm=None,
             camp="viridis_r",
         )
+'''

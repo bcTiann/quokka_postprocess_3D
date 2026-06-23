@@ -1,3 +1,8 @@
+# ============================================================================
+# DEPRECATED 2026-06-23 — kept in-tree for reference (wrap-don't-delete).
+# Standalone Hα-no-dust task (HalphaNoDustTask): never imported or registered.
+# ============================================================================
+r'''
 from __future__ import annotations
 
 import numpy as np
@@ -52,3 +57,4 @@ class HalphaNoDustTask(AnalysisTask):
             ylabel=self.ylabel,
             norm=self.config.extra_options.get("halpha_norm"),
         )
+'''

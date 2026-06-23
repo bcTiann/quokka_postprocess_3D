@@ -50,7 +50,7 @@ class PipelineConfig:
     dataset_path: str
     output_dir: Path
     figure_units: str = "pc"
-    projection_axis: str = "x",
+    projection_axis: str = "x"   # NB: a trailing comma here would silently make the default the tuple ("x",)
     field_setup: Optional[Callable[[yt.Dataset], None]] = None
     downsample_factor: int = 1
     # Cache controls.  Populated by build_pipeline() / argparse.
@@ -118,7 +118,7 @@ class AnalysisTask:
 
     # ── Level 2 task-result cache ──────────────────────────────────────────
     def _cache_filename(self) -> str:
-        """Per-task HDF5 file name in ``<output_dir>/.task_cache/``.
+        """Per-task HDF5 file name in ``<output_dir>/task_intermediates/``.
 
         Instances of the same class with different __init__ args get different
         files (e.g. ``BinnedPixelGridTask(species='CO')`` vs ``species='C+'``).

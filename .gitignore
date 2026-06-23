@@ -39,3 +39,6 @@ yt-env/
 
 
 *.ipynb
+
+# --- Runtime logs ---
+logs/

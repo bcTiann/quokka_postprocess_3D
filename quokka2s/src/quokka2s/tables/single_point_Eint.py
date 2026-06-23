@@ -1,3 +1,10 @@
+# ============================================================================
+# DEPRECATED 2026-06-23 — kept in-tree for reference (wrap-don't-delete).
+# Legacy per-cell DESPOTIC solver invoker; superseded by
+# tables/builder.py + tables/solver.py.
+# (Internal-energy / μγ bisection variant — also part of the retired 4D work.)
+# ============================================================================
+r'''
 from despotic import cloud
 from despotic.composition import composition
 import matplotlib.pyplot as plt
@@ -207,3 +214,4 @@ Eint_dimless = cell.comp.computeEint(cell.Tg)
 Eint_perH_in_erg = Eint_dimless * kb * cell.Tg * K
 print(f"Eint_dimless = {Eint_dimless}")
 print(f"internal energy per H nucleus in erg = {Eint_perH_in_erg} ")
+'''

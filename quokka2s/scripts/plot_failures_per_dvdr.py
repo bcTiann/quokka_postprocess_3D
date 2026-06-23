@@ -45,13 +45,30 @@ def _range_stats(name, data, lo, hi, unit):
 
 
 def main():
+    import argparse
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument('--table', default=None,
+                    help='path to despotic_table.npz (default cfg.DESPOTIC_TABLE_PATH)')
+    ap.add_argument('--out-tag', default=None,
+                    help='tag suffix for output PNG name (default: table parent dir name)')
+    args = ap.parse_args()
+
     t0 = time.time()
-    table = load_table(cfg.DESPOTIC_TABLE_PATH)
+    table_path = args.table or cfg.DESPOTIC_TABLE_PATH
+    print(f'[table] {table_path}')
+    table = load_table(table_path)
     nH_v, col_v, dv_v = table.nH_values, table.col_density_values, table.dVdr_values
-    fm = table.failure_mask                                  # (nH, NH, dVdr)
+
+    # 3D bad-cell mask = failure_mask ∪ (Tg is NaN) ∪ (Tg > 1e6 garbage)
+    fm_orig = table.failure_mask if table.failure_mask is not None \
+              else np.zeros(table.tg_final.shape, dtype=bool)
+    nan_mask = np.isnan(table.tg_final)
+    garbage_mask = np.isfinite(table.tg_final) & (table.tg_final > 1e6)
+    fm = fm_orig | nan_mask | garbage_mask                  # (nH, NH, dVdr)
     n_dv = len(dv_v)
-    print(f'table grid: nH={nH_v.size}, NH={col_v.size}, dVdr={n_dv}; '
-          f'total failed = {int(fm.sum()) if fm is not None else "n/a"}')
+    print(f'table grid: nH={nH_v.size}, NH={col_v.size}, dVdr={n_dv}')
+    print(f'  failure_mask: {int(fm_orig.sum())}  NaN: {int(nan_mask.sum())}  '
+          f'garbage(Tg>1e6): {int(garbage_mask.sum())}  combined bad: {int(fm.sum())}')
 
     ds = yt.load(cfg.YT_DATASET_PATH)
     if cfg.DOWNSAMPLE_FACTOR > 1:
@@ -121,7 +138,8 @@ def main():
         fig.colorbar(im, ax=axes, fraction=0.012, pad=0.01, label='sim cells / table cell')
 
     out = Path(cfg.OUTPUT_DIR); out.mkdir(parents=True, exist_ok=True)
-    png = out / 'failures_and_coverage_per_dvdr.png'
+    tag = args.out_tag or Path(table_path).parent.name
+    png = out / f'failures_and_coverage_per_dvdr_{tag}.png'
     fig.savefig(str(png), dpi=170, bbox_inches='tight')
     plt.close(fig)
     print(f'\n[out] {png}')

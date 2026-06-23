@@ -19,7 +19,6 @@ from despotic.chemistry import NL99, NL99_GC, GOW
 from .models import (
     AttemptRecord,
     DespoticTable,
-    DespoticTable4D,
     LineLumResult,
     LogGrid,
     SpeciesLineGrid,
@@ -257,6 +256,13 @@ def build_table(
         )
 
 
+# ============================================================================
+# DEPRECATED 2026-06-23 — kept in-tree for reference (wrap-don't-delete).
+# 4D (nH,NH,dVdr,μγ) DESPOTIC table path was retired in cache schema v5
+# (2026-06-13); no pipeline task references any 4D table.  To revive:
+# restore the 4D exports in tables/__init__.py and un-wrap these defs.
+# ============================================================================
+r'''
 def build_table_4d(
     nH_grid: LogGrid,
     col_grid: LogGrid,
@@ -419,6 +425,7 @@ def build_table_4d(
         energy_terms=energy_fields or None,
         attempts=tuple(attempts),
     )
+'''
 
 
 def plot_table(*_args, **_kwargs) -> None:

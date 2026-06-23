@@ -101,7 +101,8 @@ class SpaxelSigmaTask(AnalysisTask):
         rho, _ = p.get_slab_z(('gas', 'density'))
         self._rho = rho.value
 
-        T, _ = p.get_slab_z(('gas', 'temperature_despotic'))
+        # T_two_regime so phase masks match SpectrumStore/VelocityPhase (2026-06-18).
+        T, _ = p.get_slab_z(('gas', 'temperature_two_regime'))
         self._T = T.in_units('K').value
 
         for sp in SPECIES_CFG:

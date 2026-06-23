@@ -194,8 +194,10 @@ def main():
     failed_map: dict[int, bool] = {}
     for i, fi in enumerate(union):
         fi = int(fi)
+        # 2026-05-29 API change: solver now takes a single dvdr_val (was a
+        # grid).  Return signature also tightened: out[6]=final_Tg, out[8]=failed.
         out = calculate_single_despotic_point(
-            float(n_H[fi]), float(colden[fi]), [float(dvdr[fi])],
+            float(n_H[fi]), float(colden[fi]), float(dvdr[fi]),
             chem_network=GOW, log_failures=False,
         )
         Treal_map[fi] = out[6]      # final_Tg

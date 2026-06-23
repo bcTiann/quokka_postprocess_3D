@@ -8,7 +8,6 @@ from matplotlib.colors import LogNorm
 
 from ..base import AnalysisTask, PipelinePlotContext
 from ..prep import config as cfg
-from ..prep.config import T_CUTOFF
 from ..prep.physics_fields import ensure_table_lookup
 from ..utils import weighted_percentile
 
@@ -164,7 +163,7 @@ class TableDiagnosticsTask(AnalysisTask):
                   f"{int(coverage.sum())}/{coverage.size} table bins have sim data.")
         else:
             print(f"[TableDiagnostics] {cfg.LOG_SAMPLES_PATH} not found — "
-                  "coverage marking disabled (run snapshot_histgram.py first).")
+                  "coverage marking disabled (run snapshot_histogram.py first).")
 
         col_mid = col_vals[len(col_vals) // 2]
         nH_mid  = nH_vals[len(nH_vals) // 2]
@@ -387,8 +386,7 @@ class TableDiagnosticsTask(AnalysisTask):
             ax_norm.plot(T_vals, norm, color=sp_cfg['color'], lw=2.0,
                          drawstyle='steps-mid',
                          label=f"{sp}  (N_H_ref={N_H_ref[sp]:.1e})")
-            ax_norm.axvline(T_CUTOFF[sp], color=sp_cfg['color'],
-                            ls='--', lw=1.2, alpha=0.6)
+            # T_CUTOFF removed 2026-06-13 — no per-species cutoff annotation.
 
         ax_norm.set_xscale('log')
         ax_norm.set_xlabel('Temperature [K]', fontsize=12)
@@ -399,12 +397,12 @@ class TableDiagnosticsTask(AnalysisTask):
         ax_norm.set_ylim(-0.05, 1.15)
         ax_norm.legend(fontsize=10, loc='upper right', framealpha=0.7)
         ax_norm.grid(True, alpha=0.25, ls='--', lw=0.5)
-        ax_norm.text(0.02, 0.96, 'Dashed = T cutoff per species',
-                     transform=ax_norm.transAxes, fontsize=8,
-                     va='top', color='grey')
 
-        # ax1-3 — absolute lumPerH vs T, multi-nH per species at N_H_ref
-        # 目的：診斷高溫行為，確認各 nH 下 lumPerH 在 T_CUTOFF 後正確歸零
+        # ax1-3 — absolute lumPerH vs T, multi-nH per species at N_H_ref.
+        # (2026-06-13) T_CUTOFF dashed vertical line + red shaded region
+        # removed — pipeline no longer zeroes lumPerH above any per-species
+        # cutoff.  GOW network is still single-ionization only, but that's
+        # documented elsewhere now.
         cmap_nH = plt.get_cmap('plasma', len(nH_probes))
         for col_idx, sp_cfg in enumerate(SPECIES_CFG, start=1):
             sp  = sp_cfg['name']
@@ -415,15 +413,6 @@ class TableDiagnosticsTask(AnalysisTask):
                 ax.plot(T_vals, species_nH_curves[sp][nH],
                         color=cmap_nH(i), drawstyle='steps-mid',
                         label=label, **kw)
-            ax.axvline(T_CUTOFF[sp], color='grey',
-                       ls='--', lw=1.5, alpha=0.8,
-                       label=f"cutoff ({T_CUTOFF[sp]:.0e} K)")
-            ax.axvspan(T_CUTOFF[sp], T_vals.max(),
-                       color='red', alpha=0.07, zorder=0)
-            ax.text(0.98, 0.02,
-                    'GOW network invalid\n(single-ionization only)',
-                    transform=ax.transAxes, fontsize=7, color='darkred',
-                    ha='right', va='bottom', alpha=0.85)
             ax.set_xscale('log')
             ax.set_yscale('log')
             ax.set_xlabel('Temperature [K]', fontsize=12)
@@ -469,8 +458,6 @@ class TableDiagnosticsTask(AnalysisTask):
                             else dict(lw=1.0, ls='--', alpha=0.5)
                     ax.plot(T_vals, norm, color=sp_cfg['color'],
                             drawstyle='steps-mid', label=sp, **kw_ov)
-                    ax.axvline(T_CUTOFF[sp], color=sp_cfg['color'],
-                               ls='--', lw=0.8, alpha=0.5)
                 if not cell_covered:
                     ax.text(0.97, 0.97, 'no sim data',
                             transform=ax.transAxes, fontsize=6, color='#888888',
@@ -494,7 +481,7 @@ class TableDiagnosticsTask(AnalysisTask):
 
         fig_ov.suptitle(
             'DESPOTIC Table: Normalized lumPerH vs T\n'
-            '(rows = N_H probes, cols = nH probes,  dashed = T_CUTOFF per species)',
+            '(rows = N_H probes, cols = nH probes)',
             fontsize=12)
         plt.tight_layout()
         out_ov = self.config.output_dir / 'table_diagnostics_lumPerH_overview_5x5.png'
@@ -521,10 +508,6 @@ class TableDiagnosticsTask(AnalysisTask):
                     label = f'nH={nH_val:.1e}' + ('' if kw_sp['ls'] == '-' else ' [no sim data]')
                     ax.plot(T_vals, lums, color=cmap_nH_grid(i),
                             drawstyle='steps-mid', label=label, **kw_sp)
-                ax.axvline(T_CUTOFF[sp], color='grey',
-                           ls='--', lw=1.2, alpha=0.8)
-                ax.axvspan(T_CUTOFF[sp], T_vals.max(),
-                           color='red', alpha=0.07, zorder=0)
                 ax.set_xscale('log')
                 ax.set_yscale('log')
                 ax.grid(True, alpha=0.2, ls='--', lw=0.4)
@@ -570,15 +553,6 @@ class TableDiagnosticsTask(AnalysisTask):
                 ax_top.plot(T_vals, species_nH_curves[sp][nH],
                             color=cmap_nH(i), drawstyle='steps-mid',
                             label=label2, **kw2)
-            ax_top.axvline(T_CUTOFF[sp], color='grey',
-                           ls='--', lw=1.5, alpha=0.8,
-                           label=f"cutoff ({T_CUTOFF[sp]:.0e} K)")
-            ax_top.axvspan(T_CUTOFF[sp], T_vals.max(),
-                           color='red', alpha=0.07, zorder=0)
-            ax_top.text(0.98, 0.02,
-                        'GOW network invalid\n(single-ionization only)',
-                        transform=ax_top.transAxes, fontsize=7, color='darkred',
-                        ha='right', va='bottom', alpha=0.85)
             ax_top.set_xscale('log')
             ax_top.set_yscale('log')
             ax_top.set_xlabel('Temperature [K]', fontsize=11)
@@ -634,12 +608,11 @@ class TableDiagnosticsTask(AnalysisTask):
         log_samples_data     = results.get('log_samples')
         if not density_probes:
             print('[TableDiagnostics] Skipping density-probe figure: '
-                  'log_samples.npy not found (run snapshot_histgram.py first).')
+                  'log_samples.npy not found (run snapshot_histogram.py first).')
         else:
             n_panels  = len(density_probes)
             n_cols    = 6
             n_rows    = math.ceil(n_panels / n_cols)
-            t_cut_min = min(T_CUTOFF.values())
 
             fig3, axes3 = plt.subplots(n_rows, n_cols,
                                        figsize=(4.5 * n_cols, 4.2 * n_rows),
@@ -666,10 +639,6 @@ class TableDiagnosticsTask(AnalysisTask):
                     lums = density_probe_curves[key][sp]
                     ax.plot(T_vals, lums, color=sp_cfg['color'], lw=1.4,
                             drawstyle='steps-mid', label=sp)
-                    ax.axvline(T_CUTOFF[sp], color=sp_cfg['color'],
-                               ls='--', lw=0.8, alpha=0.5)
-                ax.axvspan(t_cut_min, T_vals.max(),
-                           color='red', alpha=0.06, zorder=0)
                 ax.set_xscale('log')
                 ax.set_yscale('log')
                 ax.set_title(
