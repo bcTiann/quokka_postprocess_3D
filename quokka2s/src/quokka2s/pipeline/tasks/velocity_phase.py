@@ -1,24 +1,17 @@
-"""VelocityPhaseTask (Group 1): pure sim-side velocity + phase analysis.
+"""Velocity + phase analysis, split into Build + Plot tasks.
 
-Reads vx, vy, rho, T_DSP, computes:
-  - phase masks (CNM/UNM/WNM/WIM/HIM) from T_DSP
+``Build_VelocityPhase`` (compute + store): reads vx, vy, rho, T_two_regime and
+computes
+  - phase masks (CNM/UNM/WNM/WIM/HIM)
   - mass-weighted σ_v per phase per LOS (x, y)
   - velocity PDFs per phase per LOS — TWO formats:
-      a)  auto-bin (per-phase percentile-bracketed range, 120 bins) for the
-          PhaseSigmaV_hist plot (per-panel auto-scaling)
-      b)  fixed-range (±V_RANGE_KMS, 120 bins) for the PhaseSpectrumOverlay
-          plot (spectrum overlay needs consistent axis with the species
-          spectra)
+      a) auto-bin (per-phase percentile-bracketed range, 120 bins)
+      b) fixed-range (±V_RANGE_KMS, 120 bins) for the spectrum overlay
+It stores everything so downstream Plot tasks (Plot_VelocityPhase,
+Plot_PhaseSpectrumOverlay) load it without recomputing.
 
-Stores both in the task intermediate so downstream plot-only tasks
-(PhaseSpectrumOverlay) can load them without recomputing.
-
-Outputs (PNG):
-  - PhaseSigmaV_bar.png
-  - PhaseSigmaV_hist.png
-
-Replaces the old `PhaseSigmaVTask` in this refactor.  No species spectra
-computed here — those go in `SpeciesSpectrumTask`.
+``Plot_VelocityPhase`` (plot only): renders PhaseSigmaV_bar.png + PhaseSigmaV_hist.png
+from the stored result.
 """
 from __future__ import annotations
 
@@ -27,7 +20,7 @@ import gc
 import numpy as np
 import matplotlib.pyplot as plt
 
-from ..base import AnalysisTask, PipelinePlotContext
+from ..base import BuildTask, PlotTask, PipelinePlotContext
 from ..utils import (
     T_CNM_MAX, T_UNM_MAX, T_WNM_MAX, T_WIM_MAX, PHASE_ORDER,
     PHASE_LABEL_LINE,
@@ -54,8 +47,9 @@ PHASE_LABEL = {
 }
 
 
-class VelocityPhaseTask(AnalysisTask):
-    """Phase-split velocity dispersion + PDFs (Group 1 of velocity refactor)."""
+# ─── Build ──────────────────────────────────────────────────────────────────
+class Build_VelocityPhase(BuildTask):
+    """Compute phase-split velocity dispersion + PDFs; store the result."""
 
     HIST_N_BINS_AUTO  = 120
     HIST_PCT_LO       = 0.5    # auto-bin percentile bracket
@@ -66,7 +60,6 @@ class VelocityPhaseTask(AnalysisTask):
     def __init__(self, config):
         super().__init__(config)
 
-    # ── compute ──────────────────────────────────────────────────────────
     def compute(self, context: PipelinePlotContext) -> dict:
         p = context.provider
         vx_u,  _ = p.get_slab_z(('gas', 'velocity_x'))
@@ -173,16 +166,24 @@ class VelocityPhaseTask(AnalysisTask):
             'pdf_fixed':  hist_fixed,     # ±V_RANGE_KMS → PhaseSpectrumOverlay
         }
         # Free the ~14 GB of raw cell arrays + the provider's in-RAM covering
-        # grid before returning, so the next task (SpeciesSpectrumTask) starts
-        # clean on the 16 GB Mac.  The returned dict holds only small histogram
-        # summaries.  (SpeciesSpectrumTask used to evict this leak for us — see
-        # its compute() preamble; that crutch is no longer required.)
+        # grid before returning, so the next Build task starts clean on the
+        # 16 GB Mac.  The returned dict holds only small histogram summaries.
         del vx, vy, rho, T, masks
         p._cached_grid = None
         gc.collect()
         return result
 
-    # ── plot ─────────────────────────────────────────────────────────────
+
+# ─── Plot ───────────────────────────────────────────────────────────────────
+class Plot_VelocityPhase(PlotTask):
+    """Render PhaseSigmaV_bar.png + PhaseSigmaV_hist.png from Build_VelocityPhase."""
+
+    def __init__(self, config):
+        super().__init__(config)
+
+    def _gather_inputs(self, context: PipelinePlotContext) -> dict:
+        return self._load_one(context, 'Build_VelocityPhase')
+
     def plot(self, context: PipelinePlotContext, results: dict) -> None:
         self._plot_bar(results)
         self._plot_hist(results)

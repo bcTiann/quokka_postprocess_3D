@@ -48,19 +48,20 @@ fi
 
 # Task groups, in dependency order.  Format: "tag|--task A [--task B]".
 # Each group runs as ONE separate `run_pipeline` process; the OS reclaims all
-# its memory before the next group starts.  Heavy tasks run alone; the light
-# PhaseHist tasks share a process, as do the two plot-only aggregators.
-#   velocity  → produces sigma_v + velocity PDFs (read by spectra + aggregate)
-#   spectra   → needs velocity's result; heaviest task (~13.5 GB) → solo
-#   phasehist → 7 PhaseHist + NH-rho (light; feed PhaseCombinedPlot)
-#   slices    → MultiFieldSlices (reads many 3D fields → solo)
-#   aggregate → PhaseSpectrumOverlay + PhaseCombinedPlot (plot-only; run last)
+# its memory before the next group starts.  Each group pairs a Build_ (compute)
+# with its Plot_ where one exists; under --mode compute only the Build_ runs,
+# under --mode plot only the Plot_, under --mode all both (Build before Plot).
+#   velocity  → Build_VelocityPhase (sigma_v + PDFs, read by spectra+aggregate) + its plot
+#   spectra   → Build_SpeciesSpectrum (heaviest ~13.5 GB; needs velocity) + its plot
+#   phasehist → Build_PhaseHist ×7 + Build_PhaseHistNHRho (light; feed Plot_PhaseCombined)
+#   slices    → Build_MultiFieldSlices (reads many 3D fields) + its plot
+#   aggregate → Plot_PhaseCombined + Plot_PhaseSpectrumOverlay (plot-only; run last)
 TASK_GROUPS=(
-  "velocity|--task VelocityPhaseTask"
-  "spectra|--task SpeciesSpectrumTask"
-  "phasehist|--task PhaseHistTask --task PhaseHistNHRhoTask"
-  "slices|--task MultiFieldSlicesTask"
-  "aggregate|--task PhaseSpectrumOverlayTask --task PhaseCombinedPlotTask"
+  "velocity|--task Build_VelocityPhase --task Plot_VelocityPhase"
+  "spectra|--task Build_SpeciesSpectrum --task Plot_SpeciesSpectrum"
+  "phasehist|--task Build_PhaseHist --task Build_PhaseHistNHRho"
+  "slices|--task Build_MultiFieldSlices --task Plot_MultiFieldSlices"
+  "aggregate|--task Plot_PhaseCombined --task Plot_PhaseSpectrumOverlay"
 )
 
 MASTER=$LOGS/MASTER_dataset_series.log

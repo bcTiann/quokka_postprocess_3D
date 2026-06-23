@@ -1,34 +1,31 @@
-"""PhaseHistTask + PhaseHistNHRhoTask — single 2D histograms on the ρ-T plane.
+"""Build_PhaseHist + Build_PhaseHistNHRho — single 2D histograms on the ρ-T plane.
 
 Each task computes EXACTLY ONE 2D histogram and stores it as an intermediate.
-PhaseCombinedPlotTask then reads ALL the sibling intermediates and assembles
+``Plot_PhaseCombined`` then reads ALL the sibling Build results and assembles
 phase_combined.png.
 
-Replaces the old single-shot `PhaseCombinedTask` in `phase_combined.py`
-(deprecated 2026-06-19, see banner there).  The old design computed 15
-histograms but only used 7 — the split-task design only computes what
-each registered instance asks for, and each intermediate is independently
-cacheable so changing one field (e.g. C+_luminosity) doesn't bust the
-others.
+These are compute-only Build tasks (no plot of their own).  The colorbar UNIT is
+NOT hardcoded: each task keeps the weight in yt units long enough to read its
+latex unit (mass → g, luminosity → erg/s) and stores ``unit_latex``; the caller
+passes only a short ``symbol`` (e.g. ``r'L_{\\rm CO}'``).  Plot_PhaseCombined
+builds the label as ``$\\log_{10}\\,{symbol}$ [{unit_latex}]``.
 
 Usage (in `run_pipeline.py`):
-    pipeline.register_task(PhaseHistTask(cfg, 'mass', 'temperature_quokka',
-                                         tag='mass_T_QK', units_label=...))
-    pipeline.register_task(PhaseHistTask(cfg, 'CO_luminosity',
-                                         'temperature_two_regime',
-                                         tag='CO_T_2R',   units_label=...))
+    pipeline.register_task(Build_PhaseHist(cfg, 'mass', 'temperature_quokka',
+                                           tag='mass_T_QK', symbol=r'M_{\\rm bin}'))
+    pipeline.register_task(Build_PhaseHist(cfg, 'CO_luminosity',
+                                           'temperature_two_regime',
+                                           tag='CO_T_2R', symbol=r'L_{\\rm CO}'))
     ...
-    pipeline.register_task(PhaseCombinedPlotTask(cfg))   # reads all the above
-
-The fixed log_ρ / log_T ranges below ensure ALL PhaseHistTask instances
-produce histograms on the SAME bin grid — so PhaseCombinedPlotTask can
-share x/y axes and pool colour ranges cleanly without inter-task negotiation.
+    pipeline.register_task(Plot_PhaseCombined(cfg))   # reads all the above
 """
 from __future__ import annotations
 
+import gc
+
 import numpy as np
 
-from ..base import AnalysisTask, PipelinePlotContext
+from ..base import BuildTask, PipelinePlotContext
 
 
 def _aligned_edges(lo: float, hi: float, step: float) -> np.ndarray:
@@ -42,75 +39,80 @@ def _aligned_edges(lo: float, hi: float, step: float) -> np.ndarray:
     return np.linspace(lo_snap, hi_snap, n_bins + 1)
 
 
-# ─── PhaseHistTask ──────────────────────────────────────────────────────────
-class PhaseHistTask(AnalysisTask):
+def _unit_latex(yt_array) -> str:
+    """yt/unyt unit → LaTeX string for a colorbar label, with a plain-str
+    fallback (e.g. dimensionless → '')."""
+    try:
+        return yt_array.units.latex_repr or str(yt_array.units)
+    except Exception:
+        return str(getattr(yt_array, 'units', ''))
+
+
+# ─── Build_PhaseHist ──────────────────────────────────────────────────────────
+class Build_PhaseHist(BuildTask):
     """Compute ONE weighted 2D histogram on (log ρ, log T).
 
     Parameters
     ----------
     weight_field : str
-        Either ``'mass'`` (weight = ρ·dV) or a yt luminosity field name
-        like ``'CO_luminosity'`` / ``'C+_luminosity'`` (weight = ε·dV).
+        Either ``'mass'`` (weight = ρ·dV) or a yt luminosity field name like
+        ``'CO_luminosity'`` (weight = ε·dV).
     T_field : str
-        yt field for the y axis, e.g. ``'temperature_quokka'`` /
-        ``'temperature_despotic'`` / ``'temperature_two_regime'``.
+        yt field for the y axis, e.g. ``'temperature_two_regime'``.
     tag : str
-        Short label stored in the intermediate dict.  PhaseCombinedPlotTask
-        finds the right panel by this tag.  Must be unique across
-        registered PhaseHistTask instances in one run.
-    units_label : str, optional
-        LaTeX string for the cbar title (e.g.
-        ``r'$\\log_{10}\\,L_{\\rm CO}$ [erg s$^{-1}$]'``).
+        Short label stored in the result.  Plot_PhaseCombined finds the right
+        panel by this tag.  Must be unique across registered instances.
+    symbol : str, optional
+        LaTeX symbol for the colorbar (e.g. ``r'L_{\\rm CO}'`` / ``r'M_{\\rm bin}'``).
+        The unit is derived from the weight field via yt, not hardcoded.
     bin_dex : float
         log10 bin width (default 0.2 dex).
     """
 
     def __init__(self, config,
                  weight_field: str, T_field: str, tag: str,
-                 units_label: str = '',
+                 symbol: str = '',
                  bin_dex: float = 0.2):
-        super().__init__(config, name=f'PhaseHistTask[{tag}]')
+        super().__init__(config, name=f'Build_PhaseHist[{tag}]')
         self.weight_field = str(weight_field)
         self.T_field      = str(T_field)
         self.tag          = str(tag)
-        self.units_label  = str(units_label)
+        self.symbol       = str(symbol)
         self.bin_dex      = float(bin_dex)
 
     def compute(self, context: PipelinePlotContext) -> dict:
         p = context.provider
 
-        # Load required fields. yt caches these on disk, so re-running this
-        # task after a field cache exists is cheap.
         rho_u, _ = p.get_slab_z(('gas', 'density'))
         T_u,   _ = p.get_slab_z(('gas', self.T_field))
         dx_u,  _ = p.get_slab_z(('boxlib', 'dx'))
         dy_u,  _ = p.get_slab_z(('boxlib', 'dy'))
         dz_u,  _ = p.get_slab_z(('boxlib', 'dz'))
 
-        rho = np.asarray(rho_u.in_cgs()).ravel()
+        rho_q = rho_u.in_cgs().ravel()                                   # yt, g/cm**3
+        dV_q  = (dx_u.in_cgs() * dy_u.in_cgs() * dz_u.in_cgs()).ravel()  # yt, cm**3
+        rho = np.asarray(rho_q)
         T   = np.asarray(T_u.in_cgs()).ravel()
-        dV  = (np.asarray(dx_u.in_cgs()) *
-               np.asarray(dy_u.in_cgs()) *
-               np.asarray(dz_u.in_cgs())).ravel()
         del rho_u, T_u, dx_u, dy_u, dz_u
 
         with np.errstate(divide='ignore', invalid='ignore'):
             log_rho = np.log10(np.where(rho > 0, rho, np.nan))
             log_T   = np.log10(np.where(T   > 0, T,   np.nan))
 
+        # Weight kept in yt units long enough to read its latex unit, then
+        # dropped to a plain array for histogram2d (values unchanged).
         if self.weight_field == 'mass':
-            weight = rho * dV
+            w_q = rho_q * dV_q                                           # yt, g
         else:
             eps_u, _ = p.get_slab_z(('gas', self.weight_field))
-            weight = np.asarray(eps_u.in_cgs()).ravel() * dV
+            w_q = eps_u.in_cgs().ravel() * dV_q                          # yt, erg/s
             del eps_u
-        del rho, T, dV
+        unit_latex = _unit_latex(w_q)
+        weight = w_q.value
+        del rho, T, rho_q, dV_q, w_q
 
-        # Bin edges from THIS task's own data range — matches the old
-        # PhaseCombinedTask convention (tight to actual data).  Plot task
-        # handles axis alignment across siblings via union of xlim/ylim,
-        # NOT via matching bin edges (matplotlib sharex shares limits, not
-        # edges; imshow uses each panel's own extent).
+        # Bin edges from THIS task's own data range (tight to actual data).
+        # Plot task aligns axes across siblings via union of xlim/ylim.
         rho_lo, rho_hi = float(np.nanmin(log_rho)), float(np.nanmax(log_rho))
         T_lo,   T_hi   = float(np.nanmin(log_T)),   float(np.nanmax(log_T))
         x_edges = _aligned_edges(rho_lo, rho_hi, self.bin_dex)
@@ -122,12 +124,11 @@ class PhaseHistTask(AnalysisTask):
             weights=weight,
         )
 
-        # Free the loaded slabs so the next task doesn't accumulate memory.
-        # Each covering_grid load is ~4 GB at down=1; without this, 9 tasks
-        # in a row OOM-kill a 16 GB Mac silently.
+        # Free the loaded slabs so the next Build task doesn't accumulate memory
+        # (each covering_grid load is ~4 GB at down=1 → OOM on 16 GB Mac).
         del log_rho, log_T, weight
         p._cached_grid = None
-        import gc; gc.collect()
+        gc.collect()
 
         return {
             'H':            H,
@@ -136,25 +137,21 @@ class PhaseHistTask(AnalysisTask):
             'tag':          self.tag,
             'weight_field': self.weight_field,
             'T_field':      self.T_field,
-            'units_label':  self.units_label,
+            'symbol':       self.symbol,
+            'unit_latex':   unit_latex,
         }
 
-    def plot(self, context: PipelinePlotContext, results: dict) -> None:
-        # Compute-only task — PhaseCombinedPlotTask renders the figure.
-        pass
 
-
-# ─── PhaseHistNHRhoTask ─────────────────────────────────────────────────────
-class PhaseHistNHRhoTask(AnalysisTask):
+# ─── Build_PhaseHistNHRho ─────────────────────────────────────────────────────
+class Build_PhaseHistNHRho(BuildTask):
     """Special: mass histogram on (log N_H, log ρ).
 
-    Uses the DESPOTIC table's 35-pt N_H grid for x bins (so the panel
-    aligns with `output/table_plots/<TAG>_L<L>_mass/tg_alldvdr_*.png`)
-    and the same log_ρ bins as PhaseHistTask for y.
+    Uses the DESPOTIC table's 35-pt N_H grid for x bins and the same log_ρ bins
+    as Build_PhaseHist for y.
     """
 
     def __init__(self, config, bin_dex: float = 0.2):
-        super().__init__(config, name='PhaseHistNHRhoTask')
+        super().__init__(config, name='Build_PhaseHistNHRho')
         self.bin_dex = float(bin_dex)
 
     def compute(self, context: PipelinePlotContext) -> dict:
@@ -166,18 +163,19 @@ class PhaseHistNHRhoTask(AnalysisTask):
         dy_u,   _ = p.get_slab_z(('boxlib', 'dy'))
         dz_u,   _ = p.get_slab_z(('boxlib', 'dz'))
 
-        rho = np.asarray(rho_u.in_cgs()).ravel()
+        rho_q = rho_u.in_cgs().ravel()                                   # yt, g/cm**3
+        dV_q  = (dx_u.in_cgs() * dy_u.in_cgs() * dz_u.in_cgs()).ravel()  # yt, cm**3
+        rho = np.asarray(rho_q)
         nh  = np.asarray(nh_u.in_cgs()).ravel()
-        dV  = (np.asarray(dx_u.in_cgs()) *
-               np.asarray(dy_u.in_cgs()) *
-               np.asarray(dz_u.in_cgs())).ravel()
         del rho_u, nh_u, dx_u, dy_u, dz_u
 
         with np.errstate(divide='ignore', invalid='ignore'):
             log_rho = np.log10(np.where(rho > 0, rho, np.nan))
             log_nh  = np.log10(np.where(nh  > 0, nh,  np.nan))
-        mass = rho * dV
-        del rho, nh, dV
+        m_q = rho_q * dV_q                                               # yt, g
+        unit_latex = _unit_latex(m_q)
+        mass = m_q.value
+        del rho, nh, rho_q, dV_q, m_q
 
         # y (ρ) edges from this task's own data range.
         rho_lo, rho_hi = float(np.nanmin(log_rho)), float(np.nanmax(log_rho))
@@ -195,10 +193,10 @@ class PhaseHistNHRhoTask(AnalysisTask):
             weights=mass[valid],
         )
 
-        # Free the loaded slabs (see PhaseHistTask.compute() for rationale).
+        # Free the loaded slabs (see Build_PhaseHist.compute() for rationale).
         del log_rho, log_nh, mass
         p._cached_grid = None
-        import gc; gc.collect()
+        gc.collect()
 
         return {
             'H':            H,
@@ -207,9 +205,6 @@ class PhaseHistNHRhoTask(AnalysisTask):
             'tag':          'NH_rho',
             'weight_field': 'mass',
             'T_field':      None,
-            'units_label':  r'$\log_{10}\,M_{\rm bin}$ [g]',
+            'symbol':       r'M_{\rm bin}',
+            'unit_latex':   unit_latex,
         }
-
-    def plot(self, context: PipelinePlotContext, results: dict) -> None:
-        # Compute-only task.
-        pass

@@ -1,13 +1,11 @@
-"""PhaseSpectrumOverlayTask (plot-only composer).
+"""Plot_PhaseSpectrumOverlay (pure Plot task).
 
 Overlays each species' integrated line profile on the 5 ISM-phase velocity
-PDFs.  Does NO physics: ``compute()`` only records that it composes at plot
-time; the upstream results are loaded FRESH inside ``plot()`` (see
-``_load_siblings``) from:
-  - VelocityPhaseTask   → fixed-range velocity PDFs per phase
-  - SpeciesSpectrumTask → species total spectra
-so a two-pass ``--mode compute`` then ``--mode plot`` run always reflects the
-latest siblings rather than a snapshot embedded at compute time.
+PDFs.  Computes nothing; reads two Build results fresh at plot time (see
+``_gather_inputs``):
+  - Build_VelocityPhase   → fixed-range velocity PDFs per phase
+  - Build_SpeciesSpectrum → species total spectra
+The Build tasks must run first (``--mode compute``).
 
 Produces (2026-06-20 redesign; LOS=y only per the los-y-default convention):
 
@@ -18,16 +16,12 @@ curve (black) on a shared (v_LOS, normalised intensity) panel.
 """
 from __future__ import annotations
 
-from pathlib import Path
 import numpy as np
 import matplotlib.pyplot as plt
 
-from ..base import AnalysisTask, PipelinePlotContext
+from ..base import PlotTask, PipelinePlotContext
 from ..utils import PHASE_ORDER, PHASE_LABEL_LINE
 from .integrated_spectrum import SPECIES_CFG, V_RANGE_KMS
-from .temperature_lext_diff import (
-    _glob_one_taskcache, _load_results, _expected_sibling_key,
-)
 
 
 # 2026-06-20 redesign: drop 'total' (visual sum of the 5 phases — redundant)
@@ -55,53 +49,31 @@ def _moment_sigma(v: np.ndarray, spec: np.ndarray) -> tuple[float, float]:
     return v_mean, sigma
 
 
-class PhaseSpectrumOverlayTask(AnalysisTask):
-    """Plot-only: species spectrum × phase velocity PDF overlay grid."""
+class Plot_PhaseSpectrumOverlay(PlotTask):
+    """Species spectrum × phase velocity PDF overlay (1 PNG per species)."""
 
     def __init__(self, config, bin_size: int = 1, R: float = np.inf):
-        super().__init__(config)
+        super().__init__(config, name='Plot_PhaseSpectrumOverlay')
         self.bin_size = int(bin_size)
         if self.bin_size != 1:
             raise NotImplementedError('bin_size > 1 not supported.')
         self.R = float(R)
 
-    def compute(self, context: PipelinePlotContext) -> dict:
-        """No physics — VelocityPhase + SpeciesSpectrum siblings are loaded
-        FRESH at plot() time (see ``_load_siblings``).  Storing only a marker
-        keeps two-pass compute→plot correct."""
-        return {'composed_at': 'plot'}
-
-    def _load_siblings(self) -> dict:
-        """Load the upstream PDFs + species spectra FRESH from disk (each
-        validated against this run's cache key).  Called at plot() time so a
-        two-pass ``--mode compute`` … ``--mode plot`` run composes the latest
-        siblings rather than a snapshot embedded at compute time."""
-        cur_dir = Path(self.config.output_dir)
-        vp_path = _glob_one_taskcache(cur_dir, 'VelocityPhaseTask')
-        ss_path = _glob_one_taskcache(cur_dir, 'SpeciesSpectrumTask')
-        if vp_path is None:
-            raise RuntimeError(
-                f'VelocityPhaseTask intermediate not found in {cur_dir}/'
-                f'task_intermediates/; run that task first.'
-            )
-        if ss_path is None:
-            raise RuntimeError(
-                f'SpeciesSpectrumTask intermediate not found in {cur_dir}/'
-                f'task_intermediates/; run that task first.'
-            )
-        vp = _load_results(vp_path, expected_key=_expected_sibling_key(self.config, vp_path.name))
-        ss = _load_results(ss_path, expected_key=_expected_sibling_key(self.config, ss_path.name))
+    def _gather_inputs(self, context: PipelinePlotContext) -> dict:
+        """Load the velocity PDFs (Build_VelocityPhase) + species spectra
+        (Build_SpeciesSpectrum) fresh from disk (cache-key validated)."""
+        vp = self._load_one(context, 'Build_VelocityPhase')
+        ss = self._load_one(context, 'Build_SpeciesSpectrum')
         return {
             'pdf':     vp['pdf_fixed'],          # fixed-range PDFs from VelocityPhase
             'spectra': ss['spectra'],            # species × LOS × 'total'
         }
 
-    def plot(self, context: PipelinePlotContext, results: dict) -> None:
+    def plot(self, context: PipelinePlotContext, inputs: dict) -> None:
         # 2026-06-18: LOS hard-coded to y only; 1 PNG per species.
-        data = self._load_siblings()
         for los in ('y',):
             for sp in SPECIES_CFG:
-                self._plot_one_species_one_los(data, los, sp)
+                self._plot_one_species_one_los(inputs, los, sp)
 
     def _plot_one_species_one_los(self, results: dict, los: str,
                                   sp_cfg: dict) -> None:

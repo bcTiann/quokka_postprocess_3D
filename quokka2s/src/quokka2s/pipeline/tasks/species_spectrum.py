@@ -1,26 +1,18 @@
-"""SpeciesSpectrumTask (Group 2): all species 1D spectra in one compute pass.
+"""Species 1D emission-line spectra, split into Build + Plot tasks.
 
-Single source of truth for emission-line spectra.  Builds **40 unique**
-1D spectra (4 species × 2 LOS × 5 ISM phases, intrinsic R=∞) via
-`build_spectral_cube` → 1D average.  Then:
+``Build_SpeciesSpectrum`` (compute + store): the single source of truth for the
+emission-line spectra.  For each species it builds one 'total' (all-cell) 1D
+spectrum (intrinsic R=∞) via `build_spectral_cube`, then an LSF-convolved
+variant.  It also reads σ_gas from ``Build_VelocityPhase``'s stored result (for
+the IntegratedSpectrum vertical-line markers) and stores everything.
 
-  - total (all-cell) spectrum derived algebraically as the sum of the 5
-    phase spectra (build_spectral_cube is linear in luminosity, masks
-    are disjoint + cover all cells).  Saves 8 redundant builds.
-  - LSF-convolved variants applied per stored 1D spectrum (cheap
-    matrix op, no extra erf integrations).
+``Plot_SpeciesSpectrum`` (plot only): renders
+  IntegratedSpectrum_{CO,Cplus,H_alpha,HI}.png   (intrinsic + LSF overlay)
+  IntegratedSpectrum_overlay.png                 (4 species, peak-normalised)
+from the stored result.
 
-Produces all of these PNGs (previously spread across 3 tasks):
-
-  IntegratedSpectrum_{CO,Cplus,H_alpha,HI}.png  (intrinsic + obs overlay
-                                                 per species, 2 LOS)
-  IntegratedSpectrum_overlay.png                (4 species normalised, 2 LOS)
-  PhaseResolvedSpectrum_{CO,Cplus,Halpha,HI}.png(per-phase + total per
-                                                 species, 2 LOS, abs units)
-
-The PhaseSpectrumOverlay plots stay in their own task because they need
-the velocity PDFs from `VelocityPhaseTask`'s intermediate; that task is
-plot-only after this refactor.
+The PhaseSpectrumOverlay plots live in their own Plot task because they also
+need the velocity PDFs from ``Build_VelocityPhase``.
 """
 from __future__ import annotations
 
@@ -31,7 +23,7 @@ import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit
 
 from ..prep import config as _cfg
-from ..base import AnalysisTask, PipelinePlotContext
+from ..base import BuildTask, PlotTask, PipelinePlotContext
 from ..utils import PHASE_ORDER, PHASE_LABEL_LINE
 from .integrated_spectrum import SPECIES_CFG, V_RANGE_KMS
 from .velocity_phase import PHASE_COLOR
@@ -71,68 +63,40 @@ def _moment_sigma(v: np.ndarray, spec: np.ndarray) -> tuple[float, float]:
     return v_mean, sigma
 
 
-def _mass_weighted_sigma_3d(vel_kms: np.ndarray, rho: np.ndarray) -> float:
-    w      = rho / rho.sum()
-    v_mean = float(np.sum(vel_kms * w))
-    return float(np.sqrt(np.sum((vel_kms - v_mean) ** 2 * w)))
-
-
-# ── task ────────────────────────────────────────────────────────────────
-class SpeciesSpectrumTask(AnalysisTask):
-    """40 unique 1D species spectra (R=∞) → derive total + LSF, plot
-    IntegratedSpectrum + PhaseResolvedSpectrum suite."""
+# ─── Build ──────────────────────────────────────────────────────────────────
+class Build_SpeciesSpectrum(BuildTask):
+    """Build the per-species 'total' 1D spectra (+ LSF variant); store them."""
 
     def __init__(self, config, R: float | None = None):
         super().__init__(config)
         self.R = R if R is not None else _cfg.SPECTRAL_RESOLUTION_R
 
-    # ── compute ──────────────────────────────────────────────────────────
     def compute(self, context: PipelinePlotContext) -> dict:
         provider = context.provider
 
-        # 1) Evict any in-RAM fields carried over from prior tasks
-        # (notably VelocityPhaseTask's ~14 GB of vx/vy/rho/T) before we
-        # start allocating species cubes — otherwise OOM kicks in on 16 GB
-        # Mac at down=1.  The disk-backed field intermediates remain.
+        # 1) Evict any in-RAM fields carried over from prior tasks before we
+        # start allocating species cubes — otherwise OOM kicks in on 16 GB Mac
+        # at down=1.  The disk-backed field intermediates remain.
         import gc
         provider._cached_grid = None
         gc.collect()
 
-        # 2) σ_gas needed for IntegratedSpectrum vertical-line markers.
-        # Read from VelocityPhaseTask's intermediate (its `total_x/y/sigma`
-        # is exactly the same number IntegratedSpectrum used to recompute).
-        # Cheap dict lookup, no cube reload.
-        from pathlib import Path
-        from .temperature_lext_diff import _glob_one_taskcache, _load_results
-        vp_path = _glob_one_taskcache(Path(self.config.output_dir),
-                                      'VelocityPhaseTask')
-        if vp_path is None:
-            raise RuntimeError(
-                'VelocityPhaseTask intermediate missing — must run before '
-                'SpeciesSpectrumTask so σ_gas can be loaded from it.'
-            )
-        vp = _load_results(vp_path)
+        # 2) σ_gas needed for IntegratedSpectrum vertical-line markers — read
+        # from Build_VelocityPhase's stored result (must run before this task).
+        from ..intermediate_io import load_one_build
+        vp = load_one_build(self.config.output_dir, 'Build_VelocityPhase', self.config)
         sigma_x_gas = float(vp['total_x']['sigma'])
         sigma_y_gas = float(vp['total_y']['sigma'])
-        print(f'  σ_gas (loaded from VelocityPhase intermediate): '
+        print(f'  σ_gas (loaded from Build_VelocityPhase result): '
               f'x={sigma_x_gas:.2f} km/s, y={sigma_y_gas:.2f} km/s')
 
         # Per-species build: 1 LOS × 1 'total' = 1 unique 1D spectrum each.
-        # (2026-06-19 refactor — phase decomposition removed: previously we
-        # built 5 per-phase cubes/species and summed them to derive 'total',
-        # at ~90 min cost.  Downstream consumers (IntegratedSpectrum_*,
-        # PhaseSpectrumOverlay) only need 'total'.  PhaseResolvedSpectrum was
-        # the only consumer of per-phase species spectra and has been retired.
-        # SpectrumStore.get_spectrum(phase=None) hits the 'total' code path
-        # — one cube covering all cells, no phase mask.  ~4× speedup.)
-        # (2026-06-18 — LOS hard-coded to y only; see PhaseSpectrumOverlay
-        # LOS=y convention.)
+        # (2026-06-19 refactor — phase decomposition removed; downstream
+        # consumers only need 'total'.  SpectrumStore.get_spectrum(phase=None)
+        # hits the 'total' code path — one cube covering all cells.  ~4× faster.)
+        # (2026-06-18 — LOS hard-coded to y only; see PhaseSpectrumOverlay.)
         from ..services import SpectrumStore
-        # 2 workers: each worker holds ~3 GB transient during build, so 2× = 6
-        # GB transient sits on top of ~7 GB persistent (lum/width/doppler/
-        # volume/T primitives) for a total ~13 GB peak per species — under
-        # the 16 GB Mac limit without paging.  Old code used 6 which paged
-        # heavily after VelocityPhase had populated the in-RAM field cache.
+        # 2 workers: ~13 GB peak per species — under the 16 GB Mac limit.
         N_WORKERS = 2
         spectra: dict[str, dict[str, dict]] = {
             sp['name']: {'y': {}} for sp in SPECIES_CFG
@@ -179,14 +143,20 @@ class SpeciesSpectrumTask(AnalysisTask):
             'R':           self.R,
         }
 
-    # ── plot ─────────────────────────────────────────────────────────────
+
+# ─── Plot ───────────────────────────────────────────────────────────────────
+class Plot_SpeciesSpectrum(PlotTask):
+    """Render the IntegratedSpectrum figures from Build_SpeciesSpectrum."""
+
+    def __init__(self, config):
+        super().__init__(config)
+
+    def _gather_inputs(self, context: PipelinePlotContext) -> dict:
+        return self._load_one(context, 'Build_SpeciesSpectrum')
+
     def plot(self, context: PipelinePlotContext, results: dict) -> None:
         self._plot_integrated_individual(results)
         self._plot_integrated_overlay(results)
-        # _plot_phase_resolved disabled 2026-06-19 — compute() no longer builds
-        # per-phase species spectra (only 'total').  Re-enable only if
-        # compute() is reverted to do the 5-phase decomposition.
-        # self._plot_phase_resolved(results)
 
     # IntegratedSpectrum_{species}.png × 4 — intrinsic faint + LSF prominent
     def _plot_integrated_individual(self, results: dict) -> None:
@@ -274,80 +244,51 @@ class SpeciesSpectrumTask(AnalysisTask):
         plt.close(fig)
         print(f'Saved: {out}')
 
-    # ========================================================================
-    # DEPRECATED 2026-06-23 — kept in-tree for reference (wrap-don't-delete).
-    # _plot_phase_resolved was disabled 2026-06-19: compute() no longer builds
-    # per-phase species spectra (only 'total'), so this per-phase plot would
-    # KeyError on spectra[name][los][phase].  Its caller is already commented
-    # out above (~line 189).
-    # ========================================================================
-    r'''
-    # PhaseResolvedSpectrum.png — single combined figure replacing the old
-    # 4 per-species PNGs (2026-06-12).  Layout: 4 rows (species) × 2 cols
-    # (LOS x, LOS y).  Each row gets its own y-limit since species absolute
-    # intensities differ by orders of magnitude.  X-axis shared across rows.
+
+# ============================================================================
+# DEPRECATED 2026-06-19 (wrapped 2026-06-23) — kept in-tree for reference.
+# _plot_phase_resolved: compute() no longer builds per-phase species spectra
+# (only 'total'), so this per-phase plot would KeyError.  Uses TOTAL_COLOR,
+# PHASE_COLOR, PHASE_ORDER, PHASE_LABEL_LINE, V_RANGE_KMS (all still imported).
+# ============================================================================
+r'''
     def _plot_phase_resolved(self, results: dict) -> None:
         spectra = results['spectra']
         n_species = len(SPECIES_CFG)
-        # 2026-06-18: LOS=y only (single column instead of 2×y).
         fig, axes = plt.subplots(
-            n_species, 1,
-            figsize=(7, 3.0 * n_species),
-            sharex='all',
-            squeeze=False,
+            n_species, 1, figsize=(7, 3.0 * n_species), sharex='all', squeeze=False,
         )
-
         for r, sp in enumerate(SPECIES_CFG):
             name = sp['name']
-            # Per-species y-max from LOS=y (only).
             y_max = 0.0
             for los_name in ('y',):
                 tot = spectra[name][los_name]['total']['dsigma_dv']
                 if tot.size and np.isfinite(tot).any():
                     y_max = max(y_max, float(np.nanmax(tot)))
-
             for col, los_name in enumerate(('y',)):
                 ax = axes[r, col]
                 v_axis     = spectra[name][los_name]['total']['v_axis']
                 total_spec = spectra[name][los_name]['total']['dsigma_dv']
-                ax.plot(v_axis, total_spec, color=TOTAL_COLOR, lw=2.0,
-                        label='total', zorder=10)
+                ax.plot(v_axis, total_spec, color=TOTAL_COLOR, lw=2.0, label='total', zorder=10)
                 for ph in PHASE_ORDER:
                     spec_ph = spectra[name][los_name][ph]['dsigma_dv']
-                    ax.plot(v_axis, spec_ph, color=PHASE_COLOR[ph],
-                            lw=1.3, label=ph)
+                    ax.plot(v_axis, spec_ph, color=PHASE_COLOR[ph], lw=1.3, label=ph)
                 ax.axvline(0, color='gray', ls=':', lw=0.6, alpha=0.6)
                 ax.set_xlim(-V_RANGE_KMS, V_RANGE_KMS)
                 if y_max > 0:
                     ax.set_ylim(-0.03 * y_max, 1.10 * y_max)
                 ax.set_title(f'{name}  —  LOS={los_name}', fontsize=11)
                 ax.grid(True, alpha=0.3, ls='--', lw=0.5)
-                # Single legend on the top-right panel only — colours are
-                # consistent across all rows, so one reference is enough.
                 if r == 0 and col == 1:
-                    ax.legend(fontsize=8, loc='upper right',
-                              framealpha=0.85, ncol=2, handlelength=1.4,
-                              borderpad=0.3, labelspacing=0.25)
+                    ax.legend(fontsize=8, loc='upper right', framealpha=0.85, ncol=2)
                 if r == n_species - 1:
                     ax.set_xlabel('Velocity [km/s]', fontsize=11)
                 if col == 0:
-                    ax.set_ylabel(
-                        r'd$\Sigma$/dv  [erg s$^{-1}$ Hz$^{-1}$ cm$^{-2}$]',
-                        fontsize=9)
-
-        fig.suptitle('Phase-resolved emission spectra\n' + PHASE_LABEL_LINE,
-                     fontsize=12)
+                    ax.set_ylabel(r'd$\Sigma$/dv  [erg s$^{-1}$ Hz$^{-1}$ cm$^{-2}$]', fontsize=9)
+        fig.suptitle('Phase-resolved emission spectra\n' + PHASE_LABEL_LINE, fontsize=12)
         plt.tight_layout()
-
-        # Remove the old 4 per-species PNGs (now consolidated into one file).
-        for sp in SPECIES_CFG:
-            old_safe = sp['name'].replace('+', 'plus').replace('_', '')
-            old_path = self.config.output_dir / f'PhaseResolvedSpectrum_{old_safe}.png'
-            if old_path.exists():
-                old_path.unlink()
-
         out = self.config.output_dir / 'PhaseResolvedSpectrum.png'
         plt.savefig(str(out), dpi=200, bbox_inches='tight')
         plt.close(fig)
         print(f'Saved: {out}')
-    '''
+'''

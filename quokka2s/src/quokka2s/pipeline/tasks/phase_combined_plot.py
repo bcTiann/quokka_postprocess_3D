@@ -1,13 +1,10 @@
-"""PhaseCombinedPlotTask — assemble phase_combined.png from sibling
-PhaseHistTask + PhaseHistNHRhoTask intermediates.
+"""Plot_PhaseCombined — assemble phase_combined.png from the Build_PhaseHist*
+results (Build_PhaseHist ×7, keyed by tag, + Build_PhaseHistNHRho).
 
-This task does NO heavy computation.  Its ``compute()`` only records that it
-is a plot-time composer; the 8 sibling intermediates are loaded FRESH inside
-``plot()`` (see ``_load_panels``) so a two-pass ``--mode compute`` then
-``--mode plot`` run always renders the latest siblings rather than a snapshot
-embedded at compute time.  Depends on the sibling intermediates already being
-written (their PhaseHistTask / PhaseHistNHRhoTask instances must run BEFORE
-this task in the pipeline registration order).
+A pure Plot task: it computes nothing and reads the Build results fresh from
+disk at plot time (see ``_gather_inputs``).  The Build tasks must run first
+(``--mode compute``).  The colorbar UNIT comes from each Build result's
+yt-derived ``unit_latex`` (not hardcoded); the ``symbol`` gives the quantity.
 
 Layout (2×4) — see `_LAYOUT` below:
 
@@ -19,17 +16,11 @@ share their colorbar range (pooled across the 3 T panels).
 """
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Optional
-
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.colors import Normalize
 
-from ..base import AnalysisTask, PipelinePlotContext
-from .temperature_lext_diff import (
-    _glob_one_taskcache, _load_results, _expected_sibling_key,
-)
+from ..base import PlotTask, PipelinePlotContext
 
 
 # Each entry:  (tag, row_y_label_for_top_row, colorbar_group)
@@ -59,60 +50,34 @@ def _coerce_str(value) -> str:
     return str(value)
 
 
-class PhaseCombinedPlotTask(AnalysisTask):
-    """Plot-only: assemble phase_combined.png from sibling intermediates."""
+class Plot_PhaseCombined(PlotTask):
+    """Assemble phase_combined.png from the Build_PhaseHist* results."""
 
     def __init__(self, config, filename: str = 'phase_combined.png'):
-        super().__init__(config, name='PhaseCombinedPlotTask')
+        super().__init__(config, name='Plot_PhaseCombined')
         self.filename = filename
 
-    def compute(self, context: PipelinePlotContext) -> dict:
-        """No physics.  Sibling intermediates are composed FRESH at plot() time
-        (see ``_load_panels``), so nothing is embedded here.  Storing a small
-        marker keeps two-pass compute→plot correct: ``--mode plot`` reloads this
-        marker, skips compute, and plot() then reads the latest siblings."""
-        return {'composed_at': 'plot', 'layout': [tag for tag, _, _ in _LAYOUT]}
-
-    def _load_panels(self) -> dict[str, dict]:
-        """Load sibling PhaseHist intermediates FRESH from disk, each validated
-        against this run's cache key.  Called at plot() time (not compute()) so
-        a two-pass ``--mode compute`` … ``--mode plot`` run always composes the
-        latest sibling results rather than a snapshot embedded at compute time."""
-        out_dir   = Path(self.config.output_dir)
-        cache_dir = out_dir / 'task_intermediates'
-
+    def _gather_inputs(self, context: PipelinePlotContext) -> dict:
+        """Load the Build_PhaseHist (×N, keyed by tag) + Build_PhaseHistNHRho
+        results fresh from disk (cache-key validated by the loaders)."""
         panels: dict[str, dict] = {}
-
-        # PhaseHistTask: multiple instances; glob the task_intermediates dir
-        # directly and key by tag.
-        for h5_path in sorted(cache_dir.glob('PhaseHistTask_*.h5')):
-            data = _load_results(
-                h5_path, expected_key=_expected_sibling_key(self.config, h5_path.name))
+        for data in self._load_all(context, 'Build_PhaseHist'):
             tag = _coerce_str(data.get('tag', ''))
             if tag:
                 panels[tag] = data
+        panels['NH_rho'] = self._load_one(context, 'Build_PhaseHistNHRho')
 
-        # NH-ρ: single instance.  _glob_one_taskcache expects the OUTPUT_DIR
-        # (it appends task_intermediates/ internally), not the cache dir.
-        nh_path = _glob_one_taskcache(out_dir, 'PhaseHistNHRhoTask')
-        if nh_path is not None:
-            panels['NH_rho'] = _load_results(
-                nh_path, expected_key=_expected_sibling_key(self.config, nh_path.name))
-
-        # Verify all expected tags are present.
         expected = [tag for tag, _, _ in _LAYOUT]
         missing  = [t for t in expected if t not in panels]
         if missing:
             raise RuntimeError(
-                f'PhaseCombinedPlotTask: missing sibling intermediates for '
-                f'tags {missing}.  Make sure the corresponding PhaseHistTask '
-                f'or PhaseHistNHRhoTask runs before this plot task.'
+                f'Plot_PhaseCombined: missing Build results for tags {missing}. '
+                f'Run the Build_PhaseHist / Build_PhaseHistNHRho tasks first '
+                f'(--mode compute).'
             )
         return panels
 
-    def plot(self, context: PipelinePlotContext, results: dict) -> None:
-        panels = self._load_panels()
-
+    def plot(self, context: PipelinePlotContext, panels: dict) -> None:
         # ── Pool colorbar ranges per group (full data range, no fixed dex) ──
         group_ranges: dict[str, tuple[float, float]] = {}
         for tag, _, group in _LAYOUT:
@@ -222,7 +187,10 @@ class PhaseCombinedPlotTask(AnalysisTask):
             H  = np.asarray(data_dict['H'])
             xe = np.asarray(data_dict['x_edges'])
             ye = np.asarray(data_dict['y_edges'])
-            units_label = _coerce_str(data_dict.get('units_label', ''))
+            symbol     = _coerce_str(data_dict.get('symbol', ''))
+            unit_latex = _coerce_str(data_dict.get('unit_latex', ''))
+            cbar_label = (rf'$\log_{{10}}\,{symbol}$  [${unit_latex}$]'
+                          if unit_latex else rf'$\log_{{10}}\,{symbol}$')
 
             r, c = _rc(i)
             ax  = ax_grid[r][c]
@@ -272,7 +240,7 @@ class PhaseCombinedPlotTask(AnalysisTask):
             cbar = fig.colorbar(im, cax=cax, orientation='horizontal')
             cbar.ax.tick_params(labelsize=8, top=True, bottom=False,
                                 labeltop=True, labelbottom=False)
-            cax.set_title(units_label, fontsize=9, pad=4)
+            cax.set_title(cbar_label, fontsize=9, pad=4)
 
         # L_ext label, top-left.
         cur_lext = float(getattr(self.config, 'column_extension_lateral_kpc', 0.0))

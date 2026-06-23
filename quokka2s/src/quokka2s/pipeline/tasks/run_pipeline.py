@@ -5,7 +5,7 @@ CLI:
     python -m quokka2s.pipeline.tasks.run_pipeline --mode compute   # only physics
     python -m quokka2s.pipeline.tasks.run_pipeline --mode plot      # only plotting
     python -m quokka2s.pipeline.tasks.run_pipeline --force          # ignore intermediates
-    python -m quokka2s.pipeline.tasks.run_pipeline --task EmitterTask --task PhaseSigmaVTask
+    python -m quokka2s.pipeline.tasks.run_pipeline --task Build_VelocityPhase --task Plot_VelocityPhase
     python -m quokka2s.pipeline.tasks.run_pipeline --clean-intermediates  # rm both stores and exit
 """
 from __future__ import annotations
@@ -25,14 +25,18 @@ from ..cache import cache_root_for_dataset
 from ..prep import config as cfg
 from ..prep import physics_fields as phys
 from . import (
-    # active pipeline
-    VelocityPhaseTask,
-    SpeciesSpectrumTask,
-    PhaseSpectrumOverlayTask,
-    MultiFieldSlicesTask,
-    PhaseHistTask,
-    PhaseHistNHRhoTask,
-    PhaseCombinedPlotTask,
+    # Build tasks (--mode compute)
+    Build_VelocityPhase,
+    Build_SpeciesSpectrum,
+    Build_PhaseHist,
+    Build_PhaseHistNHRho,
+    Build_MultiFieldSlices,
+    # Plot tasks (--mode plot)
+    Plot_VelocityPhase,
+    Plot_SpeciesSpectrum,
+    Plot_MultiFieldSlices,
+    Plot_PhaseCombined,
+    Plot_PhaseSpectrumOverlay,
     # toggle-able plotting utilities (commented registrations below)
     TemperatureSlicesTask,
     TemperatureProjectionTask,
@@ -60,56 +64,49 @@ def build_pipeline(force: bool = False) -> Pipeline:
     )
 
     pipeline = Pipeline(pipeline_config)
-    # Active pipeline: velocity/phase analysis + species spectra + the phase
-    # overlay, the 8 PhaseHist tasks feeding PhaseCombinedPlot, and the
-    # 10-slice MultiFieldSlices figure.  Retired tasks live in tasks/archive/;
+    # Build/Plot split (2026-06-24): every task is either a Build_X (compute +
+    # store) or a Plot_X (read stored result + render).  `--mode compute` runs
+    # only the Build tasks, `--mode plot` only the Plot tasks, `--mode all` runs
+    # Builds (registered first) then Plots.  Retired tasks live in tasks/archive/;
     # toggle-able plotting utilities are listed (commented) at the end.
-    pipeline.register_task(VelocityPhaseTask(pipeline_config))
-    pipeline.register_task(SpeciesSpectrumTask(pipeline_config))
-    pipeline.register_task(PhaseSpectrumOverlayTask(pipeline_config))                # R = ∞ (no LSF)
-
-    # MultiFieldSlicesTask: 10 evenly-spaced x-slices (idx 12, 38, 63, 89, 114,
-    # 140, 165, 191, 216, 242) matching the GOW_10x convention, L=15 only
-    # (per [[l15-only]]).  share_lext_partners=() per the same convention.
-    # Output: output_dir/multi_field_slices_10x/multi_field_slices_idxNNNN.png × 10.
-    # np.linspace(12, 242, 10).round().astype(int) — pre-computed to avoid
-    # importing numpy in this entry-point file.
+    #
+    # MultiFieldSlices: 10 evenly-spaced x-slices (matching the GOW_10x dir);
+    # the SAME kwargs go to Build_ and Plot_ so they pair.  L=15 only
+    # (share_lext_partners=()) per [[l15-only]].
     _MFS_INDICES = (12, 38, 63, 89, 114, 140, 165, 191, 216, 242)
-    pipeline.register_task(MultiFieldSlicesTask(pipeline_config,
-                                                 slice_axis='x',
-                                                 slice_indices=_MFS_INDICES,
-                                                 figure_units='kpc',
-                                                 subdir='multi_field_slices_10x',
-                                                 share_lext_partners=()))
-    # Old single-task PhaseCombinedTask is replaced by 8 PhaseHist compute
-    # tasks + 1 PhaseCombinedPlotTask (2026-06-19).  See phase_hist.py +
-    # phase_combined_plot.py.
+    _MFS_KW = dict(slice_axis='x', slice_indices=_MFS_INDICES, figure_units='kpc',
+                   subdir='multi_field_slices_10x', share_lext_partners=())
     T_2R = 'temperature_two_regime'
-    pipeline.register_task(PhaseHistTask(pipeline_config, 'mass', 'temperature_quokka',
-                                         tag='mass_T_QK',
-                                         units_label=r'$\log_{10}\,M_{\rm bin}$ [g]'))
-    pipeline.register_task(PhaseHistTask(pipeline_config, 'mass', 'temperature_despotic',
-                                         tag='mass_T_DSP',
-                                         units_label=r'$\log_{10}\,M_{\rm bin}$ [g]'))
-    pipeline.register_task(PhaseHistTask(pipeline_config, 'mass', T_2R,
-                                         tag='mass_T_2R',
-                                         units_label=r'$\log_{10}\,M_{\rm bin}$ [g]'))
-    pipeline.register_task(PhaseHistNHRhoTask(pipeline_config))
-    pipeline.register_task(PhaseHistTask(pipeline_config, 'CO_luminosity', T_2R,
-                                         tag='CO_T_2R',
-                                         units_label=r'$\log_{10}\,L_{\rm CO}$ [erg s$^{-1}$]'))
-    pipeline.register_task(PhaseHistTask(pipeline_config, 'C+_luminosity', T_2R,
-                                         tag='Cplus_T_2R',
-                                         units_label=r'$\log_{10}\,L_{\rm C^+}$ [erg s$^{-1}$]'))
-    pipeline.register_task(PhaseHistTask(pipeline_config, 'H_alpha_luminosity', T_2R,
-                                         tag='Halpha_T_2R',
-                                         units_label=r'$\log_{10}\,L_{\rm H\alpha}$ [erg s$^{-1}$]'))
-    pipeline.register_task(PhaseHistTask(pipeline_config, 'HI_luminosity', T_2R,
-                                         tag='HI_T_2R',
-                                         units_label=r'$\log_{10}\,L_{\rm HI}$ [erg s$^{-1}$]'))
-    pipeline.register_task(PhaseCombinedPlotTask(pipeline_config))
 
-    # ── Optional plotting utilities (kept; uncomment to include) ────────
+    # ── Build tasks (--mode compute).  VelocityPhase first: SpeciesSpectrum
+    #    reads its σ_gas; PhaseCombined reads all the PhaseHist results. ──
+    pipeline.register_task(Build_VelocityPhase(pipeline_config))
+    pipeline.register_task(Build_SpeciesSpectrum(pipeline_config))
+    pipeline.register_task(Build_PhaseHist(pipeline_config, 'mass', 'temperature_quokka',
+                                           tag='mass_T_QK',   symbol=r'M_{\rm bin}'))
+    pipeline.register_task(Build_PhaseHist(pipeline_config, 'mass', 'temperature_despotic',
+                                           tag='mass_T_DSP',  symbol=r'M_{\rm bin}'))
+    pipeline.register_task(Build_PhaseHist(pipeline_config, 'mass', T_2R,
+                                           tag='mass_T_2R',   symbol=r'M_{\rm bin}'))
+    pipeline.register_task(Build_PhaseHistNHRho(pipeline_config))
+    pipeline.register_task(Build_PhaseHist(pipeline_config, 'CO_luminosity', T_2R,
+                                           tag='CO_T_2R',     symbol=r'L_{\rm CO}'))
+    pipeline.register_task(Build_PhaseHist(pipeline_config, 'C+_luminosity', T_2R,
+                                           tag='Cplus_T_2R',  symbol=r'L_{\rm C^+}'))
+    pipeline.register_task(Build_PhaseHist(pipeline_config, 'H_alpha_luminosity', T_2R,
+                                           tag='Halpha_T_2R', symbol=r'L_{\rm H\alpha}'))
+    pipeline.register_task(Build_PhaseHist(pipeline_config, 'HI_luminosity', T_2R,
+                                           tag='HI_T_2R',     symbol=r'L_{\rm HI}'))
+    pipeline.register_task(Build_MultiFieldSlices(pipeline_config, **_MFS_KW))
+
+    # ── Plot tasks (--mode plot) ──
+    pipeline.register_task(Plot_VelocityPhase(pipeline_config))
+    pipeline.register_task(Plot_SpeciesSpectrum(pipeline_config))
+    pipeline.register_task(Plot_MultiFieldSlices(pipeline_config, **_MFS_KW))
+    pipeline.register_task(Plot_PhaseCombined(pipeline_config))
+    pipeline.register_task(Plot_PhaseSpectrumOverlay(pipeline_config))                # R = ∞ (no LSF)
+
+    # ── Optional plotting utilities (legacy lifecycle; uncomment to include) ──
     # pipeline.register_task(TemperatureSlicesTask(pipeline_config, n_slices=4, figure_units='kpc'))
     # pipeline.register_task(TemperatureProjectionTask(pipeline_config, slice_axis='x', figure_units='kpc'))
     # pipeline.register_task(DensityProjectionTask(pipeline_config, axis="x", figure_units='kpc'))
@@ -135,7 +132,7 @@ def parse_args() -> argparse.Namespace:
                          'Intermediate files are rewritten so subsequent runs benefit.')
     ap.add_argument('--task', action='append', default=[],
                     help='Run only the named task class (repeatable). e.g. '
-                         '--task EmitterTask --task PhaseSigmaVTask')
+                         '--task Build_VelocityPhase --task Plot_VelocityPhase')
     ap.add_argument('--clean-intermediates', action='store_true',
                     help='Delete the field intermediates (per-dataset) and task '
                          'intermediates (per-output) directories, then exit.')

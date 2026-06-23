@@ -199,6 +199,60 @@ class AnalysisTask:
             self.plot(context, results)
 
 
+class BuildTask(AnalysisTask):
+    """A task that COMPUTES and STORES a result dict — and never plots.
+
+    Subclasses implement ``compute(context) -> dict``.  Under ``--mode plot`` a
+    Build task is a no-op: its result is produced once under ``--mode compute``
+    (or the compute half of ``--mode all``) and consumed by the matching Plot
+    task.  ``--force`` has no special effect here (Build always recomputes); it
+    additionally busts the Level-1 field cache via the provider.
+    """
+
+    def run(self, context: PipelinePlotContext, mode: str = 'all') -> None:
+        if mode not in ('all', 'compute', 'plot'):
+            raise ValueError(f'unknown task mode: {mode!r}')
+        if mode == 'plot':
+            return                       # Build does nothing in the plot pass
+        results = self.compute(context)
+        self._save_results(context, results)
+
+
+class PlotTask(AnalysisTask):
+    """A task that READS one or more Build results and RENDERS figures — and
+    never computes physics or stores anything.
+
+    Subclasses implement ``plot(context, inputs)`` and override
+    ``_gather_inputs(context)`` to declare which Build outputs they read, using
+    ``_load_one`` / ``_load_all``.  Under ``--mode compute`` a Plot task is a
+    no-op.  Plot tasks write NO Level-2 intermediate (``_save_results`` is never
+    called), so the compute→store→plot split is explicit and there is no
+    "marker result" ceremony.
+    """
+
+    def _gather_inputs(self, context: PipelinePlotContext) -> Any:
+        """Return the data ``plot()`` needs, loaded fresh from Build results.
+        Override per task; default is no inputs."""
+        return {}
+
+    def _load_one(self, context: PipelinePlotContext, build_class_name: str) -> Dict[str, Any]:
+        """Load the newest result of a single Build task (cache-key validated)."""
+        from .intermediate_io import load_one_build
+        return load_one_build(context.config.output_dir, build_class_name, context.config)
+
+    def _load_all(self, context: PipelinePlotContext, build_class_name: str) -> List[Dict[str, Any]]:
+        """Load every instance of a multi-instance Build task (e.g. Build_PhaseHist)."""
+        from .intermediate_io import load_all_builds
+        return load_all_builds(context.config.output_dir, build_class_name, context.config)
+
+    def run(self, context: PipelinePlotContext, mode: str = 'all') -> None:
+        if mode not in ('all', 'compute', 'plot'):
+            raise ValueError(f'unknown task mode: {mode!r}')
+        if mode == 'compute':
+            return                       # Plot does nothing in the compute pass
+        inputs = self._gather_inputs(context)
+        self.plot(context, inputs)
+
 
 class Pipeline:
     """Sequential pipeline runner."""

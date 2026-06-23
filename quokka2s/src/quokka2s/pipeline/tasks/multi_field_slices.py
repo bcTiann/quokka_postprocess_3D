@@ -1,27 +1,18 @@
-"""MultiFieldSlicesTask: a single slice through the box visualised as N panels.
+"""Multi-field slice view, split into Build + Plot tasks.
 
-For one snapshot, take one slice (default: x = mid) and plot side-by-side
-(default 9-panel layout):
+``Build_MultiFieldSlices`` (compute + store): take N slices through the box and
+extract, per slice index, the 2D arrays for each panel (default 9-panel layout):
     log10 ρ, log10 T_QUOKKA, log10 T_DESPOTIC, log10 T_two-regime,
     log10 N_H, log10 ε_CO, log10 ε_{C+}, log10 ε_{Hα}, log10 ε_{HI}
+All panels are volumetric slices (no along-sight projection); intermediates stay
+in cgs.  Stores the per-index 2D arrays.
 
-All panels are volumetric slices through the cube (no along-sight
-projection): T's in K, ρ in g/cm³, N_H field already contains the
-hydrogen column at that cell (because `column_density_H` is a
-yt-derived field that does the along-sight cumulation upstream — see
-`_column_density_H` in physics_fields.py).  The 4 luminosity panels
-are volumetric emissivities at the slice plane (erg/s/cm³).
-
-`mode='projection_erg_pc2'` and `'NH_cgs'` paths in compute() are kept
-for legacy / alternative panel sets, but the default `_PANELS` only
-uses `'slice'`.
-
-All fields are loaded via the yt provider; if cached as field
-intermediates upstream this is cheap to (re-)run.
+``Plot_MultiFieldSlices`` (plot only): renders one PNG per slice index from the
+stored arrays.
 
 Output:
-    single-slice mode (slice_idx)   →  multi_field_slices.png
-    multi-slice mode (slice_indices)→  <subdir>/multi_field_slices_idxNNNN.png × N
+    single-slice mode (slice_idx)    →  multi_field_slices.png
+    multi-slice mode (slice_indices) →  <subdir>/multi_field_slices_idxNNNN.png × N
 """
 from __future__ import annotations
 
@@ -32,8 +23,8 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import Normalize
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 
-from ..base import AnalysisTask, PipelinePlotContext
-from .temperature_lext_diff import _glob_one_taskcache, _load_results
+from ..base import BuildTask, PlotTask, PipelinePlotContext
+from ..intermediate_io import _glob_one_taskcache, _load_results
 from ..prep import config as cfg
 
 # Averaging method used by column_density_H (for the N_H panel label).
@@ -92,73 +83,38 @@ TABLE_INPUT_PANELS = [
 ]
 
 
-class MultiFieldSlicesTask(AnalysisTask):
-    """7-panel slice view: density, two temperatures, four luminosities."""
+def _make_init(self, config,
+               slice_axis: str = 'x',
+               slice_idx: int | None = None,
+               slice_indices: tuple[int, ...] | None = None,
+               figure_units: str = 'kpc',
+               share_lext_partners: tuple[float, ...] = (),
+               filename: str = 'multi_field_slices.png',
+               subdir: str | None = None,
+               aspect: str = 'equal',
+               panels=None):
+    """Shared __init__ body for Build_ and Plot_MultiFieldSlices (identical
+    init args so the two are paired)."""
+    self.panels = list(panels) if panels is not None else list(_PANELS)
+    self.slice_axis = slice_axis           # axis perpendicular to the slice plane
+    self.slice_idx  = slice_idx            # None → midplane (legacy single-slice mode)
+    self.slice_indices = (tuple(int(i) for i in slice_indices)
+                          if slice_indices is not None else None)
+    self.figure_units = figure_units
+    self.share_lext_partners = tuple(float(x) for x in share_lext_partners)
+    self.filename = filename
+    self.subdir = subdir
+    self.aspect = aspect
+    self._axis_idx = {'x': 0, 'y': 1, 'z': 2}[slice_axis]
 
-    def __init__(self, config,
-                 slice_axis: str = 'x',
-                 slice_idx: int | None = None,
-                 slice_indices: tuple[int, ...] | None = None,
-                 figure_units: str = 'kpc',
-                 share_lext_partners: tuple[float, ...] = (),
-                 filename: str = 'multi_field_slices.png',
-                 subdir: str | None = None,
-                 aspect: str = 'equal',
-                 panels=None):
+
+# ─── Build ──────────────────────────────────────────────────────────────────
+class Build_MultiFieldSlices(BuildTask):
+    """Compute the per-slice 2D panel arrays; store them."""
+
+    def __init__(self, config, **kwargs):
         super().__init__(config)
-        # Panel set — defaults to the 8-panel "density/T/N_H/lines" layout;
-        # use TABLE_INPUT_PANELS for the 5-panel (n_H, N_H, dVdr, T_Q, T_D)
-        # variant, or pass a custom list of (key, field, label, cmap, mode,
-        # log_vmin, log_vmax, share_group) tuples.
-        self.panels = list(panels) if panels is not None else list(_PANELS)
-        self.slice_axis = slice_axis           # axis perpendicular to the slice plane
-        self.slice_idx  = slice_idx            # None → midplane (legacy single-slice mode)
-        # New multi-slice mode: pass a tuple of indices (e.g. 10 evenly spaced)
-        # → produces one PNG per index in `<output_dir>/<subdir>/`.
-        self.slice_indices = (tuple(int(i) for i in slice_indices)
-                              if slice_indices is not None else None)
-        self.figure_units = figure_units
-        # L_ext values to pool each panel's colour range over (so the 0/9/99 kpc
-        # figures share per-panel vmin/vmax and are directly comparable). Empty
-        # = each figure auto-scales on its own (original behaviour).
-        self.share_lext_partners = tuple(float(x) for x in share_lext_partners)
-        self.filename = filename
-        self.subdir = subdir
-        # aspect='equal' shows physically correct box proportions (1×8 kpc for
-        # plt0655228); 'auto' fills the panel and squashes the 1:8 box visually.
-        self.aspect = aspect
-        self._axis_idx = {'x': 0, 'y': 1, 'z': 2}[slice_axis]
-
-    def _sibling_dir(self, l_ext: float) -> Path:
-        """Sibling output dir for a given L_ext (mirrors config.OUTPUT_DIR naming)."""
-        cur = Path(self.config.output_dir)
-        name = cur.name
-        idx = name.rfind('_Lext')
-        if idx < 0:
-            return cur.parent / f'{name}_Lext{l_ext:g}kpc'
-        geom = '_sphere' if '_sphere' in name[idx:] else ''
-        return cur.parent / f'{name[:idx]}_Lext{l_ext:g}kpc{geom}'
-
-    def _sibling_slices(self):
-        """Load the `slices` dict from each partner-L_ext MultiFieldSlicesTask
-        intermediate (excluding the current run). Used only to pool colour
-        ranges, so a missing sibling is just skipped (warn)."""
-        if not self.share_lext_partners:
-            return []
-        cur = float(getattr(self.config, 'column_extension_lateral_kpc', 0.0))
-        out = []
-        for l_ext in self.share_lext_partners:
-            if abs(l_ext - cur) < 1e-9:
-                continue
-            sib = self._sibling_dir(l_ext)
-            path = _glob_one_taskcache(sib, 'MultiFieldSlicesTask')
-            if path is None:
-                print(f'  [share] sibling L_ext={l_ext:g} kpc not found at '
-                      f'{sib.name} — its range is excluded (re-plot after it exists)')
-                continue
-            out.append(_load_results(path)['slices'])
-            print(f'  [share] pooled colour range with L_ext={l_ext:g} kpc')
-        return out
+        _make_init(self, config, **kwargs)
 
     def compute(self, context: PipelinePlotContext) -> dict:
         p = context.provider
@@ -215,9 +171,8 @@ class MultiFieldSlicesTask(AnalysisTask):
             del arr, arr_np
 
         # Free the provider's in-RAM covering grid (all materialised 3D fields,
-        # multi-GB at down=1) before returning — plot() needs only the small 2D
-        # slices held in `slices_by_idx`.  Frees memory ahead of the multi-figure
-        # plot loop on the 16 GB Mac (Pipeline also nulls it after the task).
+        # multi-GB at down=1) before returning.  plot() needs only the small 2D
+        # slices held in `slices_by_idx`.
         import gc
         p._cached_grid = None
         gc.collect()
@@ -233,6 +188,50 @@ class MultiFieldSlicesTask(AnalysisTask):
             'slices':        slices_by_idx[slice_idxs[0]],
             'slice_idx':     slice_idxs[0],
         }
+
+
+# ─── Plot ───────────────────────────────────────────────────────────────────
+class Plot_MultiFieldSlices(PlotTask):
+    """Render the multi-field slice PNG(s) from Build_MultiFieldSlices."""
+
+    def __init__(self, config, **kwargs):
+        super().__init__(config)
+        _make_init(self, config, **kwargs)
+
+    def _gather_inputs(self, context: PipelinePlotContext) -> dict:
+        return self._load_one(context, 'Build_MultiFieldSlices')
+
+    def _sibling_dir(self, l_ext: float) -> Path:
+        """Sibling output dir for a given L_ext (mirrors config.OUTPUT_DIR naming)."""
+        cur = Path(self.config.output_dir)
+        name = cur.name
+        idx = name.rfind('_Lext')
+        if idx < 0:
+            return cur.parent / f'{name}_Lext{l_ext:g}kpc'
+        geom = '_sphere' if '_sphere' in name[idx:] else ''
+        return cur.parent / f'{name[:idx]}_Lext{l_ext:g}kpc{geom}'
+
+    def _sibling_slices(self):
+        """Load the `slices` dict from each partner-L_ext Build_MultiFieldSlices
+        intermediate (excluding the current run).  Used only to pool colour
+        ranges; a missing sibling is just skipped (warn).  Dormant under L15-only
+        (share_lext_partners=())."""
+        if not self.share_lext_partners:
+            return []
+        cur = float(getattr(self.config, 'column_extension_lateral_kpc', 0.0))
+        out = []
+        for l_ext in self.share_lext_partners:
+            if abs(l_ext - cur) < 1e-9:
+                continue
+            sib = self._sibling_dir(l_ext)
+            path = _glob_one_taskcache(sib, 'Build_MultiFieldSlices')
+            if path is None:
+                print(f'  [share] sibling L_ext={l_ext:g} kpc not found at '
+                      f'{sib.name} — its range is excluded (re-plot after it exists)')
+                continue
+            out.append(_load_results(path)['slices'])
+            print(f'  [share] pooled colour range with L_ext={l_ext:g} kpc')
+        return out
 
     def plot(self, context: PipelinePlotContext, results: dict) -> None:
         slice_indices = list(results['slice_indices'])
