@@ -973,8 +973,8 @@ def add_all_fields(ds):
     # ('C+' luminosity is handled by _Cplus_luminosity_two_regime below —
     # it uses the LAMDA table for cold cells and CHIANTI-LTE for hot cells.
     # Leave CO + HCO+ on the auto-generated _make_luminosity_field path.)
-    EMITTERS = ['CO', 'HCO+']
-    EMITTERS_FREQ_WIDTH = ['CO', 'C+', 'HCO+']    # freq + thermal_width still auto-registered for all 3
+    EMITTERS = ['CO']                              # HCO+ dropped 2026-06-23 (no longer analysed)
+    EMITTERS_FREQ_WIDTH = ['CO', 'C+']             # HCO+ dropped 2026-06-23; freq + thermal_width for CO + C+
     for sp_yt, sp_lamda in SPECIES:
         _, func = _make_number_density_field(species=sp_yt, lamda_token=sp_lamda)
         ds.add_field(

@@ -1,3 +1,11 @@
+# ============================================================================
+# DEPRECATED 2026-06-23 — HCO+ analysis retired (user: no longer needed).
+# HCO+ was dropped from EMITTERS / EMITTERS_FREQ_WIDTH in physics_fields.py, so
+# ('gas','HCO+_luminosity' / '_freq' / '_thermal_width') no longer exist.
+# Source kept in-tree for reference (wrap-don't-delete); import removed from
+# tasks/__init__.py + run_pipeline.py.
+# ============================================================================
+r'''
 from __future__ import annotations
 
 import numpy as np
@@ -196,3 +204,4 @@ class HCOplusLine1DTask(AnalysisTask):
     
 
         
+'''
