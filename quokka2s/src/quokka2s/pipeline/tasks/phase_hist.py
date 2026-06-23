@@ -102,13 +102,19 @@ class Build_PhaseHist(BuildTask):
         # Weight kept in yt units long enough to read its latex unit, then
         # dropped to a plain array for histogram2d (values unchanged).
         if self.weight_field == 'mass':
-            w_q = rho_q * dV_q                                           # yt, g
+            w_q = rho_q * dV_q                                          # mass (g)
+            label_unit = 'g'
         else:
             eps_u, _ = p.get_slab_z(('gas', self.weight_field))
-            w_q = eps_u.in_cgs().ravel() * dV_q                          # yt, erg/s
+            w_q = eps_u.in_cgs().ravel() * dV_q                         # luminosity
+            label_unit = 'erg/s'
             del eps_u
-        unit_latex = _unit_latex(w_q)
+        # Histogram uses the cgs VALUES (so H stays bit-identical regardless of
+        # how yt labels the unit).  The colorbar LABEL is yt-derived but in the
+        # conventional unit ('erg/s'/'g'), so it reads 'erg/s' rather than yt's
+        # decomposed base-unit form 'cm²·g/s³'.  `in_units` validates the dims.
         weight = w_q.value
+        unit_latex = _unit_latex((1.0 * w_q.units).in_units(label_unit))
         del rho, T, rho_q, dV_q, w_q
 
         # Bin edges from THIS task's own data range (tight to actual data).

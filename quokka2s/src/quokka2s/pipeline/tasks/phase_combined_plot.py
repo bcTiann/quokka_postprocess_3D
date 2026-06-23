@@ -231,10 +231,12 @@ class Plot_PhaseCombined(PlotTask):
                     ax.set_ylabel(y_label, fontsize=10)
                 elif r == 1 and i in species_idx_row2:
                     ax.set_ylabel(r'$\log_{10}\,T_{\rm two-regime}$ [K]', fontsize=10)
-                if r == n_rows - 1:
-                    ax.set_xlabel(r'$\log_{10}\,\rho$ [g cm$^{-3}$]', fontsize=10)
-                else:
-                    ax.tick_params(axis='x', labelbottom=False)
+                # Every ρ panel gets its own x-axis label + ticks — including
+                # the top row (user 2026-06-24: the top mass×T panels were
+                # unlabeled because of sharex, which looked inconsistent next to
+                # the labeled NH-ρ panel).
+                ax.set_xlabel(r'$\log_{10}\,\rho$ [g cm$^{-3}$]', fontsize=10)
+                ax.tick_params(axis='x', labelbottom=True)
 
             ax.tick_params(axis='both', labelsize=8)
             cbar = fig.colorbar(im, cax=cax, orientation='horizontal')
