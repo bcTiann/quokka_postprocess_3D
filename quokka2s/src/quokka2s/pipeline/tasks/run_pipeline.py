@@ -82,21 +82,15 @@ def build_pipeline(force: bool = False) -> Pipeline:
     #    reads its σ_gas; PhaseCombined reads all the PhaseHist results. ──
     pipeline.register_task(Build_VelocityPhase(pipeline_config))
     pipeline.register_task(Build_SpeciesSpectrum(pipeline_config))
-    pipeline.register_task(Build_PhaseHist(pipeline_config, 'mass', 'temperature_quokka',
-                                           tag='mass_T_QK',   symbol=r'M_{\rm bin}'))
-    pipeline.register_task(Build_PhaseHist(pipeline_config, 'mass', 'temperature_despotic',
-                                           tag='mass_T_DSP',  symbol=r'M_{\rm bin}'))
-    pipeline.register_task(Build_PhaseHist(pipeline_config, 'mass', T_2R,
-                                           tag='mass_T_2R',   symbol=r'M_{\rm bin}'))
+    # weight_field, T_field, tag  (display symbol lives in Plot_PhaseCombined._SYMBOL)
+    pipeline.register_task(Build_PhaseHist(pipeline_config, 'mass', 'temperature_quokka',   tag='mass_T_QK'))
+    pipeline.register_task(Build_PhaseHist(pipeline_config, 'mass', 'temperature_despotic', tag='mass_T_DSP'))
+    pipeline.register_task(Build_PhaseHist(pipeline_config, 'mass', T_2R,                    tag='mass_T_2R'))
     pipeline.register_task(Build_PhaseHistNHRho(pipeline_config))
-    pipeline.register_task(Build_PhaseHist(pipeline_config, 'CO_luminosity', T_2R,
-                                           tag='CO_T_2R',     symbol=r'L_{\rm CO}'))
-    pipeline.register_task(Build_PhaseHist(pipeline_config, 'C+_luminosity', T_2R,
-                                           tag='Cplus_T_2R',  symbol=r'L_{\rm C^+}'))
-    pipeline.register_task(Build_PhaseHist(pipeline_config, 'H_alpha_luminosity', T_2R,
-                                           tag='Halpha_T_2R', symbol=r'L_{\rm H\alpha}'))
-    pipeline.register_task(Build_PhaseHist(pipeline_config, 'HI_luminosity', T_2R,
-                                           tag='HI_T_2R',     symbol=r'L_{\rm HI}'))
+    pipeline.register_task(Build_PhaseHist(pipeline_config, 'CO_luminosity',      T_2R, tag='CO_T_2R'))
+    pipeline.register_task(Build_PhaseHist(pipeline_config, 'C+_luminosity',      T_2R, tag='Cplus_T_2R'))
+    pipeline.register_task(Build_PhaseHist(pipeline_config, 'H_alpha_luminosity', T_2R, tag='Halpha_T_2R'))
+    pipeline.register_task(Build_PhaseHist(pipeline_config, 'HI_luminosity',      T_2R, tag='HI_T_2R'))
     pipeline.register_task(Build_MultiFieldSlices(pipeline_config, **_MFS_KW))
 
     # ── Plot tasks (--mode plot) ──

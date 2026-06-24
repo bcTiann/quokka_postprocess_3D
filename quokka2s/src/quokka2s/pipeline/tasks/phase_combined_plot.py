@@ -50,6 +50,36 @@ def _coerce_str(value) -> str:
     return str(value)
 
 
+def _unit_latex(unit_str: str) -> str:
+    """A yt unit NAME (e.g. 'erg/s', 'g') → LaTeX for the colorbar label.
+
+    The unit is rendered to LaTeX here, at plot time (display); the Build tasks
+    store only the weight's natural unit STRING (data).  Falls back to the plain
+    name if rendering fails or is empty (e.g. dimensionless)."""
+    if not unit_str:
+        return ''
+    try:
+        from unyt import Unit
+        return Unit(unit_str).latex_repr or unit_str
+    except Exception:
+        return unit_str
+
+
+# tag → LaTeX symbol for the colorbar.  This is DISPLAY config and lives here in
+# the Plot task, not on the Build task; the data's unit comes from each Build
+# result's `weight_unit` and is rendered by `_unit_latex` above.
+_SYMBOL = {
+    'mass_T_QK':   r'M_{\rm bin}',
+    'mass_T_DSP':  r'M_{\rm bin}',
+    'mass_T_2R':   r'M_{\rm bin}',
+    'NH_rho':      r'M_{\rm bin}',
+    'CO_T_2R':     r'L_{\rm CO}',
+    'Cplus_T_2R':  r'L_{\rm C^+}',
+    'Halpha_T_2R': r'L_{\rm H\alpha}',
+    'HI_T_2R':     r'L_{\rm HI}',
+}
+
+
 class Plot_PhaseCombined(PlotTask):
     """Assemble phase_combined.png from the Build_PhaseHist* results."""
 
@@ -187,8 +217,8 @@ class Plot_PhaseCombined(PlotTask):
             H  = np.asarray(data_dict['H'])
             xe = np.asarray(data_dict['x_edges'])
             ye = np.asarray(data_dict['y_edges'])
-            symbol     = _coerce_str(data_dict.get('symbol', ''))
-            unit_latex = _coerce_str(data_dict.get('unit_latex', ''))
+            symbol     = _SYMBOL.get(tag, '')                       # display: from layout
+            unit_latex = _unit_latex(_coerce_str(data_dict.get('weight_unit', '')))
             cbar_label = (rf'$\log_{{10}}\,{symbol}$  [${unit_latex}$]'
                           if unit_latex else rf'$\log_{{10}}\,{symbol}$')
 

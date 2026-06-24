@@ -39,15 +39,6 @@ def _aligned_edges(lo: float, hi: float, step: float) -> np.ndarray:
     return np.linspace(lo_snap, hi_snap, n_bins + 1)
 
 
-def _unit_latex(yt_array) -> str:
-    """yt/unyt unit → LaTeX string for a colorbar label, with a plain-str
-    fallback (e.g. dimensionless → '')."""
-    try:
-        return yt_array.units.latex_repr or str(yt_array.units)
-    except Exception:
-        return str(getattr(yt_array, 'units', ''))
-
-
 # ─── Build_PhaseHist ──────────────────────────────────────────────────────────
 class Build_PhaseHist(BuildTask):
     """Compute ONE weighted 2D histogram on (log ρ, log T).
@@ -60,24 +51,25 @@ class Build_PhaseHist(BuildTask):
     T_field : str
         yt field for the y axis, e.g. ``'temperature_two_regime'``.
     tag : str
-        Short label stored in the result.  Plot_PhaseCombined finds the right
-        panel by this tag.  Must be unique across registered instances.
-    symbol : str, optional
-        LaTeX symbol for the colorbar (e.g. ``r'L_{\\rm CO}'`` / ``r'M_{\\rm bin}'``).
-        The unit is derived from the weight field via yt, not hardcoded.
+        Short identity label stored in the result; Plot_PhaseCombined finds the
+        right panel (and its display symbol) by this tag.  Must be unique across
+        registered instances.
     bin_dex : float
         log10 bin width (default 0.2 dex).
+
+    Note: this task takes NO display config (symbol, etc.).  It records only
+    what it COMPUTES — the histogram, plus the weight's natural unit string
+    (``weight_unit``, data).  All display (symbol, panel layout, LaTeX) lives in
+    Plot_PhaseCombined.
     """
 
     def __init__(self, config,
                  weight_field: str, T_field: str, tag: str,
-                 symbol: str = '',
                  bin_dex: float = 0.2):
         super().__init__(config, name=f'Build_PhaseHist[{tag}]')
         self.weight_field = str(weight_field)
         self.T_field      = str(T_field)
         self.tag          = str(tag)
-        self.symbol       = str(symbol)
         self.bin_dex      = float(bin_dex)
 
     def compute(self, context: PipelinePlotContext) -> dict:
@@ -102,19 +94,19 @@ class Build_PhaseHist(BuildTask):
         # Weight kept in yt units long enough to read its latex unit, then
         # dropped to a plain array for histogram2d (values unchanged).
         if self.weight_field == 'mass':
-            w_q = rho_q * dV_q                                          # mass (g)
-            label_unit = 'g'
+            w_q = rho_q * dV_q                                          # mass
+            natural_unit = 'g'
         else:
             eps_u, _ = p.get_slab_z(('gas', self.weight_field))
             w_q = eps_u.in_cgs().ravel() * dV_q                         # luminosity
-            label_unit = 'erg/s'
+            natural_unit = 'erg/s'
             del eps_u
         # Histogram uses the cgs VALUES (so H stays bit-identical regardless of
-        # how yt labels the unit).  The colorbar LABEL is yt-derived but in the
-        # conventional unit ('erg/s'/'g'), so it reads 'erg/s' rather than yt's
-        # decomposed base-unit form 'cm²·g/s³'.  `in_units` validates the dims.
+        # how the unit is labelled).  We record only the weight's NATURAL unit
+        # as a string (data) — the Plot task renders it to LaTeX.  `in_units`
+        # validates the data's dimensions match `natural_unit` before recording.
         weight = w_q.value
-        unit_latex = _unit_latex((1.0 * w_q.units).in_units(label_unit))
+        weight_unit = str((1.0 * w_q.units).in_units(natural_unit).units)
         del rho, T, rho_q, dV_q, w_q
 
         # Bin edges from THIS task's own data range (tight to actual data).
@@ -143,8 +135,7 @@ class Build_PhaseHist(BuildTask):
             'tag':          self.tag,
             'weight_field': self.weight_field,
             'T_field':      self.T_field,
-            'symbol':       self.symbol,
-            'unit_latex':   unit_latex,
+            'weight_unit':  weight_unit,
         }
 
 
@@ -178,8 +169,8 @@ class Build_PhaseHistNHRho(BuildTask):
         with np.errstate(divide='ignore', invalid='ignore'):
             log_rho = np.log10(np.where(rho > 0, rho, np.nan))
             log_nh  = np.log10(np.where(nh  > 0, nh,  np.nan))
-        m_q = rho_q * dV_q                                               # yt, g
-        unit_latex = _unit_latex(m_q)
+        m_q = rho_q * dV_q                                               # mass
+        weight_unit = str((1.0 * m_q.units).in_units('g').units)
         mass = m_q.value
         del rho, nh, rho_q, dV_q, m_q
 
@@ -211,6 +202,5 @@ class Build_PhaseHistNHRho(BuildTask):
             'tag':          'NH_rho',
             'weight_field': 'mass',
             'T_field':      None,
-            'symbol':       r'M_{\rm bin}',
-            'unit_latex':   unit_latex,
+            'weight_unit':  weight_unit,
         }
