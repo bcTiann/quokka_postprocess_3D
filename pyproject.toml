@@ -7,6 +7,37 @@ name = "quokka2s"
 version = "0.1.0"
 requires-python = ">=3.10"
 
+# Runtime dependencies for the analysis pipeline (reading a prebuilt DESPOTIC
+# table + the simulation snapshot and producing the plots).
+#
+# NOTE — yt is intentionally NOT listed here.  The QUOKKA frontend
+# (QuokkaHierarchy + QuokkaDataset) needed to read the plt* datasets is only
+# complete on yt's `main` branch (4.5.dev); the pip-stable release (4.4.x) ships
+# only a partial QuokkaDataset.  Install it explicitly BEFORE this package:
+#     python -m pip install "git+https://github.com/yt-project/yt"
+# See REPRODUCE.md.  unyt is pulled in by yt; pinned here only as a floor.
+#
+# fiasco additionally needs the ~2.3 GB CHIANTI atomic database downloaded at
+# runtime (the [C II] 158 um tables are built at import) — see REPRODUCE.md.
+dependencies = [
+    "numpy>=2,<2.3",          # <2.3: fiasco 0.6.x is not yet numpy-2.3 compatible
+    "scipy>=1.10",
+    "astropy>=6",
+    "h5py>=3",
+    "matplotlib>=3.7",
+    "unyt>=3",
+    "joblib>=1.3",
+    "tqdm>=4.6",
+    "tqdm-joblib>=0.0.4",
+    "fiasco>=0.6,<0.7",       # + CHIANTI 10.1 database (downloaded at runtime)
+    "pyyaml>=6",              # yt's QuokkaDataset parses metadata.yaml
+]
+
+[project.optional-dependencies]
+# Only needed to (re)build the DESPOTIC tables — NOT for running the pipeline,
+# which reads a prebuilt despotic_table.npz.  Install with:  pip install -e ".[tables]"
+tables = ["despotic==2.2"]
+
 [tool.setuptools]
 package-dir = {"" = "src"}
 
