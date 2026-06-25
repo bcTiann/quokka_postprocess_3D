@@ -1,15 +1,23 @@
 from __future__ import annotations
 
 import numpy as np
+import astropy.constants as _const
+import astropy.units as _u
 from scipy.interpolate import RegularGridInterpolator
 from typing import Sequence
 
 from .models import DespoticTable, SpeciesRecord  # DespoticTable4D dropped 2026-06-23 (4D deprecated; used only by wrapped TableLookup4D below)
 from .solver import LINE_RESULT_FIELDS
 
-# CGS constants for the μγ bisection (kept local so lookup.py has no yt dep).
-_M_H_CGS = 1.6726219e-24   # g   (hydrogen mass, matches yt.units.mh.in_cgs())
-_K_B_CGS = 1.380649e-16    # erg/K
+# CGS constants for the μγ bisection — derived from astropy WITH units, then
+# reduced to cgs floats (sourced/verifiable, not hardcoded); the assertions
+# catch a unit slip.  (astropy is pure-python, so lookup.py still has no yt dep.)
+_m_H_q = _const.m_p.to(_u.g)
+assert _m_H_q.unit == _u.g
+_M_H_CGS = float(_m_H_q.value)            # g   (proton ≈ H nucleus)
+_k_B_q = _const.k_B.to(_u.erg / _u.K)
+assert _k_B_q.unit == _u.erg / _u.K
+_K_B_CGS = float(_k_B_q.value)            # erg/K
 
 
 class TableLookup:

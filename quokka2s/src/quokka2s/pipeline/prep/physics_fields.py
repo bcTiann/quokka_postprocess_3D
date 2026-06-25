@@ -914,6 +914,12 @@ def _Bulk_Doppler_factor_y(field, data):
     c_speed = c.in_units("cm/s")
     return 1.0 - (v_y / c_speed)
 
+def _Bulk_Doppler_factor_z(field, data):
+    """(1 - v_z / c) — observer along -z direction."""
+    v_z = data[("gas", "velocity_z")].in_units("cm/s")
+    c_speed = c.in_units("cm/s")
+    return 1.0 - (v_z / c_speed)
+
 def add_all_fields(ds):
     """Adds all derived fields to the yt dataset."""
     ds.add_field(name=('gas', 'number_density_H'), function=_number_density_H, sampling_type="cell", units="cm**-3", force_override=True)
@@ -951,6 +957,13 @@ def add_all_fields(ds):
     ds.add_field(
         name=('gas', 'Bulk_Doppler_factor_y'),
         function=_Bulk_Doppler_factor_y,
+        sampling_type="cell",
+        units="",
+        force_override=True
+    )
+    ds.add_field(
+        name=('gas', 'Bulk_Doppler_factor_z'),
+        function=_Bulk_Doppler_factor_z,
         sampling_type="cell",
         units="",
         force_override=True

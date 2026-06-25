@@ -16,6 +16,13 @@ from pathlib import Path
 
 import numpy as np
 import h5py
+import astropy.constants as const
+import astropy.units as u
+
+# Canonical H mass fraction from config (single source of truth, so n_H here
+# matches the pipeline); m_H derived from astropy rather than hardcoded.
+sys.path.insert(0, '/Users/baochen/quokka_postprocessing/quokka2s/src')
+from quokka2s.pipeline.prep import config as cfg
 
 CACHE = Path('/Users/baochen/quokka_postprocessing/intermediates/plt0655228/fields')
 PLT   = Path('/Users/baochen/quokka_postprocessing/plt0655228')
@@ -59,8 +66,10 @@ cg = ds.covering_grid(level=0, left_edge=ds.domain_left_edge,
 rho_3d = cg[('gas', 'density')].in_cgs().value
 print(f'  shape={rho_3d.shape}', flush=True)
 
-X_H = 0.74
-m_H = 1.6726219e-24
+_m_H_q = const.m_p.to(u.g)
+assert _m_H_q.unit == u.g
+X_H = cfg.X_H                 # canonical H mass fraction (config)
+m_H = float(_m_H_q.value)     # g   (proton ≈ H nucleus)
 nH = rho_3d * X_H / m_H
 print(f'  nH range: {nH.min():.2e} – {nH.max():.2e}', flush=True)
 

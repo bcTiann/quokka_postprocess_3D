@@ -70,22 +70,22 @@ class Plot_PhaseSpectrumOverlay(PlotTask):
         }
 
     def plot(self, context: PipelinePlotContext, inputs: dict) -> None:
-        # 2026-06-18: LOS hard-coded to y only; 1 PNG per species.
-        for los in ('y',):
+        # 2026-06-25: one PNG per (species, LOS) for all three LOS x/y/z.
+        for los in ('x', 'y', 'z'):
             for sp in SPECIES_CFG:
                 self._plot_one_species_one_los(inputs, los, sp)
 
     def _plot_one_species_one_los(self, results: dict, los: str,
                                   sp_cfg: dict) -> None:
-        """One PNG, 1 axis: 5 phase mass PDFs + 1 species emission curve
-        overlaid on a single (v_LOS, normalised intensity) panel.
+        """One PNG, 1 axis: 5 phase mass PDFs + 'total' + 1 species emission
+        curve overlaid on a single (v_LOS, normalised intensity) panel.
 
-        2026-06-20 redesign (was 1×6 phases incl. total): user asked
-        for all five phases + the species spectrum on one axis to make
-        the cross-phase comparison legible at a glance.  'total' PDF
-        dropped — it is visually redundant with the sum of the 5 phases
-        and adds clutter.  σ_v and mass-fraction now live in the legend
-        for each phase; species curve carries its own σ_v in the legend.
+        2026-06-20 redesign: all five phases + the species spectrum on one
+        axis for legible cross-phase comparison.  2026-06-25: 'total'
+        (all-gas) PDF re-added (gray dashed) at the user's request, and the
+        plot runs for all three LOS (x/y/z) — each figure's σ is the
+        dispersion of the velocity component along THAT LOS (σ_x/σ_y/σ_z),
+        and the species emission curve is the LOS-matched projection.
         """
         pdf     = results['pdf']
         spectra = results['spectra']
@@ -118,7 +118,8 @@ class Plot_PhaseSpectrumOverlay(PlotTask):
         _, sigma_obs = _moment_sigma(spec_v, spec_y)
         sigma_obs_str = f'{sigma_obs:.1f}' if np.isfinite(sigma_obs) else 'nan'
 
-        # 5 phase PDFs (in PHASE_ORDER = cold→hot).
+        # 5 phase PDFs (in PHASE_ORDER = cold→hot).  σ shown is the dispersion
+        # of the velocity component ALONG this figure's LOS (σ_x / σ_y / σ_z).
         for phase in PHASE_PLOT_ORDER:
             phase_pdf = _key(_key(pdf, los), phase)
             counts    = np.asarray(_key(phase_pdf, 'counts'))
@@ -128,9 +129,21 @@ class Plot_PhaseSpectrumOverlay(PlotTask):
                 continue
 
             sigma_str = f'{sigma_p:.1f}' if np.isfinite(sigma_p) else 'nan'
-            label = rf'{phase}   $\sigma_v$ = {sigma_str} km/s'
+            label = rf'{phase}   $\sigma_{los}$ = {sigma_str} km/s'
             ax.step(bin_centers, counts / peak, where='mid',
                     color=PHASE_COLOR[phase], lw=1.6, label=label)
+
+        # 'total' (all-gas) mass PDF — gray dashed, distinct from the 5 phases
+        # (black is reserved for the species emission curve).
+        total_pdf    = _key(_key(pdf, los), 'total')
+        total_counts = np.asarray(_key(total_pdf, 'counts'))
+        total_sigma  = float(np.asarray(_key(total_pdf, 'sigma')))
+        total_peak   = total_counts.max() if total_counts.size else 0.0
+        if total_peak > 0:
+            tsig_str = f'{total_sigma:.1f}' if np.isfinite(total_sigma) else 'nan'
+            ax.step(bin_centers, total_counts / total_peak, where='mid',
+                    color='0.4', ls='--', lw=1.6,
+                    label=rf'total   $\sigma_{los}$ = {tsig_str} km/s')
 
         # Species emission on top.
         ax.step(spec_v, spec_norm, where='mid',

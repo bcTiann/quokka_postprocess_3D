@@ -64,34 +64,39 @@ class Build_VelocityPhase(BuildTask):
         p = context.provider
         vx_u,  _ = p.get_slab_z(('gas', 'velocity_x'))
         vy_u,  _ = p.get_slab_z(('gas', 'velocity_y'))
+        vz_u,  _ = p.get_slab_z(('gas', 'velocity_z'))
         rho_u, _ = p.get_slab_z(('gas', 'density'))
         # T_two_regime so phase masks match SpectrumStore's (2026-06-18).
         T_u,   _ = p.get_slab_z(('gas', 'temperature_two_regime'))
         vx  = vx_u.in_units('km/s').value.ravel()
         vy  = vy_u.in_units('km/s').value.ravel()
+        vz  = vz_u.in_units('km/s').value.ravel()
         rho = rho_u.value.ravel()
         T   = T_u.in_units('K').value.ravel()
-        del vx_u, vy_u, rho_u, T_u
+        del vx_u, vy_u, vz_u, rho_u, T_u
 
-        # Per-phase σ_v stats (mass-weighted) for both LOS.
+        # Per-phase σ_v stats (mass-weighted) for all three LOS (x/y/z).
         phase_x = mass_weighted_sigma_by_phase(vx, rho, T)
         phase_y = mass_weighted_sigma_by_phase(vy, rho, T)
-        # 'total' stats (all cells, mass-weighted) for both LOS — needed by
-        # PhaseSpectrumOverlay's "total" column.
+        phase_z = mass_weighted_sigma_by_phase(vz, rho, T)
+        # 'total' stats (all cells, mass-weighted) for each LOS — needed by
+        # PhaseSpectrumOverlay's "total" curve.
         v_mean_total_x, sigma_total_x = mass_weighted_sigma(vx, rho)
         v_mean_total_y, sigma_total_y = mass_weighted_sigma(vy, rho)
+        v_mean_total_z, sigma_total_z = mass_weighted_sigma(vz, rho)
         total_x = {'sigma': sigma_total_x, 'v_mean': v_mean_total_x, 'mass_frac': 1.0}
         total_y = {'sigma': sigma_total_y, 'v_mean': v_mean_total_y, 'mass_frac': 1.0}
+        total_z = {'sigma': sigma_total_z, 'v_mean': v_mean_total_z, 'mass_frac': 1.0}
 
         print('\n=== Phase-split density-weighted σ_v ===')
         print(f'{"phase":<6} {"cell_frac":>10} {"mass_frac":>10} '
-              f'{"σ_v(x) km/s":>14} {"σ_v(y) km/s":>14}')
+              f'{"σ_v(x) km/s":>14} {"σ_v(y) km/s":>14} {"σ_v(z) km/s":>14}')
         for ph in PHASE_ORDER:
-            px, py = phase_x[ph], phase_y[ph]
+            px, py, pz = phase_x[ph], phase_y[ph], phase_z[ph]
             print(f'{ph:<6} {px["cell_frac"]:>10.3f} {px["mass_frac"]:>10.3f} '
-                  f'{px["sigma"]:>14.2f} {py["sigma"]:>14.2f}')
+                  f'{px["sigma"]:>14.2f} {py["sigma"]:>14.2f} {pz["sigma"]:>14.2f}')
         print(f'{"total":<6} {"1.000":>10} {"1.000":>10} '
-              f'{sigma_total_x:>14.2f} {sigma_total_y:>14.2f}')
+              f'{sigma_total_x:>14.2f} {sigma_total_y:>14.2f} {sigma_total_z:>14.2f}')
         print('=====================================\n')
 
         masks = classify_temperature_phase(T)
@@ -99,7 +104,7 @@ class Build_VelocityPhase(BuildTask):
         # ── Auto-bin PDFs (per-phase percentile bracket) ─────────────────
         # Used by PhaseSigmaV_hist.png (per-panel adaptive range).
         hist_auto = {}
-        for vel_arr, los in ((vx, 'x'), (vy, 'y')):
+        for vel_arr, los in ((vx, 'x'), (vy, 'y'), (vz, 'z')):
             hist_auto[los] = {}
             for ph in PHASE_ORDER:
                 m = masks[ph]
@@ -137,10 +142,12 @@ class Build_VelocityPhase(BuildTask):
         hist_fixed = {
             'x': {'bin_centers': fixed_centers},
             'y': {'bin_centers': fixed_centers},
+            'z': {'bin_centers': fixed_centers},
         }
         for vel_arr, los, phase_dict, total in (
             (vx, 'x', phase_x, total_x),
             (vy, 'y', phase_y, total_y),
+            (vz, 'z', phase_z, total_z),
         ):
             for ph in PHASE_ORDER:
                 hist_fixed[los][ph] = {
@@ -160,15 +167,17 @@ class Build_VelocityPhase(BuildTask):
         result = {
             'phase_x':    phase_x,
             'phase_y':    phase_y,
+            'phase_z':    phase_z,
             'total_x':    total_x,
             'total_y':    total_y,
+            'total_z':    total_z,
             'histograms': hist_auto,      # auto-bin → PhaseSigmaV_hist
             'pdf_fixed':  hist_fixed,     # ±V_RANGE_KMS → PhaseSpectrumOverlay
         }
         # Free the ~14 GB of raw cell arrays + the provider's in-RAM covering
         # grid before returning, so the next Build task starts clean on the
         # 16 GB Mac.  The returned dict holds only small histogram summaries.
-        del vx, vy, rho, T, masks
+        del vx, vy, vz, rho, T, masks
         p._cached_grid = None
         gc.collect()
         return result

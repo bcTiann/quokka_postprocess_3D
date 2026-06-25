@@ -19,6 +19,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
+import astropy.constants as _const
+import astropy.units as _u
 import matplotlib.pyplot as plt
 from matplotlib.colors import Normalize
 from mpl_toolkits.axes_grid1 import make_axes_locatable
@@ -31,17 +33,26 @@ from ..prep import config as cfg
 _NH_MEAN = getattr(cfg, 'COLUMN_DENSITY_MEAN', 'harmonic')
 
 
-# Constants used by the projection modes below.
-_CM_PER_PC_SQ = (3.0857e18) ** 2          # cm² / pc²  (multiply g/cm² → g/pc²)
-_X_H          = 0.74                      # hydrogen mass fraction
-_M_H_GRAMS    = 1.6726e-24                # g per hydrogen nucleus
+# Constants used by the projection modes below — derived from astropy WITH
+# units, then reduced to the cgs float used in the numpy paths.  The assertions
+# catch a unit mistake.  X_H is a model assumption (H mass fraction), from config.
+_pc_in_cm = (1.0 * _u.pc).to(_u.cm)
+assert _pc_in_cm.unit == _u.cm
+_CM_PER_PC_SQ = float(_pc_in_cm.value) ** 2          # cm² / pc²
 
-# Per-panel display-time unit conversions.  Applied to the raw cgs field
-# value before log10/imshow.  Intermediates stay in cgs (so caches don't
-# need busting).  Add new entries here for any other displayed unit changes.
-#   dVdr_slice:  s⁻¹  →  km/s/pc      (1 pc / 1 km in cgs ≈ 3.0857e13)
+_X_H = cfg.X_H                                        # hydrogen mass fraction
+
+_m_H = _const.m_p.to(_u.g)                            # H nucleus ≈ proton mass
+assert _m_H.unit == _u.g
+_M_H_GRAMS = float(_m_H.value)                        # g per H nucleus
+
+# Per-panel display-time unit conversions.  Applied to the raw cgs field value
+# before log10/imshow.  Intermediates stay in cgs (caches don't need busting).
+#   dVdr_slice:  s⁻¹ → km/s/pc  ≡  multiply by the (pc/km) length ratio.
+_pc_per_km = (1.0 * _u.pc / _u.km).to(_u.dimensionless_unscaled)
+assert _pc_per_km.unit == _u.dimensionless_unscaled
 _DISPLAY_FACTOR = {
-    'dVdr_slice': 3.0857e13,
+    'dVdr_slice': float(_pc_per_km.value),
 }
 
 # (panel_key, field, label, cmap, mode, log10_vmin, log10_vmax, share_group)

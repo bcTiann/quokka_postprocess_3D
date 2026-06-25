@@ -23,6 +23,8 @@ import threading
 from typing import Optional
 
 import numpy as np
+import astropy.constants as _const
+import astropy.units as _u
 
 from ..prep.physics_fields import build_spectral_cube
 from ..tasks.integrated_spectrum import SPECIES_CFG, N_CHANNELS, V_RANGE_KMS
@@ -33,14 +35,18 @@ from ..utils import (
 )
 
 
-_C_CGS = 2.99792458e10   # cm/s
+# Speed of light in cgs, derived from astropy (not hardcoded) → a float for the
+# numpy spectral-cube path.  The assertion catches a unit slip.
+_c_q = _const.c.to(_u.cm / _u.s)
+assert _c_q.unit == _u.cm / _u.s
+_C_CGS = float(_c_q.value)   # = 2.99792458e10 cm/s
 
 
 class SpectrumStore:
     """Memoised 1D-spectrum builder, task-local (one store per ``compute()``)."""
 
-    # Which yz/xz plane belongs to each LOS choice.
-    _PLANE_FOR_LOS = {'x': 'yz', 'y': 'xz'}
+    # Which plane (perpendicular to the LOS) belongs to each LOS choice.
+    _PLANE_FOR_LOS = {'x': 'yz', 'y': 'xz', 'z': 'xy'}
 
     def __init__(self, provider):
         self.provider = provider
@@ -128,8 +134,15 @@ class SpectrumStore:
             shifted, lum_per_cell, width, freq_edges, _C_CGS,
         )
         total_lum     = cube.sum(axis=(1, 2))
+        # Mean surface brightness = total luminosity / projected area of the
+        # plane PERPENDICULAR to the LOS.  build_spectral_cube always collapses
+        # axis 0, so cube.shape[1:] == (ny, nz) for EVERY los — using it as the
+        # sightline count is right only for los='x' (and 'y' when nx==ny).  Use
+        # the true grid dims so los='z' (and any non-cubic grid) normalises right.
+        nx, ny, nz    = self._volume_3d.shape
+        n_sightlines  = {'x': ny * nz, 'y': nx * nz, 'z': nx * ny}[los]
         plane         = self._PLANE_FOR_LOS[los]
-        total_area_cm = cube.shape[1] * cube.shape[2] * self._plane_cell_area[plane]
+        total_area_cm = n_sightlines * self._plane_cell_area[plane]
         dsigma_dv     = total_lum / total_area_cm
 
         print(f'[spectrum-store] built  ({species:>8s}, los={los}, '
@@ -149,9 +162,12 @@ class SpectrumStore:
                 self._volume_3d = (dx * dy * dz).in_cgs().value
                 self._plane_cell_area['yz'] = float((dy * dz)[0, 0, 0].in_units('cm**2').value)
                 self._plane_cell_area['xz'] = float((dx * dz)[0, 0, 0].in_units('cm**2').value)
+                self._plane_cell_area['xy'] = float((dx * dy)[0, 0, 0].in_units('cm**2').value)
 
             if los not in self._doppler:
-                field = 'Bulk_Doppler_factor_x' if los == 'x' else 'Bulk_Doppler_factor_y'
+                field = {'x': 'Bulk_Doppler_factor_x',
+                         'y': 'Bulk_Doppler_factor_y',
+                         'z': 'Bulk_Doppler_factor_z'}[los]
                 doppler, _ = self.provider.get_slab_z(('gas', field))
                 self._doppler[los] = np.asarray(doppler)
 

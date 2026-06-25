@@ -87,24 +87,29 @@ class Build_SpeciesSpectrum(BuildTask):
         vp = load_one_build(self.config.output_dir, 'Build_VelocityPhase', self.config)
         sigma_x_gas = float(vp['total_x']['sigma'])
         sigma_y_gas = float(vp['total_y']['sigma'])
+        sigma_z_gas = float(vp['total_z']['sigma'])
         print(f'  σ_gas (loaded from Build_VelocityPhase result): '
-              f'x={sigma_x_gas:.2f} km/s, y={sigma_y_gas:.2f} km/s')
+              f'x={sigma_x_gas:.2f} km/s, y={sigma_y_gas:.2f} km/s, '
+              f'z={sigma_z_gas:.2f} km/s')
 
-        # Per-species build: 1 LOS × 1 'total' = 1 unique 1D spectrum each.
+        # Per-species build: 3 LOS (x/y/z) × 1 'total' = 3 unique 1D spectra each.
         # (2026-06-19 refactor — phase decomposition removed; downstream
         # consumers only need 'total'.  SpectrumStore.get_spectrum(phase=None)
-        # hits the 'total' code path — one cube covering all cells.  ~4× faster.)
-        # (2026-06-18 — LOS hard-coded to y only; see PhaseSpectrumOverlay.)
+        # hits the 'total' code path — one cube covering all cells.)
+        # (2026-06-25 — LOS x/y/z all built so PhaseSpectrumOverlay can plot each
+        # projection; the per-LOS emission curve must match its LOS velocity axis.)
         from ..services import SpectrumStore
-        # 2 workers: ~13 GB peak per species — under the 16 GB Mac limit.
+        # 2 workers: ~13 GB peak per species — under the 16 GB Mac limit.  Building
+        # 3 LOS (not 1) triples the per-species wall time; peak RAM is unchanged
+        # (still ≤2 cubes in flight; the store reuses lum/width/volume across LOS).
         N_WORKERS = 2
         spectra: dict[str, dict[str, dict]] = {
-            sp['name']: {'y': {}} for sp in SPECIES_CFG
+            sp['name']: {'x': {}, 'y': {}, 'z': {}} for sp in SPECIES_CFG
         }
         for sp in SPECIES_CFG:
             name  = sp['name']
             store = SpectrumStore(provider)
-            jobs  = [(name, los, None) for los in ('y',)]      # phase=None → 'total'
+            jobs  = [(name, los, None) for los in ('x', 'y', 'z')]  # phase=None → 'total'
             print(f'SpeciesSpectrum [{name}]: '
                   f'{len(jobs)} (los × total) build, {N_WORKERS} workers ...')
 
@@ -130,7 +135,7 @@ class Build_SpeciesSpectrum(BuildTask):
             from ..services.spectrum_service import apply_spectral_lsf
             for sp in SPECIES_CFG:
                 name = sp['name']
-                for los in ('y',):
+                for los in ('x', 'y', 'z'):
                     block = spectra[name][los]['total']
                     v_axis = block['v_axis']
                     dv = abs(v_axis[1] - v_axis[0])
@@ -139,7 +144,7 @@ class Build_SpeciesSpectrum(BuildTask):
 
         return {
             'spectra':     spectra,
-            'sigma_v_gas': {'x': sigma_x_gas, 'y': sigma_y_gas},
+            'sigma_v_gas': {'x': sigma_x_gas, 'y': sigma_y_gas, 'z': sigma_z_gas},
             'R':           self.R,
         }
 
