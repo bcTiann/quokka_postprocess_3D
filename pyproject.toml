@@ -8,7 +8,7 @@ version = "0.1.0"
 requires-python = ">=3.10"
 
 [tool.setuptools]
-package-dir = {"" = "quokka2s/src"}
+package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
-where = ["quokka2s/src"]
+where = ["src"]

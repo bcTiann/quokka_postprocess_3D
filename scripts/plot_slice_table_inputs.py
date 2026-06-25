@@ -6,7 +6,7 @@ variables are nH, N_H, dVdr; everything else — radiation, dust, etc. — is fi
 
 Run:
     /opt/homebrew/Caskroom/miniconda/base/envs/yt-env/bin/python \
-        quokka2s/scripts/plot_slice_table_inputs.py
+        scripts/plot_slice_table_inputs.py
 """
 from __future__ import annotations
 import os, sys

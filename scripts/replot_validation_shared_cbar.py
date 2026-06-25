@@ -8,7 +8,7 @@ PNG with the shared-range version.  Cheap (seconds).
 
 Run:
     /opt/homebrew/Caskroom/miniconda/base/envs/yt-env/bin/python \
-        quokka2s/scripts/replot_validation_shared_cbar.py
+        scripts/replot_validation_shared_cbar.py
 """
 from __future__ import annotations
 

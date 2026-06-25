@@ -1,4 +1,4 @@
-# quokka2s/src/quokka2s/tables/io.py
+# src/quokka2s/tables/io.py
 from __future__ import annotations
 
 import warnings

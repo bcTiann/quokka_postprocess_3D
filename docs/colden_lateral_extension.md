@@ -104,7 +104,7 @@ $$
 
 ## 3. 代码实现: `_column_density_H`
 
-文件: `quokka2s/src/quokka2s/pipeline/prep/physics_fields.py`, 行 55-113.
+文件: `src/quokka2s/pipeline/prep/physics_fields.py`, 行 55-113.
 
 ```python
 def _column_density_H(field, data):
@@ -372,7 +372,7 @@ COLUMN_EXTENSION_LATERAL_KPC = 9.0
 然后:
 
 ```bash
-cd quokka2s/src
+cd src
 /opt/homebrew/Caskroom/miniconda/base/envs/yt-env/bin/python \
     -m quokka2s.pipeline.tasks.run_pipeline --mode all
 ```

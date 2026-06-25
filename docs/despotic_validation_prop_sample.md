@@ -5,8 +5,8 @@ panel (the **bottom row** of
 `output/despotic_validation/plots/despotic_validation_cold_dense_d1_sharedcbar_combined.png`)
 is produced.
 
-- Compute script: `quokka2s/scripts/validate_despotic_cold_dense.py`
-- Combined-figure script: `quokka2s/scripts/replot_validation_shared_cbar.py`
+- Compute script: `scripts/validate_despotic_cold_dense.py`
+- Combined-figure script: `scripts/replot_validation_shared_cbar.py`
 - Run with the env python directly (never `conda run`):
   `/opt/homebrew/Caskroom/miniconda/base/envs/yt-env/bin/python`
 
@@ -204,11 +204,11 @@ cd /Users/baochen/quokka_postprocessing
 
 # 1) solve real DESPOTIC for both samples at each L_ext (writes *_even.csv / *_prop.csv)
 for L in 0 9 99; do
-  VALIDATE_LEXT=$L $PY quokka2s/scripts/validate_despotic_cold_dense.py
+  VALIDATE_LEXT=$L $PY scripts/validate_despotic_cold_dense.py
 done
 
 # 2) draw the 2-row (even/prop) x 3-col (L_ext) combined figure from the CSVs
-$PY quokka2s/scripts/replot_validation_shared_cbar.py
+$PY scripts/replot_validation_shared_cbar.py
 ```
 
 Knobs in `validate_despotic_cold_dense.py`: `N_TARGET` (400), `LOG_RHO_MIN`

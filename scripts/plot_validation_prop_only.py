@@ -6,7 +6,7 @@ Reads the existing *_prop.csv files (no DESPOTIC re-solve).
 
 Run:
     /opt/homebrew/Caskroom/miniconda/base/envs/yt-env/bin/python \
-        quokka2s/scripts/plot_validation_prop_only.py
+        scripts/plot_validation_prop_only.py
 """
 from __future__ import annotations
 

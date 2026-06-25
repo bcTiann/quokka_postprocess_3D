@@ -13,7 +13,7 @@ dVdr axis.
 from __future__ import annotations
 import sys, time
 import numpy as np
-sys.path.insert(0, '/Users/baochen/quokka_postprocessing/quokka2s/src')
+sys.path.insert(0, '/Users/baochen/quokka_postprocessing/src')
 from quokka2s.tables.solver import calculate_single_despotic_point
 from despotic.chemistry import GOW
 

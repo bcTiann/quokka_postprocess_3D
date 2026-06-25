@@ -21,7 +21,7 @@ Set config.py to DOWNSAMPLE_FACTOR=1, COLUMN_EXTENSION_LATERAL_KPC=9.0 first
 (so the on-disk d1/L9 field caches are reused — no recompute), then:
 
     /opt/homebrew/Caskroom/miniconda/base/envs/yt-env/bin/python \
-        quokka2s/scripts/validate_despotic_cold_dense.py
+        scripts/validate_despotic_cold_dense.py
 
 Never launch via `conda run` (it silently kills long jobs on this Mac).
 

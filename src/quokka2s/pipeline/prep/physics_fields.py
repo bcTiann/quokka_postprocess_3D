@@ -38,7 +38,7 @@ T_QK_TWO_REGIME_K = 3000.0   # K
 # at import time from astropy.constants — hard-coded values were
 # unverifiable.  The two 21 cm values are pinned from refereed sources
 # (no Python package ships them; CHIANTI/LAMDA do not cover the H 21 cm
-# hyperfine line).  See `quokka2s/docs/line_emission_calculations.md`
+# hyperfine line).  See `docs/line_emission_calculations.md`
 # for context.
 #
 # Textbook Saha (Draine 2011 Eq 3.17):

@@ -16,7 +16,7 @@ Two panels (real-time T_DESPOTIC):
 
 Run:
     /opt/homebrew/Caskroom/miniconda/base/envs/yt-env/bin/python \
-        quokka2s/scripts/plot_validation_migration.py
+        scripts/plot_validation_migration.py
 """
 from __future__ import annotations
 

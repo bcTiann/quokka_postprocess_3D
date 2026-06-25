@@ -11,7 +11,7 @@ actually use them?
 
 Run:
     /opt/homebrew/Caskroom/miniconda/base/envs/yt-env/bin/python \
-        quokka2s/scripts/analyze_table_failures.py
+        scripts/analyze_table_failures.py
 """
 from __future__ import annotations
 import os, sys, time

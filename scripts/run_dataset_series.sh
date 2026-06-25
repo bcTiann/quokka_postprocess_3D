@@ -80,7 +80,7 @@ for D in "${DATASETS[@]}"; do
     args=${entry#*|}
     LOG=$LOGS/${D}_Lext${LEXT_KPC}_${RUN_TAG}_${MODE}_${tag}.log
     echo "[$(date)] [$D] $tag  ($args)  →  $LOG" | tee -a "$MASTER"
-    cd "$ROOT/quokka2s/src" || exit 1
+    cd "$ROOT/src" || exit 1
     # $args is intentionally unquoted so it splits into separate --task tokens.
     YT_DATASET=$DPATH LEXT_KPC=$LEXT_KPC RUN_TAG=$RUN_TAG \
       $PY -u -m quokka2s.pipeline.tasks.run_pipeline --mode "$MODE" $args > "$LOG" 2>&1

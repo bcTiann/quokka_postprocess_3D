@@ -14,7 +14,7 @@ cfg.COLUMN_EXTENSION_LATERAL_KPC, optionally overridden by PHASE_LEXT env var.
 
 Run:
     /opt/homebrew/Caskroom/miniconda/base/envs/yt-env/bin/python \
-        quokka2s/scripts/plot_phase_colden_density_mass.py
+        scripts/plot_phase_colden_density_mass.py
 """
 from __future__ import annotations
 

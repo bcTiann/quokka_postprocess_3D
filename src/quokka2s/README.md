@@ -11,7 +11,7 @@ pre-built DESPOTIC chemistry / cooling table.
 
 ```bash
 # 1. Point the config at a QUOKKA plt directory and a DESPOTIC table.
-$EDITOR quokka2s/src/quokka2s/pipeline/prep/config.py
+$EDITOR src/quokka2s/pipeline/prep/config.py
 #   YT_DATASET_PATH     = "/path/to/plt263168"
 #   DESPOTIC_TABLE_PATH = "/path/to/despotic_table.npz"   (auto-selected by DESPOTIC_GEOM env var)
 #   DOWNSAMPLE_FACTOR   = 2     # see "Why downsample?" below
@@ -118,7 +118,7 @@ disk — the task intermediates already cover the `--mode plot` case.
 
 ## Adding a new task
 
-1. Copy `quokka2s/src/quokka2s/pipeline/tasks/_template.py`. Rename the
+1. Copy `src/quokka2s/pipeline/tasks/_template.py`. Rename the
    class.
 2. Implement `prepare → compute → plot`. Use `context.provider.get_slab_z`
    for data; keep numerical work in `compute()` and pure rendering in
@@ -176,7 +176,7 @@ using slab-by-slab block-mean (memory-efficient itself).
 ## Repo layout
 
 ```
-quokka2s/src/quokka2s/
+src/quokka2s/
 ├── data_handling.py             — YTDataProvider, dataset downsample, field-intermediate hook
 ├── analysis.py                  — generic numerical helpers
 ├── pipeline/

@@ -33,7 +33,7 @@ This document lists everything that changed and why.
 
 ### 1. (critical) Missing emitters in `setChemEq`
 
-**File**: `quokka2s/src/quokka2s/tables/solver.py`
+**File**: `src/quokka2s/tables/solver.py`
 **Severity**: catastrophic — wrong Tg by 1–2.5 dex in CNM regime.
 
 **Symptom**: At (nH=10 cm⁻³, NH=10²⁰ cm⁻², dVdr=10⁻¹⁵ s⁻¹), the old
@@ -93,7 +93,7 @@ agree, but at a different (correct) absolute Tg.
 
 ### 2. (deprecated) Two-stage dVdr broadcast in builder
 
-**File**: `quokka2s/src/quokka2s/tables/{solver,builder}.py`
+**File**: `src/quokka2s/tables/{solver,builder}.py`
 **Severity**: cosmetic under bug #1 (zero practical effect); becomes wrong
 once bug #1 is fixed.
 
@@ -120,7 +120,7 @@ table at 10-core parallelism, vs. ~2.5 min for the broadcast build.
 
 ### 3. (Hα silent zero) `val[T > 1e5 K] = 0.0` legacy gating
 
-**File**: `quokka2s/src/quokka2s/pipeline/prep/physics_fields.py:384`
+**File**: `src/quokka2s/pipeline/prep/physics_fields.py:384`
 **Severity**: silent — wrong Hα flux in HIM gas, irrespective of HIGH_T_4D_BLEND.
 
 `_make_number_density_field` zeroed **all** species number densities
@@ -136,7 +136,7 @@ called this "cold-path legacy gating (kept for backward-compat)".
 
 ### 4. (cache stale) `compute_cache_key` missing several invalidation inputs
 
-**File**: `quokka2s/src/quokka2s/pipeline/cache.py:77`
+**File**: `src/quokka2s/pipeline/cache.py:77`
 **Severity**: silent — toggling config didn't always invalidate cached
 intermediates, so plots could show pre-toggle values.
 
@@ -160,7 +160,7 @@ Schema version bumped 3 → 4 to force re-evaluate every cache file.
 
 ### 5. `LambdaLine.{species}` per-emitter cooling rates now stored
 
-**File**: `quokka2s/src/quokka2s/tables/{solver,builder}.py`
+**File**: `src/quokka2s/tables/{solver,builder}.py`
 
 The old `cell.dEdt()` output had `LambdaLine = {}` because emitters were
 empty (bug #1).  With the fix, dEdt returns
@@ -182,8 +182,8 @@ this regime?" without re-solving DESPOTIC.
 
 ### 6. `_temperature_gamma_mu` should pass the cell's real dVdr to the 4D lookup
 
-**Files**: `quokka2s/src/quokka2s/tables/lookup.py:298`,
-          `quokka2s/src/quokka2s/pipeline/prep/physics_fields.py:_temperature_gamma_mu`
+**Files**: `src/quokka2s/tables/lookup.py:298`,
+          `src/quokka2s/pipeline/prep/physics_fields.py:_temperature_gamma_mu`
 
 Pre-fix, `TableLookup4D.temperature_gamma_mu(nH, NH, e_specific)` defaulted
 `dVdr_cgs` to the table's median dVdr value, with the justification "μ/cv
@@ -199,14 +199,14 @@ exploit any new information.)
 
 ### 7. Debug `print` left in `_Halpha_luminosity`
 
-**File**: `quokka2s/src/quokka2s/pipeline/prep/physics_fields.py:415-416`
+**File**: `src/quokka2s/pipeline/prep/physics_fields.py:415-416`
 
 Two `print(...)` statements that fired on every cell-batch evaluation of
 the field.  Removed.
 
 ### 8. (housekeeping) `AttemptRecord` extended
 
-**File**: `quokka2s/src/quokka2s/tables/models.py`
+**File**: `src/quokka2s/tables/models.py`
 
 Added `dvdr_idx` and `dvdr` fields (both default `None` for backward
 compat) so per-dVdr failures are traceable.

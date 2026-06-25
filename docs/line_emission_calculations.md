@@ -8,7 +8,7 @@ All formulas yield ε [erg s⁻¹ cm⁻³]; cell luminosity is L_cell = ε · dV
 ## Source code map
 
 All implementations live in
-[`quokka2s/src/quokka2s/pipeline/prep/physics_fields.py`](../src/quokka2s/pipeline/prep/physics_fields.py).
+[`src/quokka2s/pipeline/prep/physics_fields.py`](../src/quokka2s/pipeline/prep/physics_fields.py).
 Direct jump-to-source links:
 
 | Symbol | Where | What it is |
@@ -247,7 +247,7 @@ table to give 0 was discussed; the latter is simpler and works.)
 - 📍 Registered as `('gas','CO_luminosity')` inside [`add_all_fields`](../src/quokka2s/pipeline/prep/physics_fields.py#L932) (`physics_fields.py:932`)
 - Cache: `('gas', 'CO_luminosity')` is in CACHED_FIELDS
 - Atomic data: DESPOTIC's bundled `co.dat` LAMDA file
-- DESPOTIC table builder (offline, separate from runtime): `quokka2s/src/quokka2s/tables/solver.py`
+- DESPOTIC table builder (offline, separate from runtime): `src/quokka2s/tables/solver.py`
 
 ---
 
@@ -400,7 +400,7 @@ MW-realistic.
 
 ## See also
 
-In `quokka2s/docs/`:
+In `docs/`:
 - `colden_lateral_extension.md` — N_H lateral extension for L_ext
 - `algorithm_audit_2026-05-29.md` — DESPOTIC table audit
 - `despotic_validation_prop_sample.md` — validation methodology

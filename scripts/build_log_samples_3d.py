@@ -8,7 +8,7 @@ field computation — uses whatever L_ext is currently in the cache.  Writes
 to `log_samples_3d.npy` next to the existing 2D `log_samples.npy`.
 
 Usage:
-    python quokka2s/scripts/build_log_samples_3d.py [--out PATH]
+    python scripts/build_log_samples_3d.py [--out PATH]
 """
 from __future__ import annotations
 import sys, argparse, time
@@ -21,7 +21,7 @@ import astropy.units as u
 
 # Canonical H mass fraction from config (single source of truth, so n_H here
 # matches the pipeline); m_H derived from astropy rather than hardcoded.
-sys.path.insert(0, '/Users/baochen/quokka_postprocessing/quokka2s/src')
+sys.path.insert(0, '/Users/baochen/quokka_postprocessing/src')
 from quokka2s.pipeline.prep import config as cfg
 
 CACHE = Path('/Users/baochen/quokka_postprocessing/intermediates/plt0655228/fields')

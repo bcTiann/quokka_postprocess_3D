@@ -20,7 +20,7 @@ import time
 
 import numpy as np
 
-sys.path.insert(0, "quokka2s/src")
+sys.path.insert(0, "src")
 
 from despotic.chemistry import GOW
 

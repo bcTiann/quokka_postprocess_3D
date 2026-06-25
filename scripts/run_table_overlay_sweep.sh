@@ -62,11 +62,11 @@ for LEXT in "${LEXTS[@]}"; do
   echo "[$(date)] [L=$LEXT] step 1: ensure samples exist" >> $MASTER
   if [ ! -f "$SAMPLES" ]; then
     echo "  building cache + samples at L=$LEXT" >> $MASTER
-    cd $ROOT/quokka2s/src
+    cd $ROOT/src
     LEXT_KPC=$LEXT RUN_TAG=v4 $PY -u -m quokka2s.pipeline.tasks.run_pipeline \
       --task TemperatureSlicesTask >> $LOGS/overlay_sweep_${TABLE_TAG}${OUT_SUFFIX}_L${LEXT}_cache.log 2>&1
     cd $ROOT
-    $PY -u quokka2s/scripts/build_log_samples_3d.py --out $SAMPLES $BUILD_FLAGS \
+    $PY -u scripts/build_log_samples_3d.py --out $SAMPLES $BUILD_FLAGS \
       >> $LOGS/overlay_sweep_${TABLE_TAG}${OUT_SUFFIX}_L${LEXT}_samples.log 2>&1
   else
     echo "  samples already exist at $SAMPLES" >> $MASTER
@@ -77,8 +77,8 @@ for LEXT in "${LEXTS[@]}"; do
   echo "[$(date)] [L=$LEXT] step 2: view_table --all" >> $MASTER
   OUT_TP=$ROOT/output/table_plots/${TABLE_TAG}_L${LEXT}${OUT_SUFFIX}
   mkdir -p $ROOT/output/table_plots
-  rm -rf $OUT_TP $ROOT/quokka2s/src/TablePlots_${TABLE_TAG}_LVG_with_sim_overlay_L${LEXT}${OUT_SUFFIX}
-  cd $ROOT/quokka2s/src
+  rm -rf $OUT_TP $ROOT/src/TablePlots_${TABLE_TAG}_LVG_with_sim_overlay_L${LEXT}${OUT_SUFFIX}
+  cd $ROOT/src
   $PY -u -m quokka2s.tables.view_table --all \
     --table $TABLE_PATH \
     -o $OUT_TP \

@@ -5,7 +5,7 @@ out-of-range (clipping) statistics.
 
 Run:
     /opt/homebrew/Caskroom/miniconda/base/envs/yt-env/bin/python \
-        quokka2s/scripts/plot_failures_per_dvdr.py
+        scripts/plot_failures_per_dvdr.py
 """
 from __future__ import annotations
 import os, sys, time, math

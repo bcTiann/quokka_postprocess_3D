@@ -15,7 +15,7 @@ reads the three npz and draws the side-by-side figures with shared scales.
 
 Run once per L_ext (set config.py first), via the env python directly:
     /opt/homebrew/Caskroom/miniconda/base/envs/yt-env/bin/python \
-        quokka2s/scripts/representative_cold_dense.py
+        scripts/representative_cold_dense.py
 """
 from __future__ import annotations
 
