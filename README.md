@@ -1,128 +1,101 @@
-# Quokka Post-processing Pipeline (quokka2s)
+# quokka2s — QUOKKA post-processing pipeline
 
-[![PyPI version](https://badge.fury.io/py/quokka2s.svg)](https://badge.fury.io/py/quokka2s)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+Post-processing for [QUOKKA](https://github.com/quokka-astro/quokka) radiation-MHD
+snapshots: turns a simulation `plt*` output into **synthetic line emission and
+multi-phase ISM diagnostics**, so simulations can be compared against real
+observations. Line emissivities use a pre-built [DESPOTIC](https://despotic.readthedocs.io)
+chemistry/cooling table plus CHIANTI atomic data (via `fiasco`).
 
-A Python post-processing toolkit designed for the [QUOKKA](https://github.com/quokka-astro/quokka) radiation-magnetohydrodynamics (R-MHD) code. The primary goal of this project is to bridge the gap between theoretical simulation data and synthetic observational data, enabling direct comparisons between simulation results and real astronomical observations.
+## What it produces
 
-This repository contains two main components:
-1.  **`quokka2s`**: An installable Python library that provides core utilities for data handling, physics calculations, and visualization.
-2.  **`/examples`**: A directory containing example scripts that use the `quokka2s` library to perform specific scientific analyses.
+- **Synthetic line emission** — CO J=1–0, [C II] 158 µm, Hα, and H I 21 cm:
+  1D spectra (intrinsic + instrument-convolved) and surface-brightness maps.
+- **Multi-phase ISM diagnostics** — mass- and luminosity-weighted histograms over
+  the five ISM phases (CNM/UNM/WNM/WIM/HIM), N_H–ρ phase planes, and
+  per-phase velocity dispersions σ_x/σ_y/σ_z.
+- **Field slices** — temperature, density, column density, dV/dr, … as multi-panel
+  slice figures.
 
----
+## Reproduce it
 
-<!-- ## Core Features
-
-* **Convenient Data Interface**: Built on the powerful `yt` library, the `YTDataProvider` class makes it easy to extract slices, projections, and 3D grid data from QUOKKA simulation outputs.
-* **Physics Analysis Module**: Offers a suite of functions for common astrophysical calculations, such as cumulative column density along a line of sight and dust attenuation factors.
-* **Publication-Quality Visualizations**: Includes a variety of plotting functions to rapidly generate high-quality figures, including single panels, multi-plot grids, and complex views with particle overlays and vector fields.
-* **Modular Design**: A clean and organized code structure that separates data handling, analysis, and plotting concerns, making the library easy to understand, maintain, and extend. -->
-
-## Installation
-
-You can install the core `quokka2s` library directly from PyPI using `pip`:
-
-```bash
-pip install quokka2s
-```
-
-For the latest development version, or to run the example scripts, we recommend cloning this repository and installing in "editable" mode:
+Full step-by-step (data, table, CHIANTI download, config, verification) is in
+**[REPRODUCE.md](REPRODUCE.md)**. The short version:
 
 ```bash
-# 1. Clone the repository
-git clone [https://github.com/bcTiann/quokka_postprocessing.git](https://github.com/bcTiann/quokka_postprocessing.git)
+# 1. Fresh environment
+conda create -n quokka python=3.11 && conda activate quokka
 
-# 2. Navigate to the project directory
-cd quokka_postprocessing
+# 2. yt MUST come from git, NOT pip.  The QUOKKA frontend that reads plt* data is
+#    only complete on yt's main branch; the pip-stable release (4.4.x) can't read it.
+python -m pip install "git+https://github.com/yt-project/yt"
 
-# 3. Install the quokka2s library in editable mode
-pip install -e ./quokka2s
+# 3. This package (pulls numpy/scipy/astropy/h5py/fiasco/…; NOT despotic)
+git clone https://github.com/bcTiann/quokka_postprocess_3D.git
+cd quokka_postprocess_3D && python -m pip install -e .
+
+# 4. One-time: fiasco downloads the CHIANTI atomic database (~2.3 GB) on first use
+python -c "import fiasco; fiasco.Ion('C 2', [1e4])"
 ```
-*The `-e` flag ensures that any changes you make to the library's source code are immediately reflected in your environment, which is ideal for development and testing.*
 
-## Quick Start: Running the H-alpha Emission Analysis Example
+Then point `src/quokka2s/pipeline/prep/config.py` at your QUOKKA snapshot and the
+prebuilt `despotic_table.npz` (both supplied by the author — you do **not** rebuild
+the table), and run the pipeline. See [REPRODUCE.md](REPRODUCE.md) for the exact
+paths to edit and the operational gotchas (disk needs, cache invalidation, never
+wrap runs in `conda run`).
 
-This repository includes a complete example that calculates and visualizes H-alpha emission from simulation data, both with and without the effects of dust absorption.
+> **despotic is optional** — only needed to *rebuild* tables: `pip install -e ".[tables]"`.
 
-#### **Prerequisites**
+## Running the pipeline
 
-1.  Ensure you have installed the `quokka2s` library using one of the methods above.
-2.  You will need access to a QUOKKA simulation output dataset (e.g., a `plt01000` directory).
+```bash
+# Each task in its own process (avoids OOM at full resolution), canonical config:
+MODE=compute LEXT_KPC=15 RUN_TAG=v4 scripts/run_dataset_series.sh   # heavy physics → caches
+MODE=plot    LEXT_KPC=15 RUN_TAG=v4 scripts/run_dataset_series.sh   # render figures (fast)
 
-#### **Running the Example**
-
-1.  **Configure Paths**:
-    Open the `examples/halpha_analysis/config.py` file and modify the `YT_DATASET_PATH` variable to point to your local QUOKKA data directory.
-
-    ```python
-    # in: examples/halpha_analysis/config.py
-    YT_DATASET_PATH = "/path/to/your/plt01000"
-    ```
-
-2.  **Execute the Analysis Script**:
-    Navigate to the example directory and run the main script.
-
-    ```bash
-    cd examples/halpha_analysis/
-    python main_analysis.py
-    ```
-
-The script will automatically perform the following steps:
-* Load the QUOKKA dataset and add custom derived fields (temperature, H-alpha luminosity).
-* Calculate the H-alpha surface brightness map without dust absorption.
-* Calculate the H-alpha surface brightness map with dust absorption included.
-* Generate a ratio map to visually demonstrate the effect of dust attenuation.
-
-All generated figures will be saved to the `examples/halpha_analysis/plots/` directory by default.
-
-## `quokka2s` Library API Usage
-
-Here is a basic example of how to import and use the core components of the `quokka2s` library in your own script.
-
-```python
-import yt
-import quokka2s as q2s
-from matplotlib.colors import LogNorm
-
-# 1. Load data and initialize the data provider
-ds = yt.load("/path/to/your/simulation_data")
-provider = q2s.YTDataProvider(ds)
-
-# 2. Fetch Data (from the data_handling module)
-# Get a projection of gas density along the z-axis
-density_projection = provider.get_projection(field=('gas', 'density'), axis='z')
-
-# 3. Perform Physics Analysis (from the analysis module)
-# Assuming you have a 3D column density array N_H_3d
-# attenuation_factor = q2s.calculate_attenuation(N_H_3d, ...)
-
-# 4. Visualize the Result (from the plotting module)
-plot_extent = provider.get_plot_extent(axis='z', units='kpc')
-q2s.create_plot(
-    data_2d=density_projection,
-    title="Gas Density Projection",
-    cbar_label="Column Density (g/cm^2)",
-    filename="density_projection.png",
-    extent=plot_extent,
-    norm=LogNorm()
-)
+# Or the module directly, one task at a time:
+python -m quokka2s.pipeline.tasks.run_pipeline --mode plot --task Plot_VelocityPhase
 ```
----
 
-## Dependencies and Acknowledgements
+The first `--mode compute` run is the expensive one — it derives and caches seven
+fields (`column_density_H`, `dVdr_lvg`, `temperature_despotic`, and the four
+`*_luminosity` fields). After that, `--mode plot` re-renders all figures in seconds.
 
-This project is built upon a foundation of incredible open-source scientific software. We gratefully acknowledge the developers of the following packages, which are essential to the functionality of `quokka2s`:
+Outputs:
 
-* **[QUOKKA](https://github.com/quokka-astro/quokka)**: The GPU-accelerated radiation-magnetohydrodynamics code that produces the simulation data this pipeline is designed to analyze. We encourage users to cite the original QUOKKA papers (e.g., Wibking & Krumholz 2022; He et al. 2024a,b) when publishing results based on its data.
+| Path | Contents |
+|---|---|
+| `output/<dataset>_down<N>_Lext<L>kpc<_tag>/` | the figures (PNG) |
+| `output/<…>/task_intermediates/` | per-task results (HDF5) |
+| `<dataset_dir>/intermediates/<dataset>/fields/` | cached derived fields (HDF5) |
 
-* **[yt](https://yt-project.org/)**: A powerful, open-source Python package for analyzing and visualizing volumetric astrophysical data[cite: 13, 39]. `yt` is the core engine for all data loading and handling within this pipeline. Users of this software should also cite the `yt` paper (Turk et al. 2010).
+## Repository layout
 
-This work also relies heavily on the core scientific Python ecosystem, including NumPy and Matplotlib.
+```
+src/quokka2s/        the package (import name: quokka2s)
+  pipeline/          tasks, derived-field physics, caching, services
+  tables/            DESPOTIC table builder + lookup
+scripts/             driver + standalone analysis/validation scripts
+docs/                physics notes (line emission, validation, audits)
+REPRODUCE.md         from-scratch setup guide
+```
 
-## Contributing
+## Dependencies & citation
 
-Contributions are welcome! If you find a bug or have a suggestion for a new feature, please feel free to open an Issue or submit a Pull Request.
+Built on the scientific-Python ecosystem and these tools — please cite them if you
+publish results based on this pipeline:
+
+- **[QUOKKA](https://github.com/quokka-astro/quokka)** — the R-MHD code producing the
+  data (Wibking & Krumholz 2022; He et al. 2024a,b).
+- **[yt](https://yt-project.org/)** — data loading/handling (Turk et al. 2011);
+  used here from the `main` branch for the QUOKKA frontend.
+- **[DESPOTIC](https://despotic.readthedocs.io)** — chemistry/cooling and line
+  luminosities (Krumholz 2014).
+- **[CHIANTI](https://www.chiantidatabase.org/)** via **[fiasco](https://fiasco.readthedocs.io)**
+  — atomic data for the [C II] 158 µm line (Dere et al. 1997; Del Zanna et al. 2021).
+
+Python 3.11; numpy <2.3 (fiasco constraint). Known-good versions are listed in
+[REPRODUCE.md](REPRODUCE.md).
 
 ## License
 
-This project is licensed under the [MIT License](LICENSE).
+[MIT](LICENSE).
