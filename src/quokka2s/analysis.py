@@ -2,12 +2,9 @@ from typing import Optional, Union
 import time
 
 import numpy as np
-from despotic import cloud
-from despotic.chemistry import NL99
 from tqdm import tqdm
 from yt.units import K, mp, kb, mh, planck_constant, cm, m, s, g, erg
 
-from .despotic_tables import calculate_single_despotic_point
 from .utils.axes import axis_index
 
 
@@ -27,6 +24,13 @@ def run_despotic_on_map(
         dVdr_map (np.ndarray, optional): 2D map of LVG velocity gradient [s^-1].
                   Defaults to 1e-14 s^-1 (median ISM value) if not given.
     """
+    # despotic is an optional, table-building-only dependency.  Import it lazily
+    # here so the runtime pipeline (which never calls this function) does not
+    # require despotic to be installed — see also tables/solver.py, tables/
+    # builder.py, despotic_tables.py.
+    from despotic import cloud
+    from despotic.chemistry import NL99
+
     shape = nH_map.shape
     print(f"nH_map.shape = {nH_map.shape}")
 

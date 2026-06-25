@@ -14,7 +14,6 @@ import numpy as np
 from joblib import Parallel, delayed
 from tqdm import tqdm
 from tqdm_joblib import tqdm_joblib
-from despotic.chemistry import NL99, NL99_GC, GOW
 
 from .models import (
     AttemptRecord,
@@ -52,7 +51,7 @@ def build_table(
     dVdr_grid: LogGrid,
     *,
     species_specs: Sequence[SpeciesSpec],
-    chem_network=GOW,
+    chem_network=None,   # None → GOW, resolved lazily inside solver.py
     show_progress: bool = True,
     full_parallel: bool = False,
     workers: int | None = None,

@@ -23,9 +23,10 @@ except Exception:  # pragma: no cover - fallback when rich support unavailable
     from tqdm.auto import tqdm
 from tqdm_joblib import tqdm_joblib
 
-
-from despotic import cloud
-from despotic.chemistry import NL99, NL99_GC, GOW
+# despotic is imported lazily inside calculate_single_despotic_point (optional,
+# table-building-only dependency) so merely importing this module — which the
+# package __init__ does via `from .despotic_tables import *` — never requires
+# despotic to be installed.
 
 LOGGER = logging.getLogger(__name__)
 
@@ -315,7 +316,7 @@ def calculate_single_despotic_point(
     log_failures: bool = False,
     emitter_abundances: Mapping[str, float] = DEFAULT_EMITTER_ABUNDANCES,
     repeat_equilibrium: int = 0,
-    chem_network=NL99,
+    chem_network=None,   # None → NL99, resolved lazily in calculate_single_despotic_point
     row_idx: int | None = None,
     col_idx: int | None = None,
     attempt_log: list[AttemptRecord] | None = None,
@@ -331,6 +332,14 @@ def calculate_single_despotic_point(
         Mapping from species name to line luminosity metrics together with
         the final gas temperature. Values are ``nan`` if all guesses fail.
     """
+    # despotic is an optional, table-building-only dependency — import lazily so
+    # the runtime pipeline never needs it.  ``chem_network=None`` → NL99 (the
+    # historical default), so behaviour is unchanged.
+    from despotic import cloud
+    if chem_network is None:
+        from despotic.chemistry import NL99
+        chem_network = NL99
+
     species_order = tuple(emitter_abundances.keys())
 #   emitter_abundances = {"CO": 8.0e-9, "C+": 1.1e-4}
 #   species_order = tuple(emitter_abundances.keys())  # 结果是 ("CO", "C+")
@@ -570,7 +579,7 @@ def _compute_row(
     guess_list: Sequence[float],
     interpolator: Optional[RectBivariateSpline],
     *,
-    chem_network=NL99,
+    chem_network=None,   # None → NL99, resolved lazily in calculate_single_despotic_point
     emitter_abundances: Mapping[str, float],
     row_logs: list[AttemptRecord] | None = None,
     repeat_equilibrium: int = 0,
@@ -637,7 +646,7 @@ def build_table(
     col_den_grid: LogGrid,
     tg_guesses: Sequence[float],
     *,
-    chem_network=NL99,
+    chem_network=None,   # None → NL99, resolved lazily in calculate_single_despotic_point
     emitter_abundances: Mapping[str, float] = DEFAULT_EMITTER_ABUNDANCES,
     interpolator: Optional[RectBivariateSpline] = None,
     n_jobs: int = -1,
@@ -750,7 +759,7 @@ def build_table(
 #     fine_col_den_grid: LogGrid,
 #     tg_guesses: Sequence[float],
 #     *,
-#     chem_network=NL99,
+#     chem_network=None,   # None → NL99, resolved lazily in calculate_single_despotic_point
 #     emitter_abundances: Mapping[str, float] | None = None,
 #     interpolator: Optional[RectBivariateSpline] = None,
 #     n_jobs: int = -1,

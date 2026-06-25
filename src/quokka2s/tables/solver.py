@@ -31,8 +31,6 @@ import time
 from typing import Mapping, Sequence, Tuple
 
 import numpy as np
-from despotic import cloud
-from despotic.chemistry import NL99, NL99_GC, GOW
 from types import MappingProxyType
 
 from .models import AttemptRecord, LineLumResult
@@ -121,7 +119,7 @@ def calculate_single_despotic_point(
     *,
     species: Sequence[str] = DEFAULT_SPECIES,
     abundance_only: Sequence[str] = ("e-", ),
-    chem_network=GOW,
+    chem_network=None,   # None → GOW, resolved lazily in-body (see below)
     log_failures: bool = True,
     row_idx: int | None = None,
     col_idx: int | None = None,
@@ -197,6 +195,14 @@ def calculate_single_despotic_point(
     failed : bool
         True if setChemEq did not converge or an exception occurred.
     """
+    # despotic is an optional, table-building-only dependency — import it lazily
+    # so the runtime pipeline never needs it installed.  ``chem_network=None``
+    # resolves to GOW here (the historical default), so behaviour is unchanged.
+    from despotic import cloud
+    if chem_network is None:
+        from despotic.chemistry import GOW
+        chem_network = GOW
+
     species_order = tuple(species)
     dvdr_val = float(dvdr_val)
 
