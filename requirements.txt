@@ -1,6 +1,6 @@
 # Pinned, known-good environment for reproducing the quokka2s pipeline.
 #
-# Usage (after `conda create -n quokka python=3.11 && conda activate quokka`):
+# Usage (after `conda create -n test-env python=3.11 && conda activate test-env`):
 #     pip install -r requirements.txt
 #     pip install -e .
 #

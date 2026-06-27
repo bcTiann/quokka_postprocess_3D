@@ -16,7 +16,7 @@
 #   scripts/run_dataset_series.sh [plt0655228 plt0857000 ...]   # datasets under $ROOT
 #
 # Env:
-#   LEXT_KPC  (default 15)   RUN_TAG  (default v4)
+#   LEXT_KPC  (default 15)   RUN_TAG  (default: none)
 #   MODE      (all | compute | plot;  default all)
 #     all     = each task computes + stores result + plots          (one pass)
 #     compute = each task computes + stores result only, NO figures (do the
@@ -36,7 +36,7 @@ LOGS=$ROOT/logs/dataset_series
 mkdir -p "$LOGS"
 
 LEXT_KPC=${LEXT_KPC:-15}
-RUN_TAG=${RUN_TAG:-v4}
+RUN_TAG=${RUN_TAG:-}
 MODE=${MODE:-all}
 
 DEFAULT_DATASETS=(plt0655228)

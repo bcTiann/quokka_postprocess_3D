@@ -55,8 +55,8 @@ yt installed this way reads the data identically and produces bit-identical resu
 ## 1. Create the environment
 
 ```bash
-conda create -n quokka python=3.11
-conda activate quokka
+conda create -n test-env python=3.11
+conda activate test-env
 ```
 
 ## 2. Install dependencies + the package
@@ -82,19 +82,22 @@ Verify the install:
 python -c "import quokka2s, yt; print('yt', yt.__version__); print('quokka2s', quokka2s.__file__)"
 ```
 
-## 3. Download the CHIANTI database (for fiasco)
+## 3. CHIANTI atomic database (automatic — nothing extra to install)
 
-The `[C II]` 158 µm emissivity tables are built at import from CHIANTI via `fiasco`.
-On first use, `fiasco` downloads and builds the database (~2.3 GB) into `~/.fiasco/`
-(shared across conda environments since it lives in your home directory):
+The [C II] 158 µm emissivity uses CHIANTI atomic data through `fiasco`. The `fiasco`
+*package* was already installed in step 2, but the CHIANTI **database** itself is a
+~2.3 GB science dataset, not a pip package — so it can't live in `requirements.txt`.
+`fiasco` fetches and builds it into `~/.fiasco/` the **first time it's used**, which
+happens automatically on your first pipeline run. There is no separate install step.
+
+It only downloads once and is shared across all conda environments (it lives in your
+home directory). If you'd rather pull it now than have it happen mid-run, trigger it:
 
 ```bash
-# triggers the one-time CHIANTI download/build — accept the prompt
-python -c "import fiasco; fiasco.Ion('C 2', [1e4])"
+python -c "import fiasco; fiasco.Ion('C 2', [1e4])"   # accept the download prompt
 ```
 
-This work used **CHIANTI 10.1**; if `fiasco` offers a different version, pick 10.1
-to match exactly.
+This work used **CHIANTI 10.1**; if `fiasco` offers a choice, pick 10.1 to match.
 
 ## 4. Point the config at your data + table
 
@@ -117,23 +120,23 @@ L_ext = 15 kpc, GOW LVG table:
 
 ```bash
 # heavy physics → caches the 7 derived fields + per-task results
-MODE=compute LEXT_KPC=15 RUN_TAG=v4 scripts/run_dataset_series.sh
+MODE=compute LEXT_KPC=15 scripts/run_dataset_series.sh
 
 # render all figures from the caches (fast)
-MODE=plot    LEXT_KPC=15 RUN_TAG=v4 scripts/run_dataset_series.sh
+MODE=plot    LEXT_KPC=15 scripts/run_dataset_series.sh
 ```
 
 Or call the module directly:
 
 ```bash
 # whole pipeline (compute + plot)
-LEXT_KPC=15 RUN_TAG=v4 python -m quokka2s.pipeline.tasks.run_pipeline
+LEXT_KPC=15 python -m quokka2s.pipeline.tasks.run_pipeline
 
 # only re-plot from cached results
-LEXT_KPC=15 RUN_TAG=v4 python -m quokka2s.pipeline.tasks.run_pipeline --mode plot
+LEXT_KPC=15 python -m quokka2s.pipeline.tasks.run_pipeline --mode plot
 
 # a single task
-LEXT_KPC=15 RUN_TAG=v4 python -m quokka2s.pipeline.tasks.run_pipeline \
+LEXT_KPC=15 python -m quokka2s.pipeline.tasks.run_pipeline \
     --mode plot --task Plot_VelocityPhase
 
 # wipe both intermediate stores and exit
