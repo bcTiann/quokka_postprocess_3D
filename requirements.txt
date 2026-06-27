@@ -1,0 +1,25 @@
+# Pinned, known-good environment for reproducing the quokka2s pipeline.
+#
+# Usage (after `conda create -n quokka python=3.11 && conda activate quokka`):
+#     pip install -r requirements.txt
+#     pip install -e .
+#
+# yt MUST come from git — the QUOKKA frontend that reads plt* datasets is only
+# complete on main, NOT in the pip-stable release.  main HEAD reads the data
+# identically (verified 2026-06); pin a commit (…/yt@<sha>) for byte-exactness.
+git+https://github.com/yt-project/yt
+
+numpy==2.2.6          # <2.3 required by fiasco 0.6.x
+scipy==1.16.3
+astropy==7.1.1
+h5py==3.16.0
+matplotlib==3.10.6
+unyt==3.0.4
+joblib==1.5.2
+tqdm==4.67.1
+tqdm-joblib==0.0.5
+fiasco==0.6.2         # + CHIANTI database downloaded at runtime (~2.3 GB)
+PyYAML==6.0.3         # yt's QuokkaDataset parses metadata.yaml
+
+# Optional — ONLY needed to REBUILD the DESPOTIC tables, not to run the pipeline:
+# despotic==2.2

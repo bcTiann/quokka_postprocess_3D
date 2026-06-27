@@ -15,10 +15,10 @@ requires-python = ">=3.10"
 # complete on yt's `main` branch (4.5.dev); the pip-stable release (4.4.x) ships
 # only a partial QuokkaDataset.  Install it explicitly BEFORE this package:
 #     python -m pip install "git+https://github.com/yt-project/yt"
-# See REPRODUCE.md.  unyt is pulled in by yt; pinned here only as a floor.
+# See README.md.  unyt is pulled in by yt; pinned here only as a floor.
 #
 # fiasco additionally needs the ~2.3 GB CHIANTI atomic database downloaded at
-# runtime (the [C II] 158 um tables are built at import) — see REPRODUCE.md.
+# runtime (the [C II] 158 um tables are built at import) — see README.md.
 dependencies = [
     "numpy>=2,<2.3",          # <2.3: fiasco 0.6.x is not yet numpy-2.3 compatible
     "scipy>=1.10",
