@@ -164,6 +164,59 @@ the multi-field slices) against the author's reference figures; the `*.h5` under
 
 ---
 
+## Running on an HPC cluster
+
+All machine-specific paths are env-overridable (defaults are repo-relative), so the
+same code runs unchanged — you just point a few env vars at the cluster's
+filesystems. Layout/install don't change: src-layout runs identically, and either
+`pip install -e .` (into a writable conda/venv) **or** `export PYTHONPATH=$PROJECT/src`
+works (the package is pure-Python). Note `requirements.txt` deps must be installed
+either way.
+
+Env knobs:
+
+| Var | Points at | Default |
+|---|---|---|
+| `QUOKKA_ROOT` | repo root (base for the defaults below) | derived from `config.py` location |
+| `YT_DATASET` | the snapshot dir | `$QUOKKA_ROOT/plt0655228` |
+| `DESPOTIC_TABLE_LVG` | the prebuilt table `.npz` | `$QUOKKA_ROOT/output_tables_3D_GOW_LVG/despotic_table.npz` |
+| `QUOKKA_OUTPUT_ROOT` | where figures + task results go | `$QUOKKA_ROOT/output` |
+| `QUOKKA_CACHE_ROOT` | where derived-field caches go (set this if the dataset is on a **read-only** mount) | next to the dataset |
+| `DESPOTIC_HOME` | DESPOTIC LAMDA data (avoids network fetch on offline nodes) | auto-probed |
+| `MPLBACKEND` | matplotlib backend | `Agg` (headless, auto-set) |
+| `QK_SPECTRUM_WORKERS` | spectrum-builder threads (RAM-bound, ~13 GB each) | `2` |
+
+SLURM template:
+
+```bash
+#!/bin/bash
+#SBATCH --job-name=quokka2s --time=08:00:00 --mem=64G --cpus-per-task=8
+set -euo pipefail
+PROJECT=$HOME/quokka_postprocess_3D          # on a node-visible filesystem (NFS/Lustre)
+
+module load anaconda && conda activate quokka2s     # editable install lives here
+# — or, if the cluster python is read-only:  export PYTHONPATH=$PROJECT/src:$PROJECT/deps
+
+export QUOKKA_ROOT=$PROJECT
+export YT_DATASET=$SCRATCH/plt0655228
+export DESPOTIC_TABLE_LVG=$SCRATCH/tables/despotic_table.npz
+export QUOKKA_OUTPUT_ROOT=$SCRATCH/quokka_out
+export QUOKKA_CACHE_ROOT=$SCRATCH/intermediates    # writable mount for field caches
+export MPLBACKEND=Agg
+
+cd "$PROJECT"
+LEXT_KPC=15 python -m quokka2s.pipeline.tasks.run_pipeline --mode compute
+LEXT_KPC=15 python -m quokka2s.pipeline.tasks.run_pipeline --mode plot
+```
+
+One-time on the **login node** (it has network; compute nodes often don't):
+`pip install -r requirements.txt && pip install -e .` then **pre-warm CHIANTI**
+`python -c "import fiasco; fiasco.Element('C')"` (the 2.3 GB DB download would
+otherwise hang a batch job). Keep `~/.fiasco` on a node-visible filesystem. Make
+sure `--mem` exceeds the **~14 GB** spectra peak.
+
+---
+
 ## Known-good versions
 
 Python 3.11.14 · yt 4.5.dev0 (git `main`) · numpy 2.2.6 (`<2.3`: fiasco) ·

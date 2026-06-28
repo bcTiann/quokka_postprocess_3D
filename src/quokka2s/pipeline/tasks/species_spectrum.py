@@ -16,6 +16,7 @@ need the velocity PDFs from ``Build_VelocityPhase``.
 """
 from __future__ import annotations
 
+import os
 from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
@@ -102,7 +103,9 @@ class Build_SpeciesSpectrum(BuildTask):
         # 2 workers: ~13 GB peak per species — under the 16 GB Mac limit.  Building
         # 3 LOS (not 1) triples the per-species wall time; peak RAM is unchanged
         # (still ≤2 cubes in flight; the store reuses lum/width/volume across LOS).
-        N_WORKERS = 2
+        # Pinned low (2) because each worker holds a ~13 GB spectral cube; raise
+        # via QK_SPECTRUM_WORKERS when more RAM is available (e.g. an HPC node).
+        N_WORKERS = int(os.environ.get("QK_SPECTRUM_WORKERS", "2"))
         spectra: dict[str, dict[str, dict]] = {
             sp['name']: {'x': {}, 'y': {}, 'z': {}} for sp in SPECIES_CFG
         }

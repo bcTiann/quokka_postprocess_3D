@@ -30,8 +30,13 @@
 #   scripts/run_dataset_series.sh plt0655228 plt0857000  # a 2-dataset series
 
 set +e
-ROOT=/Users/baochen/quokka_postprocessing
-PY=/opt/homebrew/Caskroom/miniconda/base/envs/yt-env/bin/python
+# Portable roots: repo derived from the script location; interpreter defaults to
+# the local macOS yt-env but falls back to PATH `python` wherever that path is
+# absent (e.g. a Linux cluster). Override with QUOKKA_ROOT= / PYTHON=.
+ROOT="${QUOKKA_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
+PY="${PYTHON:-/opt/homebrew/Caskroom/miniconda/base/envs/yt-env/bin/python}"
+[ -x "$PY" ] || PY="$(command -v python)"
+export MPLBACKEND="${MPLBACKEND:-Agg}"   # headless-safe on compute nodes
 LOGS=$ROOT/logs/dataset_series
 mkdir -p "$LOGS"
 

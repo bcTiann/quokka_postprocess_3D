@@ -12,12 +12,16 @@ dVdr axis.
 """
 from __future__ import annotations
 import sys, time
+from pathlib import Path
 import numpy as np
-sys.path.insert(0, '/Users/baochen/quokka_postprocessing/src')
+_SRC = Path(__file__).resolve().parents[1] / 'src'   # scripts/ → repo → src
+if str(_SRC) not in sys.path:
+    sys.path.insert(0, str(_SRC))
 from quokka2s.tables.solver import calculate_single_despotic_point
+from quokka2s.pipeline.prep import config as cfg
 from despotic.chemistry import GOW
 
-TABLE_PATH = '/Users/baochen/quokka_postprocessing/output_tables_3D_GOW_LVG/despotic_table.npz'
+TABLE_PATH = cfg.DESPOTIC_TABLE_PATH_LVG
 
 tbl = np.load(TABLE_PATH, allow_pickle=True)
 nH_grid = tbl['nH_values']

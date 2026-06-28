@@ -20,9 +20,12 @@
 #     NL99_GC 0 15
 
 set +e
-ROOT=/Users/baochen/quokka_postprocessing
+# Portable roots (see run_dataset_series.sh): repo from script location;
+# interpreter = local macOS yt-env, falling back to PATH `python` if absent.
+ROOT="${QUOKKA_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 LOGS=$ROOT/logs/v4_pipeline_runs
-PY=/opt/homebrew/Caskroom/miniconda/base/envs/yt-env/bin/python
+PY="${PYTHON:-/opt/homebrew/Caskroom/miniconda/base/envs/yt-env/bin/python}"
+[ -x "$PY" ] || PY="$(command -v python)"
 
 TABLE_PATH=$1
 TABLE_TAG=$2

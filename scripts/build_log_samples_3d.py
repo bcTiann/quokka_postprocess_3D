@@ -21,14 +21,19 @@ import astropy.units as u
 
 # Canonical H mass fraction from config (single source of truth, so n_H here
 # matches the pipeline); m_H derived from astropy rather than hardcoded.
-sys.path.insert(0, '/Users/baochen/quokka_postprocessing/src')
+_SRC = Path(__file__).resolve().parents[1] / 'src'   # scripts/ → repo → src
+if str(_SRC) not in sys.path:
+    sys.path.insert(0, str(_SRC))
 from quokka2s.pipeline.prep import config as cfg
+from quokka2s.pipeline.cache import cache_root_for_dataset
 
-CACHE = Path('/Users/baochen/quokka_postprocessing/intermediates/plt0655228/fields')
-PLT   = Path('/Users/baochen/quokka_postprocessing/plt0655228')
+# Derive from the configured dataset (honours YT_DATASET / QUOKKA_* env), not a
+# hardcoded snapshot, so this works on any machine and for any snapshot.
+CACHE = cache_root_for_dataset(cfg.YT_DATASET_PATH) / 'fields'
+PLT   = Path(cfg.YT_DATASET_PATH)
 
 ap = argparse.ArgumentParser(description=__doc__)
-ap.add_argument('--out', default='/Users/baochen/quokka_postprocessing/log_samples_3d.npy',
+ap.add_argument('--out', default=str(_SRC.parent / 'log_samples_3d.npy'),
                 help='destination .npy (shape N x 3 by default, N x 4 with --include-mass)')
 ap.add_argument('--stride', type=int, default=1,
                 help='stride to subsample cells (default 1 = use all); use 4-8 to slim down')

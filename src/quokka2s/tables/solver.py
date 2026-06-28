@@ -20,9 +20,21 @@ warnings.filterwarnings(
 # silently falls back to fetching LAMDA files from the web on first use
 # — fragile when the network is flaky.
 if "DESPOTIC_HOME" not in os.environ:
-    _despotic_home = "/Users/baochen/despotic/despotic/chemistry"
-    if os.path.isdir(os.path.join(_despotic_home, "LAMDA")):
-        os.environ["DESPOTIC_HOME"] = _despotic_home
+    # Probe portable locations for the bundled LAMDA data first, then a
+    # local-dev fallback.  Export DESPOTIC_HOME to override.
+    import importlib.util as _ilu
+    _repo_root = os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.dirname(os.path.abspath(__file__)))))   # src/quokka2s/tables/solver.py → repo
+    _candidates = []
+    _spec = _ilu.find_spec("despotic")                  # does not import despotic
+    if _spec and _spec.submodule_search_locations:
+        _candidates.append(os.path.join(list(_spec.submodule_search_locations)[0], "chemistry"))
+    _candidates.append(_repo_root)                       # repo-root LAMDA/ (shipped in-tree)
+    _candidates.append("/Users/baochen/despotic/despotic/chemistry")  # local-dev fallback
+    for _despotic_home in _candidates:
+        if os.path.isdir(os.path.join(_despotic_home, "LAMDA")):
+            os.environ["DESPOTIC_HOME"] = _despotic_home
+            break
 
 import contextlib
 import io

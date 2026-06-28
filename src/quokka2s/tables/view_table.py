@@ -8,6 +8,7 @@ By default plots a few evenly-spaced dVdr slices to keep the output count
 manageable. Pass --all to dump every dVdr index (35 slices × 10 fields = 350
 PNGs)."""
 from pathlib import Path
+import os
 import argparse
 import numpy as np
 import matplotlib.pyplot as plt
@@ -67,8 +68,9 @@ def main():
     # Prefer the 3D samples (per-dVdr slice filter via plotting.py).  Fall back
     # to 2D file (overlay is then identical on every slice).
     samples = None
-    for sp in ("/Users/baochen/quokka_postprocessing/log_samples_3d.npy",
-               "/Users/baochen/quokka_postprocessing/log_samples.npy"):
+    _repo = Path(__file__).resolve().parents[3]   # src/quokka2s/tables/view_table.py → repo
+    for sp in (os.environ.get("LOG_SAMPLES_3D", str(_repo / "log_samples_3d.npy")),
+               os.environ.get("LOG_SAMPLES_2D", str(_repo / "log_samples.npy"))):
         if Path(sp).exists():
             samples = np.load(sp)
             print(f"[view_table] samples loaded from {sp}  shape={samples.shape}")

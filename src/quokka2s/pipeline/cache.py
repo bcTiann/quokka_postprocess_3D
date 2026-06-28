@@ -288,8 +288,16 @@ def cache_root_for_dataset(dataset_path: str | Path) -> Path:
     Example:
         dataset_path = /data/run1/plt0042
         → /data/run1/intermediates/plt0042/
+
+    The default writes the cache *next to the dataset*, which fails if the
+    dataset sits on a read-only mount (common on HPC).  Set QUOKKA_CACHE_ROOT to
+    redirect the whole intermediates tree to a writable location; the per-dataset
+    namespacing (<root>/<dataset_name>) is preserved so datasets never collide.
     """
     p = Path(dataset_path).resolve()
+    _root = os.environ.get("QUOKKA_CACHE_ROOT")
+    if _root:
+        return Path(_root) / p.name
     return p.parent / 'intermediates' / p.name
 
 

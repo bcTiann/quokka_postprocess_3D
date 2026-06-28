@@ -10,6 +10,12 @@ CLI:
 """
 from __future__ import annotations
 
+import os
+# Force a non-interactive matplotlib backend before any task imports pyplot, so
+# the pipeline renders on a headless compute node (no $DISPLAY).  setdefault
+# respects an explicit MPLBACKEND from the environment.
+os.environ.setdefault("MPLBACKEND", "Agg")
+
 import argparse
 import shutil
 import sys
