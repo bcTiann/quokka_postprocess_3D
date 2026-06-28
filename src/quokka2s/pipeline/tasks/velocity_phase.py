@@ -57,9 +57,6 @@ class Build_VelocityPhase(BuildTask):
     HIST_N_BINS_FIXED = 120
     FIXED_RANGE_KMS   = V_RANGE_KMS_FIXED
 
-    def __init__(self, config):
-        super().__init__(config)
-
     def compute(self, context: PipelinePlotContext) -> dict:
         p = context.provider
         vx_u,  _ = p.get_slab_z(('gas', 'velocity_x'))
@@ -186,9 +183,6 @@ class Build_VelocityPhase(BuildTask):
 # ─── Plot ───────────────────────────────────────────────────────────────────
 class Plot_VelocityPhase(PlotTask):
     """Render PhaseSigmaV_bar.png + PhaseSigmaV_hist.png from Build_VelocityPhase."""
-
-    def __init__(self, config):
-        super().__init__(config)
 
     def _gather_inputs(self, context: PipelinePlotContext) -> dict:
         return self._load_one(context, 'Build_VelocityPhase')

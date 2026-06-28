@@ -156,9 +156,6 @@ class Build_SpeciesSpectrum(BuildTask):
 class Plot_SpeciesSpectrum(PlotTask):
     """Render the IntegratedSpectrum figures from Build_SpeciesSpectrum."""
 
-    def __init__(self, config):
-        super().__init__(config)
-
     def _gather_inputs(self, context: PipelinePlotContext) -> dict:
         return self._load_one(context, 'Build_SpeciesSpectrum')
 
