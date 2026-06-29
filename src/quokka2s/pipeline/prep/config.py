@@ -71,13 +71,13 @@ PROJECTION_AXIS = 'x'     # Axis for projection ('x', 'y', or 'z')
 # ±z gets no extension (the 4–8 kpc box already spans the stratified disk
 # beyond its scale heights).  Set to 0.0 to recover the original 6-face
 # harmonic mean (no extension).
-COLUMN_EXTENSION_LATERAL_KPC = 9.0
+COLUMN_EXTENSION_LATERAL_KPC = 15.0
 # Override via env: `LEXT_KPC=0 python -m quokka2s.pipeline.tasks.run_pipeline`
 _lext_override = os.environ.get('LEXT_KPC')
 if _lext_override is not None:
     COLUMN_EXTENSION_LATERAL_KPC = float(_lext_override)
 # Optional RUN_TAG env adds a suffix to OUTPUT_DIR (e.g. RUN_TAG=v4 ->
-# output/..._Lext9kpc_v4/) so re-runs don't overwrite earlier output dirs.
+# output/..._Lext15kpc_v4/) so re-runs don't overwrite earlier output dirs.
 _RUN_TAG = os.environ.get('RUN_TAG', '')
 _RUN_TAG_SUFFIX = f'_{_RUN_TAG}' if _RUN_TAG else ''
 
@@ -92,7 +92,7 @@ COLUMN_DENSITY_MEAN = os.environ.get('COLDEN_MEAN', 'harmonic')
 
 # OUTPUT_DIR is derived after COLUMN_EXTENSION_LATERAL_KPC so the directory
 # name encodes the L_ext value — different L_ext runs land in sibling dirs
-# (e.g. plt0655228_down1_Lext9kpc/ vs plt0655228_down1_Lext15kpc/) and do not
+# (e.g. plt0655228_down1_Lext0kpc/ vs plt0655228_down1_Lext15kpc/) and do not
 # overwrite each other.  task_intermediates/ lives inside, so cached compute
 # results are separated cleanly as well.
 _LEXT_TAG = f"_Lext{COLUMN_EXTENSION_LATERAL_KPC:g}kpc"
@@ -116,5 +116,4 @@ SPATIAL_BIN = 4
 # --- Plotting Parameters ---
 FIGURE_UNITS = 'pc'
 CMAP = 'viridis'
-
 

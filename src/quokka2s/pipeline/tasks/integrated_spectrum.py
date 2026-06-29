@@ -72,7 +72,7 @@ SPECIES_CFG = [
     {'name': 'HI',      'freq_field': 'HI_freq',      'lum_field': 'HI_luminosity',      'width_field': 'HI_thermal_width',      'color': 'goldenrod'},
 ]
 
-N_CHANNELS  = 300    # 300 channels sufficient: LSF σ≈127ch at R=1e4 smears all fine structure
+N_CHANNELS  = 300    # 300 channels sufficient: LSF σ≈38ch at R=1e4 (±50 km/s grid) smears all fine structure
 V_RANGE_KMS = 50.0   # ±50 km/s window
 
 # (proj_axis, doppler_field, cell_area_axes)
