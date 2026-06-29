@@ -178,7 +178,22 @@ The gas is split into 5 disjoint ISM temperature phases by `classify_temperature
 | WIM | $10^4 \le T < 10^{5.5}$ K |
 | HIM | $T \ge 10^{5.5}\,(\approx 3.16\times10^5)$ K |
 
-For each phase $P$ we want a $\sigma_P$. The key design choice (changed **2026-06-29**, see below): each phase's deviations are measured about the **single global** mass-weighted mean velocity $v_{\rm global}$, **not** the phase's own mean.
+For each phase $P$ (say, the WIM) we want one number $\sigma_P$: *how spread out are the velocities of the gas in this phase?* There are **two different things** that could mean — and the 2026-06-29 change switched from the first to the second:
+
+- **(old) spread about the phase's OWN average** — how much the WIM gas scatters around the WIM's *own* bulk velocity. This is the phase's purely **internal** spread.
+- **(new) spread about the WHOLE gas's average** — how far the WIM velocities are from the bulk velocity of *all* gas together. This *also* picks up any systematic **streaming** of the WIM relative to the rest of the gas.
+
+> **Analogy.** Measuring how "spread out" a marching band's trumpet section is. *Own-average:* how scattered the trumpets are around the trumpets' **own** center — their internal tightness. *Global-average:* how scattered they are around the **whole band's** center — which is large if the trumpet section has drifted off as a group, even when the trumpets are tight among themselves. We switched to the global-average version.
+
+**Three velocities — keep them straight (this is the usual point of confusion):**
+
+| symbol | what it is | averaged over which cells |
+|---|---|---|
+| $v_i$ | one cell's velocity component | the single cell $i$ |
+| $\langle v\rangle_P$ | the **phase's own** mass-weighted mean | cells in phase $P$ **only** |
+| $v_{\rm global}$ | the **all-gas** mass-weighted mean | **every** cell, all phases |
+
+$\sigma_P$ asks: *how far do the phase-$P$ cells ($v_i$) sit from $v_{\rm global}$?* — using $v_{\rm global}$ (not $\langle v\rangle_P$) as the zero point.
 
 ### The two steps
 
@@ -209,16 +224,31 @@ $$
 \qquad \sigma_{P,\rm own}^2 \equiv \sum_{i\in P} w_i^P (v_i - \langle v\rangle_P)^2 .
 $$
 
-**Proof.** Write $v_i - a = (v_i - \langle v\rangle_P) + (\langle v\rangle_P - a)$ and expand:
+**Proof — every step.** The trick: split each deviation *through the phase's own mean*. For each cell,
 
 $$
-\sum_i w_i^P (v_i - a)^2
-= \underbrace{\sum_i w_i^P (v_i-\langle v\rangle_P)^2}_{\sigma_{P,\rm own}^2}
-+ 2(\langle v\rangle_P - a)\underbrace{\sum_i w_i^P (v_i - \langle v\rangle_P)}_{=\,0}
-+ (\langle v\rangle_P - a)^2 \underbrace{\sum_i w_i^P}_{=\,1}.
+v_i - a \;=\; \underbrace{(v_i - \langle v\rangle_P)}_{\text{deviation from own mean}\;\equiv\,d_i}
+\;+\; \underbrace{(\langle v\rangle_P - a)}_{\text{a constant, same for every }i\;\equiv\,b}.
 $$
 
-The cross term vanishes because $\sum_i w_i^P (v_i - \langle v\rangle_P) = \langle v\rangle_P - \langle v\rangle_P = 0$ (this is the defining property of the mean). $\blacksquare$
+So $v_i - a = d_i + b$, where $b$ does **not** depend on $i$ (it's the gap between the phase's own mean and the reference $a$). Square with $(d_i+b)^2 = d_i^2 + 2bd_i + b^2$, multiply by $w_i^P$, and sum over the phase's cells:
+
+$$
+\sum_i w_i^P (v_i-a)^2
+= \underbrace{\sum_i w_i^P d_i^2}_{\text{(I)}}
+\;+\; \underbrace{2b\sum_i w_i^P d_i}_{\text{(II)}}
+\;+\; \underbrace{b^2\sum_i w_i^P}_{\text{(III)}} .
+$$
+
+Now each piece on its own:
+
+- **(I)** $= \displaystyle\sum_i w_i^P (v_i-\langle v\rangle_P)^2 = \sigma_{P,\rm own}^2$ — the phase's **internal** variance, by definition.
+- **(II)** $= 0$. The mass-weighted deviations from the mean always cancel:
+  $\displaystyle\sum_i w_i^P d_i = \sum_i w_i^P v_i - \langle v\rangle_P\!\sum_i w_i^P = \langle v\rangle_P - \langle v\rangle_P\cdot 1 = 0$.
+  (That cancellation is *exactly* what makes $\langle v\rangle_P$ "the mean" — and it's why the cross term drops, just like the §0 proof.)
+- **(III)** $= b^2\displaystyle\sum_i w_i^P = b^2\cdot 1 = (\langle v\rangle_P - a)^2$.
+
+Add the three: $\;\sigma_{P,\rm own}^2 + 0 + (\langle v\rangle_P - a)^2$. $\blacksquare$
 
 Setting $a = v_{\rm global}$ gives the relation stated in the docstring (`utils.py:142`):
 
