@@ -2,6 +2,8 @@
 
 import yt
 import numpy as np
+import astropy.constants as _const_ap
+import astropy.units as _u_ap
 from scipy.special import erf as scipy_erf
 from yt.units import K, mp, kb, mh, planck_constant, cm, m, s, g, erg, amu, kpc
 from ...analysis import along_sight_cumulation
@@ -14,8 +16,9 @@ from ...tables.lookup import TableLookup
 m_H = mh.in_cgs()
 lambda_Halpha = 656.3e-7 * cm
 h = planck_constant
-speed_of_light_value_in_ms = 299792458
-c = speed_of_light_value_in_ms * m / s
+c = float(_const_ap.c.to('cm/s').value) * (cm / s)   # speed of light from astropy (not hardcoded)
+# eV → K conversion (= e / k_B), derived from astropy (was the hardcoded 11604.518)
+_EV_TO_K = float((1.0 * _u_ap.eV / _const_ap.k_B).to('K').value)
 TABLE_LOOKUP_CACHE: TableLookup | None = None
 
 # Lower bound on |∇·v|/3 used as the LVG dVdr field. Cells with smaller
@@ -30,7 +33,14 @@ DVDR_FLOOR = 1e-18
 # (Saha CIE + α_B / 2-level / etc.) is used instead.  3000 K is well below
 # the WIM thermal floor (~8000 K) yet high enough that DESPOTIC's cold
 # molecular network has nothing to say.
-T_QK_TWO_REGIME_K = 3000.0   # K
+T_QK_TWO_REGIME_K = 3000.0   # K  (DESPOTIC table ↔ Saha boundary)
+# Above T_CIE_K, collisional-ionization equilibrium (CIE, from CHIANTI) replaces
+# Saha: DESPOTIC can't model gas this hot, and CIE is the standard model for
+# diffuse T > 1e4 K gas (SLICC-6 convention).  THREE regimes for the line fields:
+#     T < 3000 K        → DESPOTIC 3D table        (unchanged)
+#     3000 ≤ T < 1e4 K  → Saha CIE (analytic)      (unchanged)
+#     T ≥ 1e4 K         → CHIANTI CIE ion fractions (new; density-independent)
+T_CIE_K = 1.0e4   # K  (Saha ↔ CHIANTI-CIE boundary)
 
 # ─── H atomic / line constants ──────────────────────────────────────
 # Per user rule [[no-silent-simplification]] (2026-06-20): the three
@@ -97,7 +107,7 @@ print(f"[physics_fields] H constants: "
 #
 # Per user-stated rule `[[no-silent-simplification]]`: if fiasco / CHIANTI
 # is missing we RAISE rather than fall back to analytic fits.
-A_C_TOTAL = 1.6e-4   # GOW xC default; total gas-phase C per H — see [[despotic-setup-presets]]
+A_C_TOTAL = cfg.A_C   # gas-phase C per H (moved to config.py; GOW xC default = 1.6e-4)
 
 
 def _build_cii_lte_atomic_tables():
@@ -167,12 +177,35 @@ def _build_cii_lte_atomic_tables():
 (_CII_T_GRID, _CII_U_C0, _CII_U_CP, _CII_U_CPP,
  _CII_I_C_EV, _CII_I_C2_EV, _CII_A_UL, _CII_NU_HZ,
  _CII_T_STAR, _CII_G_L, _CII_G_U) = _build_cii_lte_atomic_tables()
-_CII_T_C_K  = _CII_I_C_EV  * 11604.518   # eV → K via k_B (1 eV = 11604.518 K)
-_CII_T_C2_K = _CII_I_C2_EV * 11604.518   # C+ → C++ ionisation T scale
+_CII_T_C_K  = _CII_I_C_EV  * _EV_TO_K   # eV → K via k_B (astropy-derived)
+_CII_T_C2_K = _CII_I_C2_EV * _EV_TO_K   # C+ → C++ ionisation T scale
 print(f"[physics_fields] CHIANTI [C II] LTE tables built: "
       f"A_ul={_CII_A_UL:.3e} s⁻¹, ν={_CII_NU_HZ:.3e} Hz, "
       f"T*={_CII_T_STAR:.3f} K, g_l={_CII_G_L:.0f}, g_u={_CII_G_U:.0f}, "
       f"I_C={_CII_I_C_EV:.4f} eV, I_C2={_CII_I_C2_EV:.4f} eV")
+
+
+# ─── Collisional-Ionization-Equilibrium (CIE) ion fractions from CHIANTI ───
+# For the hot branch (T ≥ T_CIE_K) we use CHIANTI's CIE ion-fraction tables —
+# density-independent f(T) — instead of Saha.  Built once at import via fiasco.
+def _build_cie_ion_fractions():
+    """Return (T_grid, x_H0, x_H+, x_C+, x_C++) from CHIANTI CIE.
+
+    fiasco.Element(...).equilibrium_ionization = fraction of the element in each
+    ionization stage as a function of T only (CIE; density-independent).
+    Columns: hydrogen → [H0, H+];  carbon → [C0, C+, C++, ...].
+    """
+    import fiasco
+    T_grid_q = np.logspace(4.0, 8.5, 600) * _u_ap.K        # CIE valid for T ≥ 1e4 K
+    T_grid   = T_grid_q.to('K').value
+    xH = np.nan_to_num(np.asarray(fiasco.Element('hydrogen', T_grid_q).equilibrium_ionization))
+    xC = np.nan_to_num(np.asarray(fiasco.Element('carbon',   T_grid_q).equilibrium_ionization))
+    return (T_grid, xH[:, 0], xH[:, 1], xC[:, 1], xC[:, 2])
+
+(_CIE_T_GRID, _CIE_X_H0, _CIE_X_HP, _CIE_X_CP, _CIE_X_CPP) = _build_cie_ion_fractions()
+print(f"[physics_fields] CHIANTI CIE ion fractions built (T ≥ {T_CIE_K:.0e} K): "
+      f"x_C+ peak={_CIE_X_CP.max():.2f}, x_H+(3e4K)="
+      f"{np.interp(3e4, _CIE_T_GRID, _CIE_X_HP):.2f}")
 
 
 
@@ -647,15 +680,21 @@ def _Halpha_luminosity(field, data):
     n_ion_cold = data[('gas', 'H+')].to('cm**-3').value
     T_for_alpha_cold = T_dsp
 
-    # ── Hot branch (Saha CIE on T_QK) ──
+    # ── Warm-Saha branch (3000 ≤ T_QK < 1e4 K): Saha CIE on T_QK ──
     x_ion = _x_H_ion_saha(T_qk, n_H)
     n_e_hot   = x_ion * n_H       # H-only: n_e = x_H+ · n_H
     n_ion_hot = x_ion * n_H       # same as n_e
     T_for_alpha_hot = T_qk
 
-    # Merge branches.
-    n_e          = np.where(hot, n_e_hot,         n_e_cold)
-    n_ion        = np.where(hot, n_ion_hot,       n_ion_cold)
+    # ── Hot-CIE branch (T_QK ≥ 1e4 K): x_H+ from CHIANTI CIE (density-indep) ──
+    x_ion_cie = np.interp(T_qk, _CIE_T_GRID, _CIE_X_HP)
+    n_e_cie   = x_ion_cie * n_H
+    n_ion_cie = x_ion_cie * n_H
+
+    # 3-regime merge (T≥1e4 → CIE;  3000≤T<1e4 → Saha;  T<3000 → DESPOTIC).
+    # Nested np.where (see _Cplus_luminosity_two_regime note on np.select+astropy).
+    n_e          = np.where(T_qk >= T_CIE_K, n_e_cie,   np.where(hot, n_e_hot,   n_e_cold))
+    n_ion        = np.where(T_qk >= T_CIE_K, n_ion_cie, np.where(hot, n_ion_hot, n_ion_cold))
     T_for_alpha  = np.where(hot, T_for_alpha_hot, T_for_alpha_cold)
 
     # α_B(T)  — Draine 2011 Eq. 14.6 hydrogenic fit, Z = 1.
@@ -714,8 +753,12 @@ def _HI_luminosity(field, data):
     x_HII    = _x_H_ion_saha(T_qk, n_H_sim)
     n_HI_hot = (1.0 - x_HII) * n_H_sim
 
-    # ── Merge + apply emissivity formula ─────────────────────────────
-    n_HI = np.where(hot, n_HI_hot, n_HI_cold)
+    # ── Hot-CIE branch (T_QK ≥ 1e4 K): neutral fraction from CHIANTI CIE ──
+    x_H0_cie = np.interp(T_qk, _CIE_T_GRID, _CIE_X_H0)
+    n_HI_cie = x_H0_cie * n_H_sim
+
+    # ── Merge (3-regime: T≥1e4→CIE, 3000≤T<1e4→Saha, T<3000→DESPOTIC) ──
+    n_HI = np.where(T_qk >= T_CIE_K, n_HI_cie, np.where(hot, n_HI_hot, n_HI_cold))
 
     A_10_val = A_HI_21                       # 2.85e-15 s^-1 (Furlanetto+2006)
     nu_val   = NU_HI_21                      # 1.420405751768e9 Hz (NIST)
@@ -847,7 +890,17 @@ def _Cplus_luminosity_two_regime(field, data):
     h_cgs  = float(h.in_cgs().value)
     eps_hot = n_u * _CII_A_UL * h_cgs * _CII_NU_HZ
 
-    eps = np.where(hot, eps_hot, eps_cold)
+    # ── Hot-CIE branch (T ≥ T_CIE_K): x_C+ from CHIANTI CIE (density-indep);
+    #    same LTE level-pop + emissivity, only the ion fraction source changes. ──
+    x_Cp_cie = np.interp(T_safe, _CIE_T_GRID, _CIE_X_CP)
+    n_Cp_cie = x_Cp_cie * A_C_TOTAL * n_H_sim
+    n_u_cie  = n_Cp_cie * r / (1.0 + r)
+    eps_cie  = n_u_cie * _CII_A_UL * h_cgs * _CII_NU_HZ
+
+    # 3-regime: T≥1e4 → CIE;  3000≤T<1e4 → Saha (hot);  T<3000 → DESPOTIC (cold).
+    # Nested np.where (not np.select — astropy's np.select helper mishandles an
+    # array `default` during yt field-dependency detection).
+    eps = np.where(T_qk >= T_CIE_K, eps_cie, np.where(hot, eps_hot, eps_cold))
     return yt.YTArray(eps, 'erg/s/cm**3')
 
 

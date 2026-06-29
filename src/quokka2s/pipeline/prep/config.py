@@ -56,6 +56,7 @@ _OUTPUT_ROOT = os.environ.get("QUOKKA_OUTPUT_ROOT", str(_PROJECT_ROOT / "output"
 # C+ planned to follow the same pattern using CHIANTI/fiasco).
 
 X_H = 0.74  # Mass fraction of Hydrogen
+A_C = 1.6e-4  # gas-phase carbon abundance per H nucleus (GOW xC default; used by [C II])
 A_LAMBDA_OVER_NH = 4e-22 * cm**2  # Dust extinction cross-section (mag * cm^2 / N_H)
 
 # --- Simulation Control ---

@@ -46,7 +46,9 @@ import numpy as np
 # changes (e.g. the DESPOTIC table's `tg_final` computation, the chemistry
 # network, the column-density direction symmetrisation). All cached files
 # stamped with an older value will be silently invalidated and rebuilt.
-CACHE_SCHEMA_VERSION = 5  # 2026-06-13: bumped after dropping T_CUTOFF and the
+CACHE_SCHEMA_VERSION = 6  # 2026-06-29: T≥1e4K line emission (C+/Hα/HI) → CHIANTI CIE
+                          # (was Saha) + astropy-derived c / eV→K / A_C.  Older note:
+                          # 5 = 2026-06-13: bumped after dropping T_CUTOFF and the
                           # HIGH_T_4D_BLEND / 4D-table μγ branch.  Line lum values
                           # change (no more per-species T cutoff zeroing), so every
                           # cached luminosity / number-density / temperature_despotic
