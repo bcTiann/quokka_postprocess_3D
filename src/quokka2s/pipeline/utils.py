@@ -106,17 +106,39 @@ def spaxel_moments_along_axis(weight: np.ndarray,
 
 def mass_weighted_sigma_by_phase(vel_kms: np.ndarray, rho: np.ndarray,
                                   T_K: np.ndarray) -> dict[str, dict[str, float]]:
-    """Per-phase σ_v. Returns {phase: {'v_mean', 'sigma', 'mass_frac', 'cell_frac'}}."""
+    """Per-phase σ_v, each measured about the GLOBAL (all-phase) mass-weighted
+    mean velocity — NOT each phase's own mean.
+
+        v_global  = Σ_all ρ_i v_i / Σ_all ρ_i                 (every cell, all phases)
+        σ_phase²  = Σ_phase w_i (v_i − v_global)²,  w_i = ρ_i / Σ_phase ρ
+
+    So a phase that streams relative to the bulk gets a larger σ — it now includes
+    that bulk offset:  σ_phase² = σ_phase,own² + (v_mean_phase − v_global)².
+    (Changed 2026-06-29 from per-phase-COM to this global-COM subtraction.)
+
+    ``v_mean`` is still each phase's OWN bulk velocity (so v_mean − v_global is the
+    offset).  Returns {phase: {'v_mean', 'sigma', 'mass_frac', 'cell_frac'}}.
+    """
     masks       = classify_temperature_phase(T_K)
     total_mass  = rho.sum()
     total_cells = T_K.size
+    # Global mass-weighted mean velocity (all phases together) — the common
+    # reference frame every phase's σ is now measured about.
+    v_global, _ = mass_weighted_sigma(vel_kms, rho)
     out = {}
     for phase, mask in masks.items():
-        v_m, sig = mass_weighted_sigma(vel_kms[mask], rho[mask])
+        m_p = rho[mask]
+        tot = float(m_p.sum())
+        if tot > 0 and np.isfinite(v_global):
+            w      = m_p / tot
+            v_mean = float(np.sum(vel_kms[mask] * w))                              # phase's own mean
+            sigma  = float(np.sqrt(np.sum((vel_kms[mask] - v_global) ** 2 * w)))   # about GLOBAL mean
+        else:
+            v_mean = sigma = float('nan')
         out[phase] = {
-            'v_mean':    v_m,
-            'sigma':     sig,
-            'mass_frac': float(rho[mask].sum() / total_mass) if total_mass > 0 else 0.0,
+            'v_mean':    v_mean,
+            'sigma':     sigma,
+            'mass_frac': float(tot / total_mass) if total_mass > 0 else 0.0,
             'cell_frac': float(mask.sum() / total_cells),
         }
     return out
