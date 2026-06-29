@@ -94,8 +94,11 @@ It only downloads once and is shared across all conda environments (it lives in 
 home directory). If you'd rather pull it now than have it happen mid-run, trigger it:
 
 ```bash
-python -c "import fiasco; fiasco.Ion('C 2', [1e4])"   # accept the download prompt
+python -c "import astropy.units as u; import fiasco; print(fiasco.Ion('C 2', 1e4*u.K))"   # accept the download prompt
 ```
+
+The temperature must carry an Astropy unit; `fiasco` 0.6 rejects unitless lists
+such as `[1e4]` before it checks or downloads the database.
 
 This work used **CHIANTI 10.1**; if `fiasco` offers a choice, pick 10.1 to match.
 
@@ -211,7 +214,8 @@ LEXT_KPC=15 python -m quokka2s.pipeline.tasks.run_pipeline --mode plot
 
 One-time on the **login node** (it has network; compute nodes often don't):
 `pip install -r requirements.txt && pip install -e .` then **pre-warm CHIANTI**
-`python -c "import fiasco; fiasco.Element('C')"` (the 2.3 GB DB download would
+`python -c "import astropy.units as u; import fiasco; print(fiasco.Ion('C 2', 1e4*u.K))"`
+(the 2.3 GB DB download would
 otherwise hang a batch job). Keep `~/.fiasco` on a node-visible filesystem. Make
 sure `--mem` exceeds the **~14 GB** spectra peak.
 
