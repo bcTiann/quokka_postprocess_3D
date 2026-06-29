@@ -53,14 +53,56 @@ $$
 \;=\; \mathbb{E}[v^2] - \mathbb{E}[v]^2 .
 $$
 
-**Proof.** Expand the square and use $\sum_i w_i = 1$ and $\sum_i w_i v_i = \langle v\rangle$:
+**Proof — every step spelled out.** Throughout, $\langle v\rangle$ is a *single fixed number* (the mean), identical for every cell $i$, so it can be pulled out of any sum over $i$.
+
+**Step 1 — expand the square.** Use the binomial $(a-b)^2 = a^2 - 2ab + b^2$ with $a=v_i$ and $b=\langle v\rangle$:
+
+$$
+(v_i - \langle v\rangle)^2 \;=\; v_i^2 \;-\; 2\,v_i\langle v\rangle \;+\; \langle v\rangle^2 .
+$$
+
+That `2` is simply the cross term of $(a-b)^2$ — it is **not** a typo. Watch where it goes.
+
+**Step 2 — multiply every term by $w_i$ and sum over $i$.** A sum splits over a $+/-$ of terms, so we get three separate sums:
 
 $$
 \sum_i w_i (v_i - \langle v\rangle)^2
-= \sum_i w_i v_i^2 - 2\langle v\rangle\sum_i w_i v_i + \langle v\rangle^2\sum_i w_i
-= \mathbb{E}[v^2] - 2\langle v\rangle^2 + \langle v\rangle^2
-= \mathbb{E}[v^2] - \langle v\rangle^2. \qquad\blacksquare
+= \underbrace{\sum_i w_i v_i^2}_{\text{(A)}}
+\;-\; \underbrace{\sum_i w_i\,(2\,v_i\langle v\rangle)}_{\text{(B)}}
+\;+\; \underbrace{\sum_i w_i\,\langle v\rangle^2}_{\text{(C)}} .
 $$
+
+**Step 3 — pull the constants ($2$, $\langle v\rangle$, $\langle v\rangle^2$) outside each sum:**
+
+$$
+\text{(A)} = \mathbb{E}[v^2], \qquad
+\text{(B)} = 2\langle v\rangle\underbrace{\sum_i w_i v_i}_{=\,\langle v\rangle}, \qquad
+\text{(C)} = \langle v\rangle^2\underbrace{\sum_i w_i}_{=\,1}.
+$$
+
+**Step 4 — substitute the two facts** $\displaystyle\sum_i w_i v_i = \langle v\rangle$ (definition of the mean) and $\displaystyle\sum_i w_i = 1$ (weights sum to one). Then (B) $= 2\langle v\rangle\cdot\langle v\rangle = 2\langle v\rangle^2$ and (C) $= \langle v\rangle^2\cdot 1 = \langle v\rangle^2$, giving
+
+$$
+\sum_i w_i (v_i - \langle v\rangle)^2
+\;=\; \mathbb{E}[v^2] \;-\; 2\langle v\rangle^2 \;+\; \langle v\rangle^2 .
+$$
+
+**Step 5 — combine the last two like-terms** (this is where the `2` "disappears"). Both $-2\langle v\rangle^2$ and $+\langle v\rangle^2$ are multiples of $\langle v\rangle^2$, so add their coefficients: $-2+1=-1$:
+
+$$
+-2\langle v\rangle^2 + \langle v\rangle^2 = (-2+1)\,\langle v\rangle^2 = -\langle v\rangle^2
+\;\;\Longrightarrow\;\;
+\boxed{\;\sum_i w_i (v_i - \langle v\rangle)^2 = \mathbb{E}[v^2] - \langle v\rangle^2\;}\qquad\blacksquare
+$$
+
+(The original one-line proof just compressed Steps 4–5: it wrote $-2\langle v\rangle^2 + \langle v\rangle^2$ and collapsed it to $-\langle v\rangle^2$ in the same breath — nothing was wrong, the step was just hidden.)
+
+**Numeric check of the identity** — cells $v=[10,20,30]$, $\rho=[1,1,2]$, so $w=[0.25,0.25,0.5]$ and $\langle v\rangle=22.5$:
+
+- centered form: $0.25(10-22.5)^2 + 0.25(20-22.5)^2 + 0.5(30-22.5)^2 = 39.0625 + 1.5625 + 28.125 = 68.75$
+- raw-moment form: $\mathbb{E}[v^2]-\langle v\rangle^2 = (0.25\cdot 100 + 0.25\cdot 400 + 0.5\cdot 900) - 22.5^2 = 575 - 506.25 = 68.75$
+
+Both give $68.75$ ✓.
 
 Both forms give the *same* number in exact arithmetic. They differ **numerically**: the raw-moment form subtracts two large nearly-equal numbers (catastrophic cancellation) and can drift slightly negative; the centered form cannot. The codebase deliberately uses the **centered** form in the mass-weighted family and the **raw-moment** form (with a guard) in the per-spaxel collapse — for performance reasons explained in §4.
 
