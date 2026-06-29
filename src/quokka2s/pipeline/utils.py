@@ -82,6 +82,32 @@ def mass_weighted_sigma(vel_kms: np.ndarray, rho: np.ndarray) -> tuple[float, fl
     return v_mean, sigma
 
 
+def mass_weighted_sigma_3d(vx_kms: np.ndarray, vy_kms: np.ndarray,
+                           vz_kms: np.ndarray, rho: np.ndarray
+                           ) -> tuple[tuple[float, float, float], float]:
+    """Total 3D mass-weighted velocity dispersion (all gas) — the full velocity
+    deviation VECTOR RMS'd, each component centered on its OWN global mean:
+
+        σ_3D² = Σ_i w_i [ (vx_i−⟨vx⟩)² + (vy_i−⟨vy⟩)² + (vz_i−⟨vz⟩)² ]
+              = σ_x² + σ_y² + σ_z² ,   w_i = ρ_i / Σρ
+
+    This is NOT a per-cell component average (do NOT collapse a cell's three
+    components to one scalar first) — every component keeps its own mean and the
+    squared deviations add.  Returns ((⟨vx⟩,⟨vy⟩,⟨vz⟩), σ_3D); (nan,…) if empty.
+    """
+    total = rho.sum()
+    if total <= 0:
+        return (float('nan'), float('nan'), float('nan')), float('nan')
+    w   = rho / total
+    vmx = float(np.sum(vx_kms * w))
+    vmy = float(np.sum(vy_kms * w))
+    vmz = float(np.sum(vz_kms * w))
+    var = (np.sum((vx_kms - vmx) ** 2 * w)
+           + np.sum((vy_kms - vmy) ** 2 * w)
+           + np.sum((vz_kms - vmz) ** 2 * w))
+    return (vmx, vmy, vmz), float(np.sqrt(var))
+
+
 def spaxel_moments_along_axis(weight: np.ndarray,
                               vel: np.ndarray,
                               los_axis: int

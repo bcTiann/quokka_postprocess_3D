@@ -25,7 +25,7 @@ from ..utils import (
     T_CNM_MAX, T_UNM_MAX, T_WNM_MAX, T_WIM_MAX, PHASE_ORDER,
     PHASE_LABEL_LINE,
     classify_temperature_phase,
-    mass_weighted_sigma, mass_weighted_sigma_by_phase,
+    mass_weighted_sigma, mass_weighted_sigma_3d, mass_weighted_sigma_by_phase,
 )
 
 # Fixed-range PDF bin window (matches spectrum's V_RANGE_KMS).
@@ -84,6 +84,11 @@ class Build_VelocityPhase(BuildTask):
         total_x = {'sigma': sigma_total_x, 'v_mean': v_mean_total_x, 'mass_frac': 1.0}
         total_y = {'sigma': sigma_total_y, 'v_mean': v_mean_total_y, 'mass_frac': 1.0}
         total_z = {'sigma': sigma_total_z, 'v_mean': v_mean_total_z, 'mass_frac': 1.0}
+        # Total 3D velocity dispersion (all gas): full deviation vector RMS'd,
+        # each component about its own global mean → σ_3D = √(σx²+σy²+σz²).
+        (vm3_x, vm3_y, vm3_z), sigma_3d_total = mass_weighted_sigma_3d(vx, vy, vz, rho)
+        total_3d = {'sigma_3d': sigma_3d_total,
+                    'v_mean_x': vm3_x, 'v_mean_y': vm3_y, 'v_mean_z': vm3_z}
 
         print('\n=== Phase-split density-weighted σ_v ===')
         print(f'{"phase":<6} {"cell_frac":>10} {"mass_frac":>10} '
@@ -94,6 +99,8 @@ class Build_VelocityPhase(BuildTask):
                   f'{px["sigma"]:>14.2f} {py["sigma"]:>14.2f} {pz["sigma"]:>14.2f}')
         print(f'{"total":<6} {"1.000":>10} {"1.000":>10} '
               f'{sigma_total_x:>14.2f} {sigma_total_y:>14.2f} {sigma_total_z:>14.2f}')
+        print(f'  → total 3D σ_v (all gas) = {sigma_3d_total:.2f} km/s '
+              f'(= √(σx²+σy²+σz²);  ⟨v⟩=({vm3_x:.1f}, {vm3_y:.1f}, {vm3_z:.1f}) km/s)')
         print('=====================================\n')
 
         masks = classify_temperature_phase(T)
@@ -168,6 +175,7 @@ class Build_VelocityPhase(BuildTask):
             'total_x':    total_x,
             'total_y':    total_y,
             'total_z':    total_z,
+            'total_3d':   total_3d,       # 3D σ_v over all gas = √(σx²+σy²+σz²)
             'histograms': hist_auto,      # auto-bin → PhaseSigmaV_hist
             'pdf_fixed':  hist_fixed,     # ±V_RANGE_KMS → PhaseSpectrumOverlay
         }
