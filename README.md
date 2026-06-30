@@ -9,7 +9,8 @@ chemistry/cooling table plus CHIANTI atomic data (via `fiasco`).
 ### What it produces
 
 - **Synthetic line emission** — CO J=1–0, [C II] 158 µm, Hα, and H I 21 cm:
-  1D spectra (intrinsic + instrument-convolved) and surface-brightness maps.
+  spatially integrated 1D spectra (intrinsic + instrument-convolved) and
+  phase/line-profile overlays for all three lines of sight.
 - **Multi-phase ISM diagnostics** — mass- and luminosity-weighted histograms over
   the five ISM phases (CNM/UNM/WNM/WIM/HIM), N_H–ρ phase planes, and per-phase
   velocity dispersions σ_x/σ_y/σ_z.
@@ -23,7 +24,6 @@ quokka_postprocess_3D/            ← repo root
 ├── pyproject.toml  requirements.txt
 ├── README.md
 ├── scripts/                       run_dataset_series.sh + standalone scripts
-├── docs/                          physics notes (line emission, validation, audits)
 └── src/
     └── quokka2s/                  the package (import name: quokka2s)
         ├── pipeline/
@@ -39,18 +39,19 @@ quokka_postprocess_3D/            ← repo root
 
 # Reproducing from scratch
 
-The whole setup — fresh conda environment to final figures. Tested end-to-end:
-yt installed this way reads the data identically and produces bit-identical results.
+The whole setup — fresh conda environment to final figures. This procedure was
+tested end-to-end in a clean clone on 2026-06-30 with Python 3.11.15.
 
 ## 0. What you need
 
 - **`conda`/`mamba`** and a **C compiler** (yt builds Cython extensions from source —
   on macOS install the Xcode Command Line Tools, on Linux `gcc`).
-- **~8 GB free disk** for a full-resolution (`down=1`) run's field caches, plus
-  **~2.3 GB** for the CHIANTI atomic database (step 3).
+- **At least 20 GB free disk** for the 8 GB snapshot, roughly 6 GB of
+  full-resolution (`down=1`) field caches, figures/task results, and the
+  **~2.3 GB** CHIANTI atomic database (step 3).
 - From the author: the dataset directory (e.g. `plt0655228/`) and the prebuilt
   table `output_tables_3D_GOW_LVG/despotic_table.npz`. **You do not rebuild the
-  table** — just point the config at it (step 4).
+  table** — place both inputs as shown in step 4.
 
 ## 1. Create the environment
 
@@ -61,9 +62,9 @@ conda activate test-env
 
 ## 2. Install dependencies + the package
 
-`requirements.txt` pins the known-good versions **and** installs yt from git (the
-QUOKKA frontend that reads `plt*` data is only complete on yt's `main` branch — the
-pip-stable release, currently 4.4.2, ships only a partial reader and will fail):
+`requirements.txt` pins the known-good versions **and** installs yt from git. The
+QUOKKA frontend needed by these `plt*` files is taken from yt's `main` branch;
+the stable yt release tested during this project had only a partial reader:
 
 ```bash
 git clone https://github.com/bcTiann/quokka_postprocess_3D.git
@@ -102,26 +103,65 @@ such as `[1e4]` before it checks or downloads the database.
 
 This work used **CHIANTI 10.1**; if `fiasco` offers a choice, pick 10.1 to match.
 
-## 4. Point the config at your data + table
+## 4. Put the snapshot and DESPOTIC table in place
 
-Edit `src/quokka2s/pipeline/prep/config.py` (or set the env vars shown):
+Do this **before** running `MODE=compute`. The runner derives the repository root
+from its own location, so the standard local setup does not require editing
+`config.py` or setting absolute paths. Put the two non-Git inputs here:
 
-| What | Where | Set to |
-|---|---|---|
-| Dataset | `YT_DATASET` env *or* the `YT_DATASET_PATH` default | your `…/plt0655228` |
-| Table (LVG) | `DESPOTIC_TABLE_PATH_LVG` | your `…/output_tables_3D_GOW_LVG/despotic_table.npz` |
-| Output root | `_OUTPUT_ROOT` | a writable directory for `output/…` |
+```text
+quokka_postprocess_3D/
+├── plt0655228/                         # complete QUOKKA plotfile directory
+│   ├── metadata.yaml
+│   └── ...
+├── output_tables_3D_GOW_LVG/
+│   └── despotic_table.npz              # precomputed 3D GOW/LVG lookup table
+├── scripts/
+└── src/
+```
 
-The output directory name is derived automatically as
-`output/<dataset>_down<N>_Lext<L>kpc<_tag>/`.
+Both input paths are ignored by Git and are not downloaded by `git clone`. Copy
+them from local storage, for example:
+
+```bash
+cd ~/quokka_postprocess_3D
+cp -a /path/to/plt0655228 ./
+mkdir -p output_tables_3D_GOW_LVG
+cp /path/to/despotic_table.npz output_tables_3D_GOW_LVG/
+```
+
+For a large snapshot, a symlink is also valid:
+
+```bash
+ln -s /absolute/path/to/plt0655228 ./plt0655228
+```
+
+Check both inputs before starting the expensive run:
+
+```bash
+test -d plt0655228 && echo "snapshot: OK"
+test -f output_tables_3D_GOW_LVG/despotic_table.npz && echo "table: OK"
+python -c "import numpy as np; p='output_tables_3D_GOW_LVG/despotic_table.npz'; z=np.load(p, allow_pickle=True); print(p, len(z.files), 'arrays')"
+```
+
+To analyze a different plotfile stored under the repository root, pass its
+directory name to the runner, for example
+`scripts/run_dataset_series.sh plt0857000`. For inputs stored elsewhere, either
+symlink them into the layout above or use the direct module with
+`YT_DATASET=/absolute/path/to/plt...` and
+`DESPOTIC_TABLE_LVG=/absolute/path/to/despotic_table.npz`.
 
 ## 5. Run the pipeline
 
-The driver runs each task in its own process (releases memory between tasks —
-needed to avoid OOM at full resolution). Canonical config = full resolution,
-L_ext = 15 kpc, GOW LVG table:
+Activate the environment and run from the clone root. The driver resolves
+`python` from the active conda environment and runs each task group in its own
+process so memory is released between groups. The canonical setup is full
+resolution, `L_ext = 15 kpc`, and the GOW/LVG table:
 
 ```bash
+conda activate test-env
+cd ~/quokka_postprocess_3D
+
 # heavy physics → caches the 7 derived fields + per-task results
 MODE=compute LEXT_KPC=15 scripts/run_dataset_series.sh
 
@@ -129,12 +169,15 @@ MODE=compute LEXT_KPC=15 scripts/run_dataset_series.sh
 MODE=plot    LEXT_KPC=15 scripts/run_dataset_series.sh
 ```
 
+The first line printed by the runner includes the resolved Python executable.
+It should point into the active environment, not another hard-coded conda env.
+Detailed logs are written to `logs/dataset_series/`; each task group should end
+with `RC=0`. Do not start a second runner against the same dataset/output while
+one is active.
+
 Or call the module directly:
 
 ```bash
-# whole pipeline (compute + plot)
-LEXT_KPC=15 python -m quokka2s.pipeline.tasks.run_pipeline
-
 # only re-plot from cached results
 LEXT_KPC=15 python -m quokka2s.pipeline.tasks.run_pipeline --mode plot
 
@@ -151,7 +194,11 @@ python -m quokka2s.pipeline.tasks.run_pipeline --clean-intermediates
   (default) does both.
 - The first `--mode compute` run is the expensive one — it derives and caches seven
   fields (`column_density_H`, `dVdr_lvg`, `temperature_despotic`, and the four
-  `*_luminosity` fields). After that, `--mode plot` re-renders in seconds.
+  `*_luminosity` fields). After that, `--mode plot` re-renders in about a minute
+  on the tested workstation.
+- Prefer `run_dataset_series.sh` for a full run. Calling the module directly is
+  useful for a selected task, but a whole direct run keeps more state in one
+  Python process and is less suitable for a memory-limited workstation.
 
 ## 6. Verify
 
@@ -159,11 +206,19 @@ python -m quokka2s.pipeline.tasks.run_pipeline --clean-intermediates
 |---|---|
 | `output/<dataset>_down<N>_Lext<L>kpc<_tag>/` | the figures (PNG) |
 | `output/<…>/task_intermediates/` | per-task results (HDF5) — for quantitative diffs |
-| `<dataset_dir>/intermediates/<dataset>/fields/` | cached derived fields (HDF5) |
+| `<dataset_parent>/intermediates/<dataset>/fields/` | cached derived fields (HDF5) |
+| `logs/dataset_series/` | master and per-task-group logs |
 
-Compare the PNGs (e.g. `PhaseSpectrumOverlay_*_los{x,y,z}_*.png`, `PhaseSigmaV_*.png`,
-the multi-field slices) against the author's reference figures; the `*.h5` under
-`task_intermediates/` hold the underlying numbers for a precise comparison.
+With the standard layout, the field cache is therefore
+`intermediates/plt0655228/fields/`. The 2026-06-30 clean test produced 30 PNGs,
+including `PhaseSpectrumOverlay_*_los{x,y,z}_*.png`, `PhaseSigmaV_*.png`, the
+integrated spectra, `phase_combined.png`, and ten multi-field slices. The `*.h5`
+under `task_intermediates/` hold the underlying numbers for a precise comparison.
+
+```bash
+# no output means no recorded traceback/error/non-zero task return code
+rg 'Traceback|ERROR|RC=[1-9]' logs/dataset_series
+```
 
 ---
 
@@ -187,7 +242,7 @@ Env knobs:
 | `QUOKKA_CACHE_ROOT` | where derived-field caches go (set this if the dataset is on a **read-only** mount) | next to the dataset |
 | `DESPOTIC_HOME` | DESPOTIC LAMDA data (avoids network fetch on offline nodes) | auto-probed |
 | `MPLBACKEND` | matplotlib backend | `Agg` (headless, auto-set) |
-| `QK_SPECTRUM_WORKERS` | spectrum-builder threads (RAM-bound, ~13 GB each) | `2` |
+| `QK_SPECTRUM_WORKERS` | spectrum-builder threads (RAM-bound; full process peaks around 13–14 GB on the tested snapshot) | `2` |
 
 SLURM template:
 
@@ -223,7 +278,7 @@ sure `--mem` exceeds the **~14 GB** spectra peak.
 
 ## Known-good versions
 
-Python 3.11.14 · yt 4.5.dev0 (git `main`) · numpy 2.2.6 (`<2.3`: fiasco) ·
+Python 3.11.15 · yt 4.5.dev0 (git `main`) · numpy 2.2.6 (`<2.3`: fiasco) ·
 scipy 1.16.3 · astropy 7.1.1 · h5py 3.16.0 · matplotlib 3.10.6 · unyt 3.0.4 ·
 fiasco 0.6.2 + CHIANTI 10.1 · joblib 1.5.2 · tqdm 4.67.1 · tqdm-joblib 0.0.5 ·
 PyYAML 6.0.3.  (despotic 2.2 — tables only.)  Pins are in `requirements.txt`.
@@ -232,11 +287,14 @@ PyYAML 6.0.3.  (despotic 2.2 — tables only.)  Pins are in `requirements.txt`.
 
 - **Never wrap a run in `conda run`** — it silently kills long jobs on macOS.
   Activate the env and call `python` directly.
-- **Run long jobs in the background** — a full `down=1` compute is tens of minutes.
+- **Use `tmux`, `screen`, or a batch job for long runs** — the clean `down=1`
+  compute took about 80 minutes on the tested workstation; hardware and caches
+  change this substantially.
 - **Changing `LEXT_KPC` or the downsample factor invalidates the field caches**
   (they're keyed by those); switching forces a recompute.
-- **`down=1` needs ~8 GB free disk** for the field caches; on macOS "purgeable"
-  space can cause a mid-run `No space left on device`.
+- **`down=1` needs several GB for field caches** (5.9 GB in the clean test), plus
+  task results and figures; on macOS "purgeable" space can cause a mid-run
+  `No space left on device`.
 
 ## Dependencies & citation
 

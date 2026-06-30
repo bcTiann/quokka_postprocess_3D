@@ -42,3 +42,6 @@ yt-env/
 
 # --- Runtime logs ---
 logs/
+
+# --- Local notes (not published to GitHub) ---
+docs/
