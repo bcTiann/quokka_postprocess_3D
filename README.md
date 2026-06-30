@@ -163,10 +163,10 @@ conda activate test-env
 cd ~/quokka_postprocess_3D
 
 # heavy physics → caches the 7 derived fields + per-task results
-MODE=compute LEXT_KPC=15 scripts/run_dataset_series.sh
+MODE=compute LEXT_KPC=15 scripts/run_dataset_series.sh plt0655228
 
 # render all figures from the caches (fast)
-MODE=plot    LEXT_KPC=15 scripts/run_dataset_series.sh
+MODE=plot    LEXT_KPC=15 scripts/run_dataset_series.sh plt0655228
 ```
 
 The first line printed by the runner includes the resolved Python executable.
