@@ -17,6 +17,7 @@
 #
 # Env:
 #   LEXT_KPC  (default 15)   RUN_TAG  (default: none)
+#   PYTHON    (default: `python` from the active PATH/conda environment)
 #   MODE      (all | compute | plot;  default all)
 #     all     = each task computes + stores result + plots          (one pass)
 #     compute = each task computes + stores result only, NO figures (do the
@@ -31,11 +32,16 @@
 
 set +e
 # Portable roots: repo derived from the script location; interpreter defaults to
-# the local macOS yt-env but falls back to PATH `python` wherever that path is
-# absent (e.g. a Linux cluster). Override with QUOKKA_ROOT= / PYTHON=.
+# `python` from the active PATH (including an activated conda environment).
+# Override with QUOKKA_ROOT= / PYTHON=.
 ROOT="${QUOKKA_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
-PY="${PYTHON:-/opt/homebrew/Caskroom/miniconda/base/envs/yt-env/bin/python}"
-[ -x "$PY" ] || PY="$(command -v python)"
+PY="${PYTHON:-python}"
+PY_RESOLVED="$(command -v "$PY")"
+if [ -z "$PY_RESOLVED" ]; then
+  echo "ERROR: Python interpreter not found: $PY" >&2
+  exit 127
+fi
+PY="$PY_RESOLVED"
 export MPLBACKEND="${MPLBACKEND:-Agg}"   # headless-safe on compute nodes
 LOGS=$ROOT/logs/dataset_series
 mkdir -p "$LOGS"
@@ -71,7 +77,7 @@ TASK_GROUPS=(
 
 MASTER=$LOGS/MASTER_dataset_series.log
 > "$MASTER"
-echo "[$(date)] === datasets: ${DATASETS[*]}  L_ext=$LEXT_KPC  tag=$RUN_TAG  MODE=$MODE ===" | tee -a "$MASTER"
+echo "[$(date)] === datasets: ${DATASETS[*]}  L_ext=$LEXT_KPC  tag=$RUN_TAG  MODE=$MODE  python=$PY ===" | tee -a "$MASTER"
 
 for D in "${DATASETS[@]}"; do
   DPATH=$ROOT/$D

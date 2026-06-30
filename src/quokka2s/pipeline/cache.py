@@ -95,7 +95,7 @@ def compute_cache_key(
     Stored as a hex string in HDF5 ``cache_key`` attribute.
 
     column_extension_lateral_kpc is the lateral colDen extension length used
-    by _column_density_H; folding it in lets L_ext=0 vs L_ext=9 runs keep
+    by _column_density_H; folding it in lets L_ext=0 vs L_ext=15 runs keep
     independent intermediate caches.
     """
     # Pull every config setting that changes the cached field's *value* so

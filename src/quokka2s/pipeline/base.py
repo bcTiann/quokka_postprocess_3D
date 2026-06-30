@@ -58,7 +58,7 @@ class PipelineConfig:
     cache_enabled: bool = True
     force_recompute: bool = False
     # Lateral (x/y) box-exterior column-density extension, in kpc.  Folded into
-    # the cache key so L_ext=0 and L_ext=9 runs don't poison each other.
+    # the cache key so L_ext=0 and L_ext=15 runs don't poison each other.
     column_extension_lateral_kpc: float = 0.0
     extra_options: Dict[str, Any] = field(default_factory=dict)
 
