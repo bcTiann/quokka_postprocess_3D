@@ -3,7 +3,7 @@
 ``Build_VelocityPhase`` (compute + store): reads vx, vy, rho, T_two_regime and
 computes
   - phase masks (CNM/UNM/WNM/WIM/HIM)
-  - mass-weighted σ_v per phase per LOS (x, y)
+  - mass-weighted σ_v per phase per LOS (x, y, z)
   - velocity PDFs per phase per LOS — TWO formats:
       a) auto-bin (per-phase percentile-bracketed range, 120 bins)
       b) fixed-range (±V_RANGE_KMS, 120 bins) for the spectrum overlay

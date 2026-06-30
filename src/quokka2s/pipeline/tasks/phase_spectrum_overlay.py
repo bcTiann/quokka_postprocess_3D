@@ -64,9 +64,18 @@ class Plot_PhaseSpectrumOverlay(PlotTask):
         (Build_SpeciesSpectrum) fresh from disk (cache-key validated)."""
         vp = self._load_one(context, 'Build_VelocityPhase')
         ss = self._load_one(context, 'Build_SpeciesSpectrum')
+        total_3d = vp.get('total_3d')
+        if total_3d is not None and 'sigma_3d' in total_3d:
+            sigma_3d_total = float(total_3d['sigma_3d'])
+        else:
+            # Compatibility with older intermediates that predate total_3d.
+            sigma_3d_total = float(np.sqrt(sum(
+                float(vp[f'total_{axis}']['sigma'])**2 for axis in ('x', 'y', 'z')
+            )))
         return {
-            'pdf':     vp['pdf_fixed'],          # fixed-range PDFs from VelocityPhase
-            'spectra': ss['spectra'],            # species × LOS × 'total'
+            'pdf':            vp['pdf_fixed'],    # fixed-range PDFs from VelocityPhase
+            'spectra':        ss['spectra'],      # species × LOS × 'total'
+            'sigma_3d_total': sigma_3d_total,     # all-gas 3D context for legend
         }
 
     def plot(self, context: PipelinePlotContext, inputs: dict) -> None:
@@ -117,6 +126,7 @@ class Plot_PhaseSpectrumOverlay(PlotTask):
         spec_norm = spec_y / spec_peak if spec_peak > 0 else spec_y
         _, sigma_obs = _moment_sigma(spec_v, spec_y)
         sigma_obs_str = f'{sigma_obs:.1f}' if np.isfinite(sigma_obs) else 'nan'
+        sigma_3d_total = float(results['sigma_3d_total'])
 
         # 5 phase PDFs (in PHASE_ORDER = cold→hot).  σ shown is the dispersion
         # of the velocity component ALONG this figure's LOS (σ_x / σ_y / σ_z).
@@ -149,6 +159,13 @@ class Plot_PhaseSpectrumOverlay(PlotTask):
         ax.step(spec_v, spec_norm, where='mid',
                 color=SPECTRUM_COLOR, lw=2.0, alpha=0.9,
                 label=rf'{name} emission   $\sigma_v$ = {sigma_obs_str} km/s')
+
+        # Context-only legend entry.  σ_3D,total is not a LOS line width, so it
+        # deliberately has no curve or marker on this signed LOS-velocity axis.
+        if np.isfinite(sigma_3d_total):
+            ax.plot([], [], ls='none', marker=None, color='none',
+                    label=rf'all gas   $\sigma_{{\rm total}}$ = '
+                          rf'{sigma_3d_total:.1f} km/s')
 
         ax.axvline(0, color='gray', ls=':', lw=0.8, alpha=0.6)
         ax.set_xlim(*x_window)
