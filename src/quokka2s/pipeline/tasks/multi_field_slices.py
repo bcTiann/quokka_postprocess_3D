@@ -219,8 +219,7 @@ class Plot_MultiFieldSlices(PlotTask):
         idx = name.rfind('_Lext')
         if idx < 0:
             return cur.parent / f'{name}_Lext{l_ext:g}kpc'
-        geom = '_sphere' if '_sphere' in name[idx:] else ''
-        return cur.parent / f'{name[:idx]}_Lext{l_ext:g}kpc{geom}'
+        return cur.parent / f'{name[:idx]}_Lext{l_ext:g}kpc'
 
     def _sibling_slices(self):
         """Load the `slices` dict from each partner-L_ext Build_MultiFieldSlices

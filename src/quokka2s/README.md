@@ -10,11 +10,9 @@ pre-built DESPOTIC chemistry / cooling table.
 ## Quickstart (5 min)
 
 ```bash
-# 1. Point the config at a QUOKKA plt directory and a DESPOTIC table.
-$EDITOR src/quokka2s/pipeline/prep/config.py
-#   YT_DATASET_PATH     = "/path/to/plt263168"
-#   DESPOTIC_TABLE_PATH = "/path/to/despotic_table.npz"   (auto-selected by DESPOTIC_GEOM env var)
-#   DOWNSAMPLE_FACTOR   = 2     # see "Why downsample?" below
+# 1. Optionally override the default dataset/table paths.
+export YT_DATASET=/path/to/plt263168
+export DESPOTIC_TABLE=/path/to/despotic_table.npz
 
 # 2. Run the whole pipeline.
 python -m quokka2s.pipeline.tasks.run_pipeline
@@ -133,10 +131,11 @@ the class name + init args.
 
 ## Tables (DESPOTIC chemistry)
 
-`build_table.py` runs DESPOTIC's `setChemEq(evolveTemp='iterateDust')` over
-a 35×35×35 grid of `(n_H, N_H, dV/dr)` and saves the result as
-`despotic_table.npz`. The pipeline interpolates this table for every cell
-at runtime via `tables/lookup.py`.
+`build_table.py` is the single production entry point. It fixes the chemistry
+to GOW, escape geometry to LVG, and runs
+`setChemEq(evolveTemp='iterateDust')` independently over a 35×35×35 grid of
+`(n_H, N_H, dV/dr)`. The pipeline interpolates this table via
+`tables/lookup.py`.
 
 ```bash
 # Build a table (slow — hours).
@@ -149,8 +148,9 @@ python check_convergence_sparse.py --points 10
 python -m quokka2s.tables.view_table -n 5
 ```
 
-The two geometries (LVG vs sphere escape probability) live in separate
-files; select with `DESPOTIC_GEOM=LVG` (default) or `DESPOTIC_GEOM=sphere`.
+Use `--output`, `--workers`, and `--force` to control the destination,
+parallelism, and overwrite protection. Chemistry and geometry are deliberately
+not command-line options.
 
 ---
 

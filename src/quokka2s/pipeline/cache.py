@@ -46,16 +46,7 @@ import numpy as np
 # changes (e.g. the DESPOTIC table's `tg_final` computation, the chemistry
 # network, the column-density direction symmetrisation). All cached files
 # stamped with an older value will be silently invalidated and rebuilt.
-CACHE_SCHEMA_VERSION = 6  # 2026-06-29: T≥1e4K line emission (C+/Hα/HI) → CHIANTI CIE
-                          # (was Saha) + astropy-derived c / eV→K / A_C.  Older note:
-                          # 5 = 2026-06-13: bumped after dropping T_CUTOFF and the
-                          # HIGH_T_4D_BLEND / 4D-table μγ branch.  Line lum values
-                          # change (no more per-species T cutoff zeroing), so every
-                          # cached luminosity / number-density / temperature_despotic
-                          # H5 from schema=4 is now stale.
-                          # 2026-05-29 (schema 4): bumped for solver emitter +
-                          # true-3D-solve rebuild; older tables had a missing-emitter
-                          # bug that made CNM Tg too hot by 1–2.5 dex.
+CACHE_SCHEMA_VERSION = 6  # T≥1e4 K C+/Hα/HI emission uses CHIANTI CIE.
 
 
 # ── Fields worth caching to disk ─────────────────────────────────────────────
@@ -101,10 +92,6 @@ def compute_cache_key(
     # Pull every config setting that changes the cached field's *value* so
     # toggling any of them invalidates the cache. Lazy import keeps this
     # module free of the heavy pipeline-prep imports for non-pipeline callers.
-    # 2026-06-13: dropped T_CUTOFF / HIGH_T_4D_BLEND / T_QK_HIGH_K /
-    # DESPOTIC_TABLE_4D_PATH from the key (those config options no longer
-    # exist in config.py).  The schema-version bump (4 → 5) auto-invalidates
-    # every cache file written under the old key formula.
     try:
         from .prep import config as _cfg
         _colden_mean = getattr(_cfg, 'COLUMN_DENSITY_MEAN', 'harmonic')

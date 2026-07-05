@@ -45,3 +45,6 @@ logs/
 
 # --- Local notes (not published to GitHub) ---
 docs/
+
+# --- Local transfer/sync workspace ---
+/to-baochen/

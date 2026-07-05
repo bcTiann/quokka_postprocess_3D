@@ -592,10 +592,7 @@ def build_spectral_cube(
     
 def _make_luminosity_field(species: str):
     """3D DESPOTIC LAMDA-table line luminosity, returned as volumetric
-    emissivity (erg/s/cm³).  No temperature gate — whatever the table gives
-    is what gets used.  (Removed 2026-06-13: the T_CUTOFF dict that zeroed
-    out lumPerH above a per-species T threshold; and the HIGH_T_4D_BLEND
-    branch that swapped in the 4D-table value at T_gamma_mu.)
+    emissivity (erg/s/cm³). No temperature gate is applied here.
     """
     lookup = ensure_table_lookup(cfg.DESPOTIC_TABLE_PATH)
     yt_safe_name = species.replace('+', '_plus').replace('-','_minus')
@@ -637,11 +634,6 @@ def _make_number_density_field(species: str, lamda_token: str | None = None):
             lookup.number_densities([token], n_H_safe, col_safe, dV_safe)[token],
             nan=0.0,
         )
-        # (2026-06-13) Removed the HIGH_T_4D_BLEND branch that took species
-        # abundances from the fixed-T 4D table at T_gamma_mu.  Hot-gas physics
-        # is now handled per-line: e.g. _Halpha_luminosity uses Saha
-        # (_x_H_ion_saha) on T_QUOKKA; the upcoming C+ two-regime will do the
-        # same via CHIANTI.  The 4D table is no longer used anywhere.
         return val * cm**-3
 
     _field.__name__ = f"_number_density_{yt_safe_name}"

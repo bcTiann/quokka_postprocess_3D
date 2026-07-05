@@ -32,7 +32,7 @@ quokka_postprocess_3D/            ← repo root
         │   └── tasks/     run_pipeline.py  +  Build_*/Plot_* tasks   ← entry point
         ├── tables/        DESPOTIC table builder + lookup
         ├── utils/
-        └── analysis.py  data_handling.py  plotting.py  despotic_tables.py
+        └── analysis.py  data_handling.py  plotting.py
 ```
 
 ---
@@ -75,7 +75,9 @@ pip install -e .                      # the quokka2s package itself
 ```
 
 > `despotic` is **not** installed — it's only needed to *rebuild* tables. If you
-> ever want to: `pip install -e ".[tables]"` (or uncomment it in `requirements.txt`).
+> ever want to, run `python -m pip install -e ".[tables]"`. The extra installs a
+> pinned commit of the official DESPOTIC 2.2 source because 2.2 is not published
+> on PyPI (and PyPI 2.1 predates the GOW chemistry network used here).
 
 Verify the install:
 
@@ -136,6 +138,17 @@ For a large snapshot, a symlink is also valid:
 ln -s /absolute/path/to/plt0655228 ./plt0655228
 ```
 
+To rebuild the canonical table, install the table extra and run the single
+GOW/LVG builder. The production grid and physics are fixed; only output path,
+worker count, and overwrite permission are configurable:
+
+```bash
+python -m pip install -e ".[tables]"
+python -m quokka2s.tables.build_table \
+  --output output_tables_3D_GOW_LVG/despotic_table.npz \
+  --workers -1 --force
+```
+
 Check both inputs before starting the expensive run:
 
 ```bash
@@ -149,7 +162,7 @@ directory name to the runner, for example
 `scripts/run_dataset_series.sh plt0857000`. For inputs stored elsewhere, either
 symlink them into the layout above or use the direct module with
 `YT_DATASET=/absolute/path/to/plt...` and
-`DESPOTIC_TABLE_LVG=/absolute/path/to/despotic_table.npz`.
+`DESPOTIC_TABLE=/absolute/path/to/despotic_table.npz`.
 
 ## 5. Run the pipeline
 

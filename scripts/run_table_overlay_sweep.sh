@@ -16,8 +16,8 @@
 #
 # Example:
 #   run_table_overlay_sweep.sh \
-#     /Users/baochen/quokka_postprocessing/output_tables_3D_NL99_GC_LVG/despotic_table.npz \
-#     NL99_GC 0 15
+#     output_tables_3D_GOW_LVG/despotic_table.npz \
+#     GOW_LVG 0 15
 
 set +e
 # Portable roots (see run_dataset_series.sh): repo from script location;
@@ -35,7 +35,7 @@ LEXTS=("$@")
 # MASS_MODE=1 → mass-weighted contours; output dirs get "_mass" suffix.
 MASS_MODE=${MASS_MODE:-0}
 if [ "$MASS_MODE" = "1" ]; then
-  SAMPLE_SUFFIX="_4d"
+  SAMPLE_SUFFIX="_mass"
   BUILD_FLAGS="--include-mass"
   OUT_SUFFIX="_mass"
 else

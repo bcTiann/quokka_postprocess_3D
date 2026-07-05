@@ -2,21 +2,6 @@
 
 from __future__ import annotations
 
-import warnings
-
-warnings.filterwarnings(
-    "ignore",
-    message="collision rates not available",
-    category=UserWarning,
-    module=r"DESPOTIC.*emitterData",
-)
-warnings.filterwarnings(
-    "ignore",
-    message="divide by zero encountered in log",
-    category=RuntimeWarning,
-    module=r"DESPOTIC.*NL99_GC",
-)
-
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Callable

@@ -6,14 +6,6 @@ from matplotlib.colors import LogNorm
 
 from .models import DespoticTable
 
-def plot_failure_overlay(*_args, **_kwargs) -> None:
-    """Placeholder for failure-visualization helper."""
-    raise NotImplementedError("plot_failure_overlay is not implemented yet.")
-
-def summarize_failures(*_args, **_kwargs) -> None:
-    """Placeholder for failure summary helper."""
-    raise NotImplementedError("summarize_failures is not implemented yet.")
-
 def _log_edges(values: np.ndarray) -> np.ndarray:
     if values.size < 2:
           raise ValueError("Need at least two grid points to compute edges.")
@@ -89,7 +81,7 @@ def plot_sampling_histogram(
     cbar.set_label("Voxel count per table cell")
 
     if show_failure_mask and table.failure_mask is not None:
-        # 修改：沿著T轴(axis=2)做ANY投影，只要有一个T失败，这格就算True
+        # Collapse the dVdr axis: mark an (nH, N_H) bin if any dVdr solve failed.
         fail_2d = np.any(table.failure_mask, axis=2)
         
         overlay = np.ma.masked_where(~fail_2d, np.ones_like(fail_2d, dtype=float))
@@ -105,4 +97,3 @@ def plot_sampling_histogram(
         )
 
     return ax
-

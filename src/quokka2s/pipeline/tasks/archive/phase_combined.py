@@ -249,8 +249,7 @@ class PhaseCombinedTask(AnalysisTask):
         if idx < 0:
             return cur.parent / f'{name}_Lext{l_ext:g}kpc'
         base = name[:idx]
-        geom_suffix = '_sphere' if '_sphere' in name[idx:] else ''
-        return cur.parent / f'{base}_Lext{l_ext:g}kpc{geom_suffix}'
+        return cur.parent / f'{base}_Lext{l_ext:g}kpc'
 
     def _gather_results(self, own_results: dict) -> list[dict]:
         """Own results + any sibling PhaseCombinedTask intermediates for the

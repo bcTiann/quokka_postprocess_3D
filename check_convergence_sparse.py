@@ -22,29 +22,13 @@ import numpy as np
 
 sys.path.insert(0, "src")
 
-from despotic.chemistry import GOW
-
-from quokka2s.tables import LogGrid, build_table
-from quokka2s.tables.builder import SpeciesSpec
+from quokka2s.tables import GOW_LVG_SPECIES, LogGrid, build_gow_lvg_table
 
 
 # ── Match build_table.py exactly ──────────────────────────────────────────────
 N_H_RANGE     = (1e-4,  1e6)
 COL_DEN_RANGE = (1e15,  1e24)
 DVDR_RANGE    = (1e-19, 1e-12)
-
-SPECIES_SPECS = (
-    SpeciesSpec("CO",   True),
-    SpeciesSpec("C",    True),
-    SpeciesSpec("C+",   True),
-    SpeciesSpec("HCO+", True),
-    SpeciesSpec("O",    True),
-    SpeciesSpec("e-",   False),
-    SpeciesSpec("H+",   False),
-    SpeciesSpec("H2",   False),
-    SpeciesSpec("H",    False),
-)
-
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
@@ -62,7 +46,7 @@ def main():
     print(f"  nH    range: {N_H_RANGE[0]:.0e} .. {N_H_RANGE[1]:.0e}")
     print(f"  NH    range: {COL_DEN_RANGE[0]:.0e} .. {COL_DEN_RANGE[1]:.0e}")
     print(f"  dVdr  range: {DVDR_RANGE[0]:.0e} .. {DVDR_RANGE[1]:.0e}")
-    print(f"  species:   {[s.name for s in SPECIES_SPECS]}")
+    print(f"  species:   {[s.name for s in GOW_LVG_SPECIES]}")
     print(f"  workers:   {args.workers}")
     print()
 
@@ -71,12 +55,9 @@ def main():
     dVdr_grid = LogGrid(*DVDR_RANGE,    num_points=n)
 
     t0 = time.perf_counter()
-    table = build_table(
+    table = build_gow_lvg_table(
         nH_grid, col_grid, dVdr_grid,
-        species_specs=SPECIES_SPECS,
         show_progress=True,
-        chem_network=GOW,
-        full_parallel=False,
         workers=args.workers,
     )
     elapsed = time.perf_counter() - t0

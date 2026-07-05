@@ -22,4 +22,6 @@ fiasco==0.6.2         # + CHIANTI database downloaded at runtime (~2.3 GB)
 PyYAML==6.0.3         # yt's QuokkaDataset parses metadata.yaml
 
 # Optional — ONLY needed to REBUILD the DESPOTIC tables, not to run the pipeline:
-# despotic==2.2
+# Install the pinned official DESPOTIC 2.2 source via the project extra:
+# python -m pip install -e ".[tables]"
+# (2.2 is not published on PyPI; PyPI 2.1 does not include the GOW network.)

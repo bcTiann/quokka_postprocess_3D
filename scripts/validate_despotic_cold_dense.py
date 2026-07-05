@@ -9,7 +9,7 @@ TrustRegionTask surfaced a surprise: in cold + dense cells the pipeline's
 comes out HOTTER than ``temperature_quokka`` — opposite to the intuition that
 DESPOTIC should be colder there. This script checks whether that is
   (a) wrong inputs, (b) table-interpolation error, or (c) real physics,
-by running the real DESPOTIC solver (`calculate_single_despotic_point`,
+by running the real DESPOTIC solver (`solve_gow_lvg_point`,
 same GOW network + dust/radiation params that BUILT the table) on a
 stratified sample of cold+dense cells and comparing, per cell:
 
@@ -55,8 +55,7 @@ from quokka2s.pipeline.prep import config as cfg                       # noqa: E
 from quokka2s.pipeline.prep import physics_fields as phys              # noqa: E402
 from quokka2s.data_handling import YTDataProvider, make_downsampled_dataset  # noqa: E402
 from quokka2s.pipeline.cache import compute_cache_key, cache_root_for_dataset  # noqa: E402
-from quokka2s.tables.solver import calculate_single_despotic_point     # noqa: E402
-from despotic.chemistry import GOW                                     # noqa: E402
+from quokka2s.tables.solver import solve_gow_lvg_point                 # noqa: E402
 
 
 def _load_cubes(return_provider=False):
@@ -194,14 +193,12 @@ def main():
     failed_map: dict[int, bool] = {}
     for i, fi in enumerate(union):
         fi = int(fi)
-        # 2026-05-29 API change: solver now takes a single dvdr_val (was a
-        # grid).  Return signature also tightened: out[6]=final_Tg, out[8]=failed.
-        out = calculate_single_despotic_point(
+        out = solve_gow_lvg_point(
             float(n_H[fi]), float(colden[fi]), float(dvdr[fi]),
-            chem_network=GOW, log_failures=False,
+            log_failures=False,
         )
-        Treal_map[fi] = out[6]      # final_Tg
-        failed_map[fi] = bool(out[8])
+        Treal_map[fi] = out[5]
+        failed_map[fi] = bool(out[7])
         if (i + 1) % 50 == 0 or (i + 1) == union.size:
             print(f'  [{i+1:4d}/{union.size}]  ({time.time()-t0:.0f}s elapsed)')
 

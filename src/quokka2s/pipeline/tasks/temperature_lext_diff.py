@@ -80,24 +80,17 @@ class TemperatureLextDiffTask(AnalysisTask):
         parent = cur.parent
         # Strip the existing  _Lext{X}kpc  suffix from the current dir name.
         name = cur.name
-        # Hunt for the last "_Lext" marker and drop everything from there to
-        # the (optional) trailing geometry suffix and the trailing slash.
+        # Hunt for the last "_Lext" marker and replace its value.
         idx = name.rfind('_Lext')
         if idx < 0:
             # Fall back: assume current naming convention isn't being followed.
             base = name
         else:
-            tail = name[idx:]
-            # tail is e.g. "_Lext9kpc" or "_Lext9kpc_sphere"
-            geom_suffix = ''
-            if '_sphere' in tail:
-                geom_suffix = '_sphere'
             base = name[:idx]
-            tail = geom_suffix  # carry sphere suffix forward (or '' if LVG)
         new_tag = f'_Lext{l_ext:g}kpc'
         if idx < 0:
             return parent / f'{base}{new_tag}'
-        return parent / f'{base}{new_tag}{tail}'
+        return parent / f'{base}{new_tag}'
 
     def _diff_dir(self) -> Path:
         cur = Path(self.config.output_dir)
@@ -105,13 +98,9 @@ class TemperatureLextDiffTask(AnalysisTask):
         name = cur.name
         idx = name.rfind('_Lext')
         base = name if idx < 0 else name[:idx]
-        # carry sphere suffix
-        geom_suffix = ''
-        if idx >= 0 and '_sphere' in name[idx:]:
-            geom_suffix = '_sphere'
         return parent / (f'{base}_LextDiff_'
                          f'{self.L_ext_baseline:g}kpc_vs_'
-                         f'{self.L_ext_compare:g}kpc{geom_suffix}')
+                         f'{self.L_ext_compare:g}kpc')
 
     # ── compute / plot ─────────────────────────────────────────────────
     def compute(self, context: PipelinePlotContext) -> dict:

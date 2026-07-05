@@ -36,7 +36,13 @@ dependencies = [
 [project.optional-dependencies]
 # Only needed to (re)build the DESPOTIC tables — NOT for running the pipeline,
 # which reads a prebuilt despotic_table.npz.  Install with:  pip install -e ".[tables]"
-tables = ["despotic==2.2"]
+# DESPOTIC reports version 2.2 on its official Bitbucket master, but 2.2 was
+# never published to PyPI (whose latest release is 2.1 and predates the GOW
+# chemistry network used by this project).  Pin the tested upstream source
+# commit so this extra is both installable and reproducible.
+tables = [
+    "despotic @ git+https://bitbucket.org/krumholz/despotic.git@ed18e5669adb7306f795a3d30d8919995793bc61",
+]
 
 [tool.setuptools]
 package-dir = {"" = "src"}

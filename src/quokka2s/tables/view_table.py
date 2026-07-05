@@ -15,7 +15,9 @@ import matplotlib.pyplot as plt
 
 from . import load_table
 from .plotting import plot_table_overview
-from ..pipeline.prep import config as cfg
+
+
+DEFAULT_TABLE = Path(__file__).resolve().parents[3] / "output_tables_3D_GOW_LVG" / "despotic_table.npz"
 
 
 TOKENS = [
@@ -44,10 +46,10 @@ def main():
                          '(strips leading "output_tables_3D_" if present)')
     ap.add_argument('--table', default=None,
                     help='path to the despotic_table.npz to view '
-                         '(default: cfg.DESPOTIC_TABLE_PATH)')
+                         f'(default: {DEFAULT_TABLE})')
     args = ap.parse_args()
 
-    table_path = args.table or cfg.DESPOTIC_TABLE_PATH
+    table_path = args.table or DEFAULT_TABLE
     print(f"[view_table] loading: {table_path}")
     table = load_table(table_path)
 
@@ -58,7 +60,7 @@ def main():
         # strip the boilerplate prefix if present, so the suffix carries the
         # network/geom info (e.g. output_tables_3D_GOW_LVG -> GOW_LVG).
         tag = src_dir_name
-        for prefix in ('output_tables_3D_', 'output_tables_4D_', 'output_tables_'):
+        for prefix in ('output_tables_3D_', 'output_tables_'):
             if tag.startswith(prefix):
                 tag = tag[len(prefix):]
                 break

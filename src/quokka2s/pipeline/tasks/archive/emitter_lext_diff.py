@@ -94,9 +94,7 @@ class EmitterLextDiffTask(AnalysisTask):
         if idx < 0:
             return parent / f'{name}_Lext{l_ext:g}kpc'
         base = name[:idx]
-        tail = name[idx:]
-        geom_suffix = '_sphere' if '_sphere' in tail else ''
-        return parent / f'{base}_Lext{l_ext:g}kpc{geom_suffix}'
+        return parent / f'{base}_Lext{l_ext:g}kpc'
 
     def _diff_dir(self) -> Path:
         cur = Path(self.config.output_dir)
@@ -104,12 +102,9 @@ class EmitterLextDiffTask(AnalysisTask):
         name = cur.name
         idx = name.rfind('_Lext')
         base = name if idx < 0 else name[:idx]
-        geom_suffix = ''
-        if idx >= 0 and '_sphere' in name[idx:]:
-            geom_suffix = '_sphere'
         return parent / (f'{base}_LextDiff_'
                          f'{self.L_ext_baseline:g}kpc_vs_'
-                         f'{self.L_ext_compare:g}kpc{geom_suffix}')
+                         f'{self.L_ext_compare:g}kpc')
 
     # ── compute / plot ─────────────────────────────────────────────────────
     def compute(self, context: PipelinePlotContext) -> dict:

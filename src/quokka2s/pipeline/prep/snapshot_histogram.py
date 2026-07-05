@@ -1,6 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from ...tables import load_table, plot_sampling_histogram
+from ...tables import load_table
+from ...tables.diagnostics import plot_sampling_histogram
 import yt
 from yt.units import mh, kpc
 from . import config as cfg
