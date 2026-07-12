@@ -10,6 +10,10 @@ from ...analysis import along_sight_cumulation
 from . import config as cfg
 from ...tables import load_table
 from ...tables.lookup import TableLookup
+from ...line_regimes import (
+    hydrogen_ionization_fraction_from_mean_molecular_weight,
+    temperature_regime_masks,
+)
 
 
 # --- Fundamental Physical Constants ---
@@ -28,19 +32,21 @@ TABLE_LOOKUP_CACHE: TableLookup | None = None
 # (quiescent halo), measured 2026-05-09.
 DVDR_FLOOR = 1e-18
 
-# Two-regime split (advisor 2026-06-12): for T_QUOKKA above this threshold
-# the DESPOTIC 3D-table chemistry is bypassed and analytic closed-form
-# (Saha CIE + α_B / 2-level / etc.) is used instead.  3000 K is well below
-# the WIM thermal floor (~8000 K) yet high enough that DESPOTIC's cold
-# molecular network has nothing to say.
-T_QK_TWO_REGIME_K = 3000.0   # K  (DESPOTIC table ↔ Saha boundary)
-# Above T_CIE_K, collisional-ionization equilibrium (CIE, from CHIANTI) replaces
-# Saha: DESPOTIC can't model gas this hot, and CIE is the standard model for
-# diffuse T > 1e4 K gas (SLICC-6 convention).  THREE regimes for the line fields:
-#     T < 3000 K        → DESPOTIC 3D table        (unchanged)
-#     3000 ≤ T < 1e4 K  → Saha CIE (analytic)      (unchanged)
-#     T ≥ 1e4 K         → CHIANTI CIE ion fractions (new; density-independent)
-T_CIE_K = 1.0e4   # K  (Saha ↔ CHIANTI-CIE boundary)
+# Methodology temperature boundaries, both applied to T_QUOKKA:
+#     T < 3000 K              → DESPOTIC
+#     3000 K ≤ T < 1.307e4 K → x_e from QUOKKA's mean molecular weight
+#     T ≥ 1.307e4 K          → CHIANTI CIE
+T_QK_TWO_REGIME_K = 3000.0
+T_CIE_K = 1.307e4
+
+
+def _temperature_regime_masks(T_quokka_K):
+    """Return low/intermediate/high masks using the two constants above."""
+    return temperature_regime_masks(
+        T_quokka_K,
+        T_QK_TWO_REGIME_K,
+        T_CIE_K,
+    )
 
 # ─── H atomic / line constants ──────────────────────────────────────
 # Per user rule [[no-silent-simplification]] (2026-06-20): the three
@@ -203,7 +209,7 @@ def _build_cie_ion_fractions():
     return (T_grid, xH[:, 0], xH[:, 1], xC[:, 1], xC[:, 2])
 
 (_CIE_T_GRID, _CIE_X_H0, _CIE_X_HP, _CIE_X_CP, _CIE_X_CPP) = _build_cie_ion_fractions()
-print(f"[physics_fields] CHIANTI CIE ion fractions built (T ≥ {T_CIE_K:.0e} K): "
+print(f"[physics_fields] CHIANTI CIE ion fractions built (branch T ≥ {T_CIE_K:.4g} K): "
       f"x_C+ peak={_CIE_X_CP.max():.2f}, x_H+(3e4K)="
       f"{np.interp(3e4, _CIE_T_GRID, _CIE_X_HP):.2f}")
 
@@ -267,7 +273,7 @@ def _x_H_ion_saha(T_K, n_H_cm3):
     return np.clip(2.0 / (np.sqrt(1.0 + 4.0 / R) + 1.0), 0.0, 1.0)
 
 def _temperature_two_regime(field, data):
-    """Unified per-cell temperature for two-regime line-luminosity work.
+    """Unified per-cell temperature for line-emission and thermal-width work.
 
     For each cell:
         T_use = T_DESPOTIC    if T_QUOKKA <  T_QK_TWO_REGIME_K (= 3000 K)
@@ -278,7 +284,7 @@ def _temperature_two_regime(field, data):
     because DESPOTIC's 3D-table tg_final saturates around ~5×10^4 K.
 
     Cheap derived field (just np.where), not in CACHED_FIELDS.  Consumed
-    by HI's hot branch and (planned) C+'s hot branch.  Boundary
+    by line thermal widths and temperature diagnostics. Boundary
     convention: T_QK == 3000 K → hot branch.
     """
     T_qk  = data[('gas', 'temperature_quokka')].to('K').value
@@ -459,7 +465,7 @@ def _temperature_despotic(field, data):
     """Gas temperature from the 3D DESPOTIC table's tg_final at (n_H, N_H,
     dVdr).  Saturates at ~5×10⁴ K because that's the upper bound of DESPOTIC's
     thermal-equilibrium solver; hot ionised gas is handled per-line in the
-    two-regime functions (e.g. _Halpha_luminosity) using T_QUOKKA directly,
+    multi-regime functions (e.g. _Halpha_luminosity) using T_QUOKKA directly,
     not by overriding this field.
     """
     lookup = ensure_table_lookup(cfg.DESPOTIC_TABLE_PATH)
@@ -644,18 +650,15 @@ def _Halpha_luminosity(field, data):
     H-alpha Luminosity Density [erg / s / cm**3].  Draine (2011) Eq. 14.6:
         ε_Hα = 0.45 · E_Hα · α_B(T) · n_e · n_H+
 
-    Two-regime treatment (2026-06-12, advisor-approved):
-      - **Cold** (T_QUOKKA <  T_QK_TWO_REGIME_K = 3000 K):
+    Three-regime treatment from the Methodology:
+      - **Low** (T_QUOKKA < 3000 K):
             n_e, n_H+ from the DESPOTIC 3D table;  α_B at T_DESPOTIC.
-            Same physics path as before.
-      - **Hot**  (T_QUOKKA ≥  T_QK_TWO_REGIME_K):
-            n_H+ = n_e = x_H+(T_QK, n_H) · n_H_tot,
-            where x_H+ is the closed-form Saha CIE solution (H-only).
-            α_B uses the *real* T_QUOKKA so HIM cells get the right (small)
-            recombination coefficient instead of the saturated T_DSP value.
+      - **Intermediate** (3000 K ≤ T_QUOKKA < 1.307e4 K):
+            infer x_e from QUOKKA's e_int, rho, and T; n_e=n_H+=x_e n_H.
+      - **High** (T_QUOKKA ≥ 1.307e4 K):
+            n_e=n_H+=f_H+^CIE(T_QUOKKA) n_H from CHIANTI.
 
-    Hard split (no blending) — verify the seam by eye in the resulting
-    H_alpha_luminosity slices, upgrade to blended later if needed.
+    α_B uses T_DESPOTIC only in the low regime and T_QUOKKA otherwise.
     """
     # Photon energy is a constant.
     E_Halpha = ((h * c) / lambda_Halpha).in_cgs().value   # erg
@@ -665,29 +668,37 @@ def _Halpha_luminosity(field, data):
     T_dsp = data[('gas', 'temperature_despotic')].to('K').value
     n_H   = data[('gas', 'number_density_H')].to('cm**-3').value
 
-    hot = T_qk >= T_QK_TWO_REGIME_K
+    low, intermediate, high = _temperature_regime_masks(T_qk)
 
     # ── Cold branch (DESPOTIC, as before) ──
     n_e_cold   = data[('gas', 'e-')].to('cm**-3').value
     n_ion_cold = data[('gas', 'H+')].to('cm**-3').value
     T_for_alpha_cold = T_dsp
 
-    # ── Warm-Saha branch (3000 ≤ T_QK < 1e4 K): Saha CIE on T_QK ──
-    x_ion = _x_H_ion_saha(T_qk, n_H)
-    n_e_hot   = x_ion * n_H       # H-only: n_e = x_H+ · n_H
-    n_ion_hot = x_ion * n_H       # same as n_e
+    # ── Intermediate branch: infer x_e from QUOKKA's mean molecular weight ──
+    e_int = data[('gas', 'internal_energy_density')].to('erg/cm**3').value
+    rho = data[('gas', 'density')].to('g/cm**3').value
+    x_ion = hydrogen_ionization_fraction_from_mean_molecular_weight(
+        e_int,
+        rho,
+        T_qk,
+        hydrogen_mass_g=float(m_H.to('g').value),
+        boltzmann_erg_K=float(kb.to('erg/K').value),
+    )
+    n_e_hot   = x_ion * n_H
+    n_ion_hot = x_ion * n_H
     T_for_alpha_hot = T_qk
 
-    # ── Hot-CIE branch (T_QK ≥ 1e4 K): x_H+ from CHIANTI CIE (density-indep) ──
+    # ── High branch (T_QK ≥ 1.307e4 K): x_H+ from CHIANTI CIE ──
     x_ion_cie = np.interp(T_qk, _CIE_T_GRID, _CIE_X_HP)
     n_e_cie   = x_ion_cie * n_H
     n_ion_cie = x_ion_cie * n_H
 
-    # 3-regime merge (T≥1e4 → CIE;  3000≤T<1e4 → Saha;  T<3000 → DESPOTIC).
+    # 3-regime merge (T≥1.307e4 → CIE; intermediate → mu-derived; low → DESPOTIC).
     # Nested np.where (see _Cplus_luminosity_two_regime note on np.select+astropy).
-    n_e          = np.where(T_qk >= T_CIE_K, n_e_cie,   np.where(hot, n_e_hot,   n_e_cold))
-    n_ion        = np.where(T_qk >= T_CIE_K, n_ion_cie, np.where(hot, n_ion_hot, n_ion_cold))
-    T_for_alpha  = np.where(hot, T_for_alpha_hot, T_for_alpha_cold)
+    n_e          = np.where(high, n_e_cie,   np.where(intermediate, n_e_hot,   n_e_cold))
+    n_ion        = np.where(high, n_ion_cie, np.where(intermediate, n_ion_hot, n_ion_cold))
+    T_for_alpha  = np.where(low, T_for_alpha_cold, T_for_alpha_hot)
 
     # α_B(T)  — Draine 2011 Eq. 14.6 hydrogenic fit, Z = 1.
     T4 = np.maximum(T_for_alpha / 1.0e4, 1.0e-10)   # guard log(0)
@@ -707,26 +718,17 @@ def _HI_luminosity(field, data):
     Factor 3/4 is the upper hyperfine state fraction in the high-T limit
     (kT >> hν_21/k = 0.07 K, valid for all ISM).
 
-    Two-regime in n_HI (split at T_QUOKKA = T_QK_TWO_REGIME_K):
-      - Cold (T_QK < 3000 K): n_HI from the 3D DESPOTIC LAMDA table
+    Three-regime treatment of n_HI:
+      - Low (T_QK < 3000 K): n_HI from the 3D DESPOTIC LAMDA table
         (UV+CR-aware chemistry), field ('gas','HI').
-      - Hot  (T_QK ≥ 3000 K): n_HI = (1 − x_H+) · n_H from H-Saha CIE
-        (`_x_H_ion_saha`, Draine textbook form).
-
-    Note on the hot branch: Saha CIE drives x_H+ → 1 above ~10⁴ K, so the
-    hot-gas n_HI (and hence ε_21) collapses to ~0.  This is intentionally
-    "QUOKKA-self-consistent" (LTE on T_QK), NOT MW-realistic: real WNM/WIM
-    is photo-ionization-balanced (mostly neutral at 6000–10000 K), which
-    LTE Saha cannot capture — so the total L_HI lands ~5 dex below the MW
-    expectation, while the cold DESPOTIC branch carries realistic WNM n_HI.
-    See `project_two_regime_per_species.md` in memory for the full rationale
-    (including why a single-regime 100%-DESPOTIC variant was tried first and
-    then flipped to this two-regime form).
+      - Intermediate (3000 K ≤ T_QK < 1.307e4 K):
+        n_HI = (1 − x_e) n_H, with x_e inferred from QUOKKA's mean molecular weight.
+      - High (T_QK ≥ 1.307e4 K): n_HI=f_HI^CIE(T_QK)n_H from CHIANTI.
     """
     T_qk    = data[('gas', 'temperature_quokka')].to('K').value
     n_H_sim = data[('gas', 'number_density_H')].to('cm**-3').value
 
-    hot = T_qk >= T_QK_TWO_REGIME_K
+    _, intermediate, high = _temperature_regime_masks(T_qk)
 
     # ── Cold branch: 3D DESPOTIC table neutral-H species ─────────────
     # data[('gas', 'HI')] = x_HI(n_H,N_H,dVdr) · n_H_tot from the LAMDA
@@ -736,21 +738,24 @@ def _HI_luminosity(field, data):
     #  name was changed.  See _make_number_density_field for the mapping.)
     n_HI_cold = data[('gas', 'HI')].to('cm**-3').value
 
-    # ── Hot branch: H-Saha CIE via shared helper (Draine convention) ──
-    # `_x_H_ion_saha` is the single source of truth for H ionisation.
-    # It uses the textbook Saha (3.17) without the spurious extra ×2 that
-    # the original 2026-06-13 spec had — see the helper docstring.
-    # LTE charge neutrality (H only): n_e = n_H+ = x · n_H_tot, so
-    # n_HI = (1 − x) · n_H_tot.
-    x_HII    = _x_H_ion_saha(T_qk, n_H_sim)
-    n_HI_hot = (1.0 - x_HII) * n_H_sim
+    # ── Intermediate branch: x_e from QUOKKA's e_int, rho, and temperature ──
+    e_int = data[('gas', 'internal_energy_density')].to('erg/cm**3').value
+    rho = data[('gas', 'density')].to('g/cm**3').value
+    x_e = hydrogen_ionization_fraction_from_mean_molecular_weight(
+        e_int,
+        rho,
+        T_qk,
+        hydrogen_mass_g=float(m_H.to('g').value),
+        boltzmann_erg_K=float(kb.to('erg/K').value),
+    )
+    n_HI_hot = (1.0 - x_e) * n_H_sim
 
-    # ── Hot-CIE branch (T_QK ≥ 1e4 K): neutral fraction from CHIANTI CIE ──
+    # ── High branch (T_QK ≥ 1.307e4 K): neutral fraction from CHIANTI CIE ──
     x_H0_cie = np.interp(T_qk, _CIE_T_GRID, _CIE_X_H0)
     n_HI_cie = x_H0_cie * n_H_sim
 
-    # ── Merge (3-regime: T≥1e4→CIE, 3000≤T<1e4→Saha, T<3000→DESPOTIC) ──
-    n_HI = np.where(T_qk >= T_CIE_K, n_HI_cie, np.where(hot, n_HI_hot, n_HI_cold))
+    # ── Merge: high→CIE, intermediate→mu-derived, low→DESPOTIC ──
+    n_HI = np.where(high, n_HI_cie, np.where(intermediate, n_HI_hot, n_HI_cold))
 
     A_10_val = A_HI_21                       # 2.85e-15 s^-1 (Furlanetto+2006)
     nu_val   = NU_HI_21                      # 1.420405751768e9 Hz (NIST)
@@ -783,19 +788,20 @@ def _H_atom_thermal_width(field, data):
 
 
 def _Cplus_luminosity_two_regime(field, data):
-    """[C II] 158 μm volumetric emissivity, two-regime (2026-06-18).
+    """[C II] 158 μm volumetric emissivity across three temperature regimes.
 
     Cold (T_QUOKKA < 3000 K)
         Replicate the legacy `_make_luminosity_field('C+')` lookup —
         ε = n_H · lumPerH from the 3D DESPOTIC LAMDA table at
         (n_H, N_H, dVdr).  Unchanged.
 
-    Hot (T_QUOKKA ≥ 3000 K) — closed-form LTE per user spec 2026-06-18:
+    Intermediate (3000 K ≤ T_QUOKKA < 1.307e4 K) — provisional
+    Saha+LTE retained because the Methodology marks this regime "to be
+    determined":
 
-        Step 1.  H Saha for n_e  (textbook form, Draine 2011 Eq 3.17 /
-                  Sparke & Gallagher Eq 3.17, via shared `_x_H_ion_saha`)
-            n_e · n_H+ / n_HI = (2π m_e k_B T / h²)^(3/2) · exp(-I_H / k_B T)
-            With H-only neutrality:  n_e = n_H+ = x_H+ · n_H_tot.
+        Step 1.  Infer x_e from QUOKKA's mean molecular weight, following
+                 the shared intermediate-temperature hydrogen treatment;
+                 n_e = x_e n_H.
 
         Step 2.  Two-stage C Saha for x_C+ — 3-state conservation (added
                  2026-06-18 to fix the high-T x_C+ → 1 saturation bug):
@@ -825,7 +831,7 @@ def _Cplus_luminosity_two_regime(field, data):
     T_qk    = data[('gas', 'temperature_quokka')].to('K').value
     n_H_sim = data[('gas', 'number_density_H')].to('cm**-3').value
 
-    hot = T_qk >= T_QK_TWO_REGIME_K
+    _, intermediate, high = _temperature_regime_masks(T_qk)
 
     # ─────────────── COLD branch: DESPOTIC LAMDA table ──────────────
     lookup   = ensure_table_lookup(cfg.DESPOTIC_TABLE_PATH)
@@ -834,16 +840,24 @@ def _Cplus_luminosity_two_regime(field, data):
     eps_cold = _table_emissivity(lookup, 'C+', n_H_sim, colDen_H, dVdr)  # erg/s/cm³
 
     # ────────────────── HOT branch: LTE closed-form ─────────────────
-    # Step 1: H Saha → n_e via shared `_x_H_ion_saha` helper (Draine
-    # form, see helper docstring for textbook Eq 3.17).
+    # Step 1: Methodology intermediate-regime hydrogen treatment → n_e.
     T_safe = np.maximum(T_qk, 1.0)            # used by Step 2 / 4 below
-    x_H    = _x_H_ion_saha(T_qk, n_H_sim)
-    n_e    = x_H * n_H_sim                                                # cm⁻³
+    e_int = data[('gas', 'internal_energy_density')].to('erg/cm**3').value
+    rho = data[('gas', 'density')].to('g/cm**3').value
+    x_e = hydrogen_ionization_fraction_from_mean_molecular_weight(
+        e_int,
+        rho,
+        T_qk,
+        hydrogen_mass_g=float(m_H.to('g').value),
+        boltzmann_erg_K=float(kb.to('erg/K').value),
+    )
+    n_e = x_e * n_H_sim                                                   # cm⁻³
 
     # Step 2: two-stage C Saha + 3-state conservation (2026-06-18).
     #   C0 → C+:  S_C1 = 2·(K·T)^1.5 · (U_Cp/U_C0)  · exp(-I_C  /kT)
     #   C+ → C++: S_C2 = 2·(K·T)^1.5 · (U_Cpp/U_Cp) · exp(-I_C2 /kT)
-    # With n_e fixed (from H Saha; C electrons are ~A_C·n_H, negligible),
+    # With n_e fixed by the Methodology's H-only electron budget (carbon
+    # electrons are ~A_C·n_H and neglected),
     # the two Saha equilibria decouple algebraically:
     #   r1 = S_C1/n_e = n_C+ /n_C0
     #   r2 = S_C2/n_e = n_C++/n_C+
@@ -882,17 +896,21 @@ def _Cplus_luminosity_two_regime(field, data):
     h_cgs  = float(h.in_cgs().value)
     eps_hot = n_u * _CII_A_UL * h_cgs * _CII_NU_HZ
 
-    # ── Hot-CIE branch (T ≥ T_CIE_K): x_C+ from CHIANTI CIE (density-indep);
+    # ── High branch (T ≥ 1.307e4 K): x_C+ from CHIANTI CIE (density-indep);
     #    same LTE level-pop + emissivity, only the ion fraction source changes. ──
     x_Cp_cie = np.interp(T_safe, _CIE_T_GRID, _CIE_X_CP)
     n_Cp_cie = x_Cp_cie * A_C_TOTAL * n_H_sim
     n_u_cie  = n_Cp_cie * r / (1.0 + r)
     eps_cie  = n_u_cie * _CII_A_UL * h_cgs * _CII_NU_HZ
 
-    # 3-regime: T≥1e4 → CIE;  3000≤T<1e4 → Saha (hot);  T<3000 → DESPOTIC (cold).
+    # The Methodology leaves intermediate-temperature C+ "to be determined".
+    # Preserve the pre-existing Saha+LTE calculation provisionally, while the
+    # defined low and high branches follow the Methodology exactly.
+    # 3-regime: T≥1.307e4 → CIE; intermediate → provisional Saha+LTE;
+    # T<3000 → DESPOTIC.
     # Nested np.where (not np.select — astropy's np.select helper mishandles an
     # array `default` during yt field-dependency detection).
-    eps = np.where(T_qk >= T_CIE_K, eps_cie, np.where(hot, eps_hot, eps_cold))
+    eps = np.where(high, eps_cie, np.where(intermediate, eps_hot, eps_cold))
     return yt.YTArray(eps, 'erg/s/cm**3')
 
 
@@ -986,8 +1004,8 @@ def add_all_fields(ds):
 
     ds.add_field(name=('gas', 'temperature_despotic'), function=_temperature_despotic, sampling_type="cell", units="K", force_override=True)
 
-    # Unified per-cell temperature used by HI's two-regime branch (and
-    # planned C+ hot branch).  Just np.where on T_QUOKKA vs 3000 K — cheap,
+    # Unified per-cell temperature used by thermal widths and diagnostics.
+    # Just np.where on T_QUOKKA vs 3000 K — cheap,
     # not cached.
     ds.add_field(name=('gas', 'temperature_two_regime'),
                  function=_temperature_two_regime,
@@ -1053,7 +1071,8 @@ def add_all_fields(ds):
             force_override=True
         )
 
-    # Two-regime [C II] 158 μm: cold = DESPOTIC LAMDA, hot = CHIANTI LTE.
+    # [C II] 158 μm: low = DESPOTIC, intermediate = provisional Saha+LTE,
+    # high = CHIANTI CIE ion fraction + LTE upper-level population.
     ds.add_field(
         name=('gas', 'C+_luminosity'),
         function=_Cplus_luminosity_two_regime,
@@ -1063,7 +1082,7 @@ def add_all_fields(ds):
     )
 
     # freq + thermal_width still auto-registered for all 3 emitters
-    # (including C+, whose luminosity uses the two-regime function above).
+    # (including C+, whose luminosity uses the multi-regime function above).
     for em in EMITTERS_FREQ_WIDTH:
         _, freq_func = _make_line_frequency_field(species=em)
         ds.add_field(
@@ -1111,4 +1130,4 @@ def add_all_fields(ds):
                  function=_H_atom_thermal_width, sampling_type="cell",
                  units="cm/s", force_override=True)
 
-    print("Added derived fields including HI/H_alpha (closed-form, no DESPOTIC).")
+    print("Added multi-regime CO/C+/HI/H_alpha derived fields.")

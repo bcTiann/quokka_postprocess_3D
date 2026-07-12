@@ -78,11 +78,13 @@ TASK_GROUPS=(
 MASTER=$LOGS/MASTER_dataset_series.log
 > "$MASTER"
 echo "[$(date)] === datasets: ${DATASETS[*]}  L_ext=$LEXT_KPC  tag=$RUN_TAG  MODE=$MODE  python=$PY ===" | tee -a "$MASTER"
+OVERALL_RC=0
 
 for D in "${DATASETS[@]}"; do
   DPATH=$ROOT/$D
   if [ ! -e "$DPATH" ]; then
-    echo "[$(date)] [$D] SKIP — not found at $DPATH" | tee -a "$MASTER"
+    echo "[$(date)] [$D] ERROR — not found at $DPATH" | tee -a "$MASTER"
+    OVERALL_RC=1
     continue
   fi
   echo "[$(date)] [$D] === start (MODE=$MODE) ===" | tee -a "$MASTER"
@@ -95,9 +97,18 @@ for D in "${DATASETS[@]}"; do
     # $args is intentionally unquoted so it splits into separate --task tokens.
     YT_DATASET=$DPATH LEXT_KPC=$LEXT_KPC RUN_TAG=$RUN_TAG \
       $PY -u -m quokka2s.pipeline.tasks.run_pipeline --mode "$MODE" $args > "$LOG" 2>&1
-    echo "[$(date)] [$D] $tag  RC=$?" | tee -a "$MASTER"
+    rc=$?
+    if [ "$rc" -ne 0 ]; then
+      OVERALL_RC=$rc
+    fi
+    echo "[$(date)] [$D] $tag  RC=$rc" | tee -a "$MASTER"
   done
   echo "[$(date)] [$D] === done ===" | tee -a "$MASTER"
 done
 
-echo "[$(date)] === ALL DONE ===" | tee -a "$MASTER"
+if [ "$OVERALL_RC" -eq 0 ]; then
+  echo "[$(date)] === ALL DONE — SUCCESS ===" | tee -a "$MASTER"
+else
+  echo "[$(date)] === FINISHED WITH ERRORS (RC=$OVERALL_RC) ===" | tee -a "$MASTER"
+fi
+exit "$OVERALL_RC"

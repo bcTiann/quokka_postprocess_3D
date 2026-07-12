@@ -56,6 +56,24 @@ def main(src_path: Path, dst_path: Path) -> None:
     data = {k: raw[k] for k in raw.files}
 
     Tg = data['tg_final']
+    per_cell_shape = Tg.shape
+
+    # Transition frequencies are constants copied into every table cell. They
+    # do not depend on whether the thermal/chemistry solve converged. Validate
+    # that each species has one consistent finite frequency, then fill the
+    # holes inherited from failed raw-table cells with that same constant.
+    for key in (k for k in data if k.endswith('_freq')):
+        freq = np.asarray(data[key], dtype=float)
+        if freq.shape != per_cell_shape:
+            continue
+        finite = freq[np.isfinite(freq)]
+        if finite.size == 0:
+            raise ValueError(f'{key} has no finite transition frequency')
+        reference = float(finite[0])
+        if not np.allclose(finite, reference, rtol=1e-12, atol=0.0):
+            raise ValueError(f'{key} is not constant across finite table cells')
+        data[key] = np.full(per_cell_shape, reference, dtype=float)
+
     garbage = np.isfinite(Tg) & (Tg > 1e6)
     nan = np.isnan(Tg)
     fm = data['failure_mask']
@@ -67,8 +85,6 @@ def main(src_path: Path, dst_path: Path) -> None:
     # by the fill (failure_mask is updated to include garbage so analytics can
     # still flag those cells later).
     data['failure_mask'] = fm | garbage
-    per_cell_shape = Tg.shape
-
     for fld in ['tg_final', 'mu_values', 'cv_values', 'Eint_values']:
         if fld in data:
             a = data[fld].astype(float)
@@ -76,12 +92,17 @@ def main(src_path: Path, dst_path: Path) -> None:
             data[fld] = a
     for k in list(data.keys()):
         if k.startswith('energy::') or k.endswith(
-                ('_abundance', '_lumPerH', '_freq', '_intIntensity',
+                ('_abundance', '_lumPerH', '_intIntensity',
                  '_intTB', '_tau', '_tauDust')):
             a = data[k].astype(float)
             if a.shape == per_cell_shape:
                 a[bad] = np.nan
                 data[k] = a
+
+    # ``*_freq`` is an atomic/molecular transition constant, not a result of
+    # the thermal/chemistry solve.  Keep it unchanged even where that table
+    # cell failed; masking it would create holes that the interpolation list
+    # below intentionally does not fill.
 
     log_axes = (np.log10(data['nH_values']),
                 np.log10(data['col_density_values']),

@@ -28,11 +28,12 @@ _PROJECT_ROOT = Path(os.environ.get("QUOKKA_ROOT", Path(__file__).resolve().pare
 YT_DATASET_PATH = os.environ.get(
     "YT_DATASET", str(_PROJECT_ROOT / "plt0655228"))  # default: plt0655228 (8GB)
 
-# Canonical self-consistent 3D GOW/LVG table. Override only its location;
-# chemistry, geometry, and grid definition are fixed by tables/build_table.py.
+# Cleaned self-consistent 3D GOW/LVG table (failed/NaN/outlier cells filled
+# only inside the valid-data convex hull). Set DESPOTIC_TABLE only when a
+# temporary alternate table is intentionally needed.
 DESPOTIC_TABLE_PATH = os.environ.get(
     "DESPOTIC_TABLE",
-    str(_PROJECT_ROOT / "output_tables_3D_GOW_LVG" / "despotic_table.npz"),
+    str(_PROJECT_ROOT / "output_tables_3D_GOW_LVG" / "despotic_table_clean.npz"),
 )
 _DATASET_BASENAME = os.path.basename(YT_DATASET_PATH)
 # Output root for all figures + task_intermediates.  On a cluster point this at

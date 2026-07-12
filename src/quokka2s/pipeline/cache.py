@@ -46,7 +46,7 @@ import numpy as np
 # changes (e.g. the DESPOTIC table's `tg_final` computation, the chemistry
 # network, the column-density direction symmetrisation). All cached files
 # stamped with an older value will be silently invalidated and rebuilt.
-CACHE_SCHEMA_VERSION = 6  # T≥1e4 K C+/Hα/HI emission uses CHIANTI CIE.
+CACHE_SCHEMA_VERSION = 7  # 1.307e4 K CIE boundary + mu-derived intermediate H state.
 
 
 # ── Fields worth caching to disk ─────────────────────────────────────────────
