@@ -7,6 +7,8 @@ import astropy.units as _u_ap
 from scipy.special import erf as scipy_erf
 from yt.units import K, mp, kb, mh, planck_constant, cm, m, s, g, erg, amu, kpc
 from ...analysis import along_sight_cumulation
+from ...cii_chianti_lookup import CiiUpperFractionLookup
+from ...cie_composition import cie_h_he_charge_per_hydrogen
 from . import config as cfg
 from ...tables import load_table
 from ...tables.lookup import TableLookup
@@ -24,6 +26,7 @@ c = float(_const_ap.c.to('cm/s').value) * (cm / s)   # speed of light from astro
 # eV → K conversion (= e / k_B), derived from astropy (was the hardcoded 11604.518)
 _EV_TO_K = float((1.0 * _u_ap.eV / _const_ap.k_B).to('K').value)
 TABLE_LOOKUP_CACHE: TableLookup | None = None
+CII_UPPER_FRACTION_LOOKUP_CACHE: CiiUpperFractionLookup | None = None
 
 # Lower bound on |∇·v|/3 used as the LVG dVdr field. Cells with smaller
 # divergence are pinned to this floor — the table's dVdr axis bottoms
@@ -106,7 +109,7 @@ print(f"[physics_fields] H constants: "
 
 # ── CHIANTI atomic data for [C II] 158 μm hot-branch LTE  (2026-06-18) ──
 # Built ONCE at module import via fiasco/CHIANTI; per-cell evaluation in
-# _Cplus_luminosity_two_regime uses np.interp on these grids.  Constants
+# _Cplus_luminosity_model uses np.interp on these grids.  Constants
 # (A_ul, ν, T_star, g_u/l, I_C) are T-independent — extracted from the
 # 158 μm transition (CHIANTI level 1 → 2 of C II, λ=157.74 μm).  See
 # memory `[[fiasco-chianti-installed]]` for install state.
@@ -195,23 +198,36 @@ print(f"[physics_fields] CHIANTI [C II] LTE tables built: "
 # For the hot branch (T ≥ T_CIE_K) we use CHIANTI's CIE ion-fraction tables —
 # density-independent f(T) — instead of Saha.  Built once at import via fiasco.
 def _build_cie_ion_fractions():
-    """Return (T_grid, x_H0, x_H+, x_C+, x_C++) from CHIANTI CIE.
+    """Return ion fractions and explicit H+He charge per H from CHIANTI CIE.
 
     fiasco.Element(...).equilibrium_ionization = fraction of the element in each
     ionization stage as a function of T only (CIE; density-independent).
-    Columns: hydrogen → [H0, H+];  carbon → [C0, C+, C++, ...].
+    Columns are ordered by charge: H=[H0,H+], He=[He0,He+,He++],
+    C=[C0,C+,C++,...].  H and He set the absolute collider densities
+    n_e=(electron_per_H)n_H and n_p=(proton_per_H)n_H; C is loaded only for
+    the emitting-ion fractions used elsewhere in this module.
     """
     import fiasco
     T_grid_q = np.logspace(4.0, 8.5, 600) * _u_ap.K        # CIE valid for T ≥ 1e4 K
     T_grid   = T_grid_q.to('K').value
     xH = np.nan_to_num(np.asarray(fiasco.Element('hydrogen', T_grid_q).equilibrium_ionization))
+    xHe = np.nan_to_num(np.asarray(fiasco.Element('helium',  T_grid_q).equilibrium_ionization))
     xC = np.nan_to_num(np.asarray(fiasco.Element('carbon',   T_grid_q).equilibrium_ionization))
-    return (T_grid, xH[:, 0], xH[:, 1], xC[:, 1], xC[:, 2])
+    electron_per_H, proton_per_H = cie_h_he_charge_per_hydrogen(
+        xH,
+        xHe,
+        hydrogen_mass_fraction=cfg.X_H,
+        helium_mass_fraction=cfg.Y_HE,
+    )
+    return (T_grid, xH[:, 0], xH[:, 1], xC[:, 1], xC[:, 2],
+            electron_per_H, proton_per_H)
 
-(_CIE_T_GRID, _CIE_X_H0, _CIE_X_HP, _CIE_X_CP, _CIE_X_CPP) = _build_cie_ion_fractions()
+(_CIE_T_GRID, _CIE_X_H0, _CIE_X_HP, _CIE_X_CP, _CIE_X_CPP,
+ _CIE_ELECTRON_PER_H, _CIE_PROTON_PER_H) = _build_cie_ion_fractions()
 print(f"[physics_fields] CHIANTI CIE ion fractions built (branch T ≥ {T_CIE_K:.4g} K): "
       f"x_C+ peak={_CIE_X_CP.max():.2f}, x_H+(3e4K)="
-      f"{np.interp(3e4, _CIE_T_GRID, _CIE_X_HP):.2f}")
+      f"{np.interp(3e4, _CIE_T_GRID, _CIE_X_HP):.2f}, "
+      f"n_e/n_H(1e6K)={np.interp(1e6, _CIE_T_GRID, _CIE_ELECTRON_PER_H):.3f}")
 
 
 
@@ -695,7 +711,7 @@ def _Halpha_luminosity(field, data):
     n_ion_cie = x_ion_cie * n_H
 
     # 3-regime merge (T≥1.307e4 → CIE; intermediate → mu-derived; low → DESPOTIC).
-    # Nested np.where (see _Cplus_luminosity_two_regime note on np.select+astropy).
+    # Nested np.where (see _Cplus_luminosity_model note on np.select+astropy).
     n_e          = np.where(high, n_e_cie,   np.where(intermediate, n_e_hot,   n_e_cold))
     n_ion        = np.where(high, n_ion_cie, np.where(intermediate, n_ion_hot, n_ion_cold))
     T_for_alpha  = np.where(low, T_for_alpha_cold, T_for_alpha_hot)
@@ -787,8 +803,24 @@ def _H_atom_thermal_width(field, data):
     return sigma_v
 
 
-def _Cplus_luminosity_two_regime(field, data):
-    """[C II] 158 μm volumetric emissivity across three temperature regimes.
+def _get_cii_upper_fraction_lookup() -> CiiUpperFractionLookup:
+    """Lazily load the CHIANTI N_u(T,n_H) table.
+
+    LTE-only runs therefore preserve the previous startup behaviour and do
+    not require the additional lookup artifact.
+    """
+    global CII_UPPER_FRACTION_LOOKUP_CACHE
+    if CII_UPPER_FRACTION_LOOKUP_CACHE is None:
+        CII_UPPER_FRACTION_LOOKUP_CACHE = CiiUpperFractionLookup.from_npz(
+            cfg.CII_CHIANTI_NU_TABLE_PATH,
+            hydrogen_mass_fraction=cfg.X_H,
+            helium_mass_fraction=cfg.Y_HE,
+        )
+    return CII_UPPER_FRACTION_LOOKUP_CACHE
+
+
+def _Cplus_luminosity_model(field, data, *, high_model: str):
+    """[C II] 158 μm emissivity with a selectable high-T excitation model.
 
     Cold (T_QUOKKA < 3000 K)
         Replicate the legacy `_make_luminosity_field('C+')` lookup —
@@ -839,7 +871,7 @@ def _Cplus_luminosity_two_regime(field, data):
     dVdr     = data[('gas', 'dVdr_lvg')].in_cgs().value
     eps_cold = _table_emissivity(lookup, 'C+', n_H_sim, colDen_H, dVdr)  # erg/s/cm³
 
-    # ────────────────── HOT branch: LTE closed-form ─────────────────
+    # ───── Shared analytic-branch inputs (intermediate + high) ─────
     # Step 1: Methodology intermediate-regime hydrogen treatment → n_e.
     T_safe = np.maximum(T_qk, 1.0)            # used by Step 2 / 4 below
     e_int = data[('gas', 'internal_energy_density')].to('erg/cm**3').value
@@ -896,22 +928,46 @@ def _Cplus_luminosity_two_regime(field, data):
     h_cgs  = float(h.in_cgs().value)
     eps_hot = n_u * _CII_A_UL * h_cgs * _CII_NU_HZ
 
-    # ── High branch (T ≥ 1.307e4 K): x_C+ from CHIANTI CIE (density-indep);
-    #    same LTE level-pop + emissivity, only the ion fraction source changes. ──
+    # ── High branch (T ≥ 1.307e4 K): x_C+ from CHIANTI CIE (density-indep). ──
     x_Cp_cie = np.interp(T_safe, _CIE_T_GRID, _CIE_X_CP)
     n_Cp_cie = x_Cp_cie * A_C_TOTAL * n_H_sim
-    n_u_cie  = n_Cp_cie * r / (1.0 + r)
+
+    if high_model == 'lte':
+        upper_fraction_cie = r / (1.0 + r)
+    elif high_model == 'chianti':
+        # CHIANTI statistical-equilibrium level-2 population on a (T,n_H)
+        # table.  Its n_e and n_p were built explicitly from H+He CIE charge
+        # neutrality using the same X and Y as this pipeline.  Carbon still
+        # sets n_C+ above, but its tiny contribution to n_e is neglected.
+        upper_fraction_cie = _get_cii_upper_fraction_lookup()(T_safe, n_H_sim)
+    else:
+        raise ValueError(f'Unknown C+ high-temperature model: {high_model!r}')
+
+    n_u_cie  = n_Cp_cie * upper_fraction_cie
     eps_cie  = n_u_cie * _CII_A_UL * h_cgs * _CII_NU_HZ
 
-    # The Methodology leaves intermediate-temperature C+ "to be determined".
-    # Preserve the pre-existing Saha+LTE calculation provisionally, while the
-    # defined low and high branches follow the Methodology exactly.
-    # 3-regime: T≥1.307e4 → CIE; intermediate → provisional Saha+LTE;
-    # T<3000 → DESPOTIC.
+    # The Methodology leaves intermediate-temperature C+ "to be determined";
+    # preserve Saha+LTE there.  At T>=1.307e4 both comparison fields use the
+    # same CHIANTI CIE fraction, but select either LTE or CHIANTI excitation.
     # Nested np.where (not np.select — astropy's np.select helper mishandles an
     # array `default` during yt field-dependency detection).
     eps = np.where(high, eps_cie, np.where(intermediate, eps_hot, eps_cold))
     return yt.YTArray(eps, 'erg/s/cm**3')
+
+
+def _Cplus_luminosity_lte(field, data):
+    """Legacy C+ result: DESPOTIC / Saha+LTE / CHIANTI-CIE+LTE."""
+    return _Cplus_luminosity_model(field, data, high_model='lte')
+
+
+def _Cplus_luminosity_chianti(field, data):
+    """Comparison result with CHIANTI N_u(T,n_H) only in the high-T branch."""
+    return _Cplus_luminosity_model(field, data, high_model='chianti')
+
+
+def _Cplus_luminosity_selected(field, data):
+    """Cheap selector retaining the public ('gas', 'C+_luminosity') name."""
+    return data[('gas', f'C+_luminosity_{cfg.CPLUS_HIGH_MODEL}')]
 
 
 def _make_line_frequency_field(species: str):
@@ -1046,8 +1102,8 @@ def add_all_fields(ds):
         ('e-', None),
         ('HI', 'H'),
     ]
-    # ('C+' luminosity is handled by _Cplus_luminosity_two_regime below —
-    # it uses the LAMDA table for cold cells and CHIANTI-LTE for hot cells.
+    # C+ luminosity is handled by the comparison fields below: both use the
+    # LAMDA table for cold cells and differ only in high-T excitation.
     # Leave CO + HCO+ on the auto-generated _make_luminosity_field path.)
     EMITTERS = ['CO']                              # HCO+ dropped 2026-06-23 (no longer analysed)
     EMITTERS_FREQ_WIDTH = ['CO', 'C+']             # HCO+ dropped 2026-06-23; freq + thermal_width for CO + C+
@@ -1071,11 +1127,29 @@ def add_all_fields(ds):
             force_override=True
         )
 
-    # [C II] 158 μm: low = DESPOTIC, intermediate = provisional Saha+LTE,
-    # high = CHIANTI CIE ion fraction + LTE upper-level population.
+    # Register only the selected comparison field.  yt executes dependency
+    # detection during add_field(), so registering the CHIANTI field in an LTE
+    # run would otherwise require/load its lookup unnecessarily.  Both names
+    # remain in CACHED_FIELDS; switching models later reuses the corresponding
+    # independently retained file.
+    cplus_model_fields = {
+        'lte': _Cplus_luminosity_lte,
+        'chianti': _Cplus_luminosity_chianti,
+    }
+    selected_cplus_name = f'C+_luminosity_{cfg.CPLUS_HIGH_MODEL}'
+    ds.add_field(
+        name=('gas', selected_cplus_name),
+        function=cplus_model_fields[cfg.CPLUS_HIGH_MODEL],
+        sampling_type="cell",
+        units="erg/s/cm**3",
+        force_override=True,
+    )
+
+    # Existing tasks keep using this public name; the environment-controlled
+    # selector points them at one of the independently cached model fields.
     ds.add_field(
         name=('gas', 'C+_luminosity'),
-        function=_Cplus_luminosity_two_regime,
+        function=_Cplus_luminosity_selected,
         sampling_type="cell",
         units="erg/s/cm**3",
         force_override=True,

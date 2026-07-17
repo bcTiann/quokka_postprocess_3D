@@ -67,7 +67,8 @@ subsequent runs:
 <dataset_path>/intermediates/<dataset_name>/fields/
     field_gas_temperature_despotic.h5
     field_gas_CO_luminosity.h5
-    field_gas_C+_luminosity.h5
+    field_gas_Cplus_luminosity_lte.h5
+    field_gas_Cplus_luminosity_chianti.h5
     field_gas_H_alpha_luminosity.h5
     field_gas_HI_luminosity.h5
 ```

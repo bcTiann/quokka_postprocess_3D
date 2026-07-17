@@ -175,12 +175,35 @@ resolution, `L_ext = 15 kpc`, and the GOW/LVG table:
 conda activate test-env
 cd ~/quokka_postprocess_3D
 
-# heavy physics → caches the 7 derived fields + per-task results
+# heavy physics → caches the derived fields + per-task results
 MODE=compute LEXT_KPC=15 scripts/run_dataset_series.sh plt0655228
 
 # render all figures from the caches (fast)
 MODE=plot    LEXT_KPC=15 scripts/run_dataset_series.sh plt0655228
 ```
+
+The default `CPLUS_HIGH_MODEL=lte` preserves the legacy [C II] result.  To
+compare only the `T >= 1.307e4 K` excitation treatment, run the two models with
+different tags (cold DESPOTIC and intermediate Saha+LTE remain identical):
+
+```bash
+CPLUS_HIGH_MODEL=lte RUN_TAG=cplus_high_lte \
+  MODE=compute LEXT_KPC=15 scripts/run_dataset_series.sh plt0655228
+
+CPLUS_HIGH_MODEL=chianti RUN_TAG=cplus_high_chianti \
+  MODE=compute LEXT_KPC=15 scripts/run_dataset_series.sh plt0655228
+```
+
+The model fields have independent Level-1 caches, so switching back to
+`CPLUS_HIGH_MODEL=lte` does not overwrite the CHIANTI result.  The CHIANTI
+upper-level table is stored at `data/cii_chianti_nu_cie_v3.npz`; regenerate it with
+`python scripts/build_cii_chianti_nu_table.py` when changing CHIANTI data or
+grid settings. Its axes are `log10(T)` and simulation `log10(n_H)`. At each
+grid point, CHIANTI H/He CIE fractions plus the project composition
+`X=0.74`, `Y=0.26` explicitly determine `n_e` and `n_p`; carbon's small
+contribution to `n_e` is neglected, while `A_C` and the C+ CIE fraction still
+set the emitting-ion density. The
+level-population solve does not use fiasco's implicit proton/electron ratio.
 
 The first line printed by the runner includes the resolved Python executable.
 It should point into the active environment, not another hard-coded conda env.

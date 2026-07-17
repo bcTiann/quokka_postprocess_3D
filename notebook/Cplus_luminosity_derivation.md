@@ -7,12 +7,18 @@ $$
 \quad [\mathrm{erg\,s^{-1}\,cm^{-3}}].
 $$
 
+> 更新：高温 branch 现在可由 `CPLUS_HIGH_MODEL=lte|chianti` 选择。`chianti`
+> 模式只替换 $T\ge1.307\times10^4$ K 的 upper-level population，并使用
+> H+He CIE charge neutrality 建立显式 $n_e$、$n_p$ lookup；C 对 $n_e$
+> 的微小贡献忽略，但仍用 $A_C f_{\rm C+}^{\rm CIE}$ 计算发射离子密度。本文后续的
+> LTE 推导仍对应 `lte` comparison model。
+
 这里的 yt field 名为 `('gas', 'C+_luminosity')`，但它的物理量实际是 **volumetric emissivity**，不是已经乘过 cell volume 的 luminosity。本文到 $\epsilon_{\mathrm{CII}}$ 为止，不包含 cell luminosity、thermal broadening、Doppler shift、spectral cube 或 integrated spectrum。
 
 当前实现位于：
 
 - field 注册：`src/quokka2s/pipeline/prep/physics_fields.py:1064-1071`
-- 主计算函数：`_Cplus_luminosity_two_regime()`，同文件 `793-904`
+- 主计算函数：`_Cplus_luminosity_model()`，另由 LTE/CHIANTI wrappers 选择高温 excitation
 - CHIANTI/fiasco atomic-data 初始化：同文件 `101-205`
 - Hydrogen Saha helper：同文件 `212-267`
 - DESPOTIC table interpolation：同文件 `430-455` 与 `src/quokka2s/tables/lookup.py:23-165`

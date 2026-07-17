@@ -48,8 +48,21 @@ _OUTPUT_ROOT = os.environ.get("QUOKKA_OUTPUT_ROOT", str(_PROJECT_ROOT / "output"
 # table supplies the self-consistent cold/warm GOW chemistry branch.
 
 X_H = 0.74  # Mass fraction of Hydrogen
+Y_HE = 0.26  # Mass fraction of helium (used by high-T CIE charge neutrality)
 A_C = 1.6e-4  # gas-phase carbon abundance per H nucleus (GOW xC default; used by [C II])
 A_LAMBDA_OVER_NH = 4e-22 * cm**2  # Dust extinction cross-section (mag * cm^2 / N_H)
+
+# [C II] high-temperature excitation model.  The default preserves the legacy
+# two-level LTE result; set CPLUS_HIGH_MODEL=chianti to use the precomputed
+# CHIANTI statistical-equilibrium upper-level population for T >= 1.307e4 K.
+CPLUS_HIGH_MODEL = os.environ.get('CPLUS_HIGH_MODEL', 'lte').strip().lower()
+if CPLUS_HIGH_MODEL not in {'lte', 'chianti'}:
+    raise ValueError("CPLUS_HIGH_MODEL must be either 'lte' or 'chianti'")
+
+CII_CHIANTI_NU_TABLE_PATH = os.environ.get(
+    'CII_CHIANTI_NU_TABLE',
+    str(_PROJECT_ROOT / 'data' / 'cii_chianti_nu_cie_v3.npz'),
+)
 
 # --- Simulation Control ---
 PROJECTION_AXIS = 'x'     # Axis for projection ('x', 'y', or 'z')

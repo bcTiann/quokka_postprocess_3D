@@ -407,6 +407,13 @@ class YTDataProvider:
         When a non-default slab is requested a fresh covering_grid is created
         as before, so the behaviour for sub-domain slabs is unchanged.
         """
+        # The public C+ field is a runtime selector.  Resolve it before the
+        # Level-1 cache lookup so LTE and CHIANTI use their own persistent
+        # files instead of recomputing through the cheap yt alias.
+        if field == ('gas', 'C+_luminosity'):
+            from .pipeline.prep import config as _cfg
+            field = ('gas', f'C+_luminosity_{_cfg.CPLUS_HIGH_MODEL}')
+
         # Detect whether the caller wants the full domain (all defaults).
         # We check BEFORE applying defaults so the sentinel is unambiguous.
         use_full_grid = (slab_width is None and center is None and level is None)
@@ -479,9 +486,10 @@ class YTDataProvider:
             return None
         if self.force_recompute:
             return None
-        from .pipeline.cache import field_cache_path, load_field_array
+        from .pipeline.cache import field_cache_key, field_cache_path, load_field_array
         path = field_cache_path(self.cache_root, field)
-        result = load_field_array(path, self.cache_key)
+        expected_key = field_cache_key(self.cache_key, field)
+        result = load_field_array(path, expected_key)
         if result is None:
             return None
         arr, units_str = result
@@ -491,11 +499,12 @@ class YTDataProvider:
     def _maybe_save_cached(self, field, data_slab, use_full_grid):
         if not self._cache_enabled(use_full_grid, field):
             return
-        from .pipeline.cache import field_cache_path, save_field_array
+        from .pipeline.cache import field_cache_key, field_cache_path, save_field_array
         path = field_cache_path(self.cache_root, field)
+        expected_key = field_cache_key(self.cache_key, field)
         units_str = str(getattr(data_slab, 'units', ''))
         arr = np.asarray(data_slab)
-        save_field_array(path, arr, units_str, self.cache_key, field)
+        save_field_array(path, arr, units_str, expected_key, field)
         print(f'[intermediate] save {field[0]}/{field[1]}  →  {path.name}')
         # Opportunistic flush: yt's derived-field chain may have computed
         # other CACHED_FIELDS (e.g. column_density_H is a dependency of
@@ -509,7 +518,12 @@ class YTDataProvider:
         any new yt compute — only saves what's already there."""
         if self._cached_grid is None or self.cache_root is None or self.cache_key is None:
             return
-        from .pipeline.cache import CACHED_FIELDS, field_cache_path, save_field_array
+        from .pipeline.cache import (
+            CACHED_FIELDS,
+            field_cache_key,
+            field_cache_path,
+            save_field_array,
+        )
         try:
             yt_field_data = self._cached_grid.field_data
         except AttributeError:
@@ -519,20 +533,21 @@ class YTDataProvider:
             if f not in yt_field_data:
                 continue
             path = field_cache_path(self.cache_root, f)
+            expected_key = field_cache_key(self.cache_key, f)
             # Skip only if a file with the CURRENT cache_key is already on
             # disk (already saved this run).  Otherwise overwrite — the
             # existing file may be stale from a previous downsample/schema.
             if path.exists():
                 try:
                     with h5py.File(path, 'r') as _fh:
-                        if str(_fh.attrs.get('cache_key', '')) == self.cache_key:
+                        if str(_fh.attrs.get('cache_key', '')) == expected_key:
                             continue
                 except (OSError, KeyError):
                     pass
             try:
                 arr = yt_field_data[f].in_cgs()
                 save_field_array(path, np.asarray(arr), str(arr.units),
-                                 self.cache_key, f)
+                                 expected_key, f)
                 print(f'[intermediate] save {f[0]}/{f[1]}  →  {path.name}  (flushed)')
             except Exception as e:
                 print(f'[intermediate] skip {f[0]}/{f[1]} flush: {e}')

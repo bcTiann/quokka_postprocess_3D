@@ -23,6 +23,11 @@ from matplotlib.colors import Normalize
 from ..base import PlotTask, PipelinePlotContext
 
 
+# Show the six decades immediately below the largest populated bin in each
+# colorbar group: [zmax / COLORBAR_DYNAMIC_RANGE, zmax].
+COLORBAR_DYNAMIC_RANGE = 1.0e6
+
+
 # Each entry:  (tag, row_y_label_for_top_row, colorbar_group)
 #   tag                : matches the `tag` field on the sibling intermediate
 #   row_y_label_for... : LaTeX y-axis label when r==0 (Row 1); ignored when r==1
@@ -108,20 +113,31 @@ class Plot_PhaseCombined(PlotTask):
         return panels
 
     def plot(self, context: PipelinePlotContext, panels: dict) -> None:
-        # ── Pool colorbar ranges per group (full data range, no fixed dex) ──
-        group_ranges: dict[str, tuple[float, float]] = {}
+        # ── Pool colorbar ranges per group (six dex below pooled zmax) ──
+        group_maxima: dict[str, float] = {}
         for tag, _, group in _LAYOUT:
             H = np.asarray(panels[tag]['H'])
             pos = H[H > 0]
             if pos.size == 0:
                 continue
-            lo = float(np.log10(np.nanmin(pos)))
             hi = float(np.log10(np.nanmax(pos)))
-            if group in group_ranges:
-                g_lo, g_hi = group_ranges[group]
-                group_ranges[group] = (min(g_lo, lo), max(g_hi, hi))
-            else:
-                group_ranges[group] = (lo, hi)
+            group_maxima[group] = max(group_maxima.get(group, -np.inf), hi)
+
+        # The image shows log10(z), so z ∈ [zmax / 1e6, zmax] maps to
+        # [log10(zmax) - 6, log10(zmax)].  The mass group contains three
+        # panels, hence its zmax is pooled before calculating the endpoints.
+        group_ranges = {
+            group: (hi - np.log10(COLORBAR_DYNAMIC_RANGE), hi)
+            for group, hi in group_maxima.items()
+        }
+
+        # Reuse one Normalize object per group. In particular, the first three
+        # temperature panels reference the exact same mass normalization, so
+        # their colorbar endpoints cannot diverge between panels.
+        group_norms = {
+            group: Normalize(vmin=limits[0], vmax=limits[1])
+            for group, limits in group_ranges.items()
+        }
 
         # ── Figure + nested GridSpec ──
         n_panels = len(_LAYOUT)
@@ -202,10 +218,13 @@ class Plot_PhaseCombined(PlotTask):
         # Union ρ extent across all ρ-axis panels (everything except NH-ρ).
         rho_x_extent = _union([_x_extent(tag) for tag, _, _ in _LAYOUT if tag != 'NH_rho'])
 
-        # Per-y-group extents (T_QK / T_DSP / T_2R each own a y axis).
-        y_QK_extent  = _y_extent('mass_T_QK')
-        y_DSP_extent = _y_extent('mass_T_DSP')
-        y_2R_extent  = _union([_y_extent(tag) for tag, _, _ in _LAYOUT if tag.endswith('T_2R')])
+        # All rho-temperature panels use one union y extent. This makes the
+        # first-row T_QK, T_DSP, and T_two-regime panels directly comparable;
+        # T_DSP therefore keeps the empty high-T portion instead of stopping
+        # near log10(T/K)=4.7. Row-2 species already share y with T_two-regime.
+        temperature_y_extent = _union([
+            _y_extent(tag) for tag, _, _ in _LAYOUT if tag != 'NH_rho'
+        ])
 
         # NH-ρ panel: own (N_H, ρ) axes.
         nh_x_extent  = _x_extent('NH_rho')
@@ -226,7 +245,7 @@ class Plot_PhaseCombined(PlotTask):
             ax  = ax_grid[r][c]
             cax = cax_grid[r][c]
 
-            vmin, vmax = group_ranges.get(group, (0.0, 1.0))
+            norm = group_norms.get(group, Normalize(vmin=0.0, vmax=1.0))
 
             with np.errstate(divide='ignore'):
                 view = np.where(H > 0,
@@ -238,7 +257,7 @@ class Plot_PhaseCombined(PlotTask):
                 extent=[xe[0], xe[-1], ye[0], ye[-1]],
                 aspect='auto',
                 cmap='viridis_r',
-                norm=Normalize(vmin=vmin, vmax=vmax),
+                norm=norm,
             )
 
             # Auto-crop to the non-empty extent for THIS panel's axis group.
@@ -247,9 +266,7 @@ class Plot_PhaseCombined(PlotTask):
                 ylim = nh_y_extent or (ye[0], ye[-1])
             else:
                 xlim = rho_x_extent or (xe[0], xe[-1])
-                if   tag == 'mass_T_QK':  ylim = y_QK_extent  or (ye[0], ye[-1])
-                elif tag == 'mass_T_DSP': ylim = y_DSP_extent or (ye[0], ye[-1])
-                else:                     ylim = y_2R_extent  or (ye[0], ye[-1])
+                ylim = temperature_y_extent or (ye[0], ye[-1])
             ax.set_xlim(*xlim)
             ax.set_ylim(*ylim)
 

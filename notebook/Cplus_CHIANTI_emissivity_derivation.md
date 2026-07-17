@@ -940,6 +940,27 @@ $$
 
 ## 11. 对大规模 simulation 的现实实现方式
 
+> **当前项目实现（B 方案）**：simulation cell 提供
+> \(n_{\rm H}^{\rm sim}=\rho X/m_{\rm H}\)。CHIANTI CIE table 只提供
+> H、He 的各电离态比例；建表脚本再用 \(X=0.74\)、\(Y=0.26\)
+> 和电荷守恒计算
+>
+> \[
+> n_e=n_{\rm H}\left[
+> \sum_q q f_{{\rm H},q}
+> +\frac{Y}{4X}\sum_q q f_{{\rm He},q}
+> \right],
+> \qquad
+> n_p=n_{\rm H}f_{{\rm H}^+}.
+> \]
+>
+> 然后把明确的 \(n_e,n_p\) 交给 `Ion.level_populations`，保存
+> \(N_u^{\rm CHIANTI}(T,n_{\rm H})\)。runtime 再用每个 cell 自己的
+> \((T,n_{\rm H}^{\rm sim})\) 插值。所以下面以
+> \(G(T,n_e)\) 为轴的段落是通用替代方案，不是本项目当前采用的接口。
+> C 对自由电子密度的微小贡献在这里忽略；但发射端仍保留
+> \(n_{\rm C+}=A_{\rm C}f_{\rm C+}^{\rm CIE}n_{\rm H}\)。
+
 不能对上亿个 cells 直接调用一次完整 `Ion.level_populations` matrix solve。更现实的流程是预建一个 CHIANTI emissivity lookup table：
 
 $$
@@ -993,8 +1014,9 @@ n_C                    total carbon
   v
 n_C+                   C+ ion number density
   |
-  | * N_u(T, ne)
-  |   from Ion.level_populations
+  | * N_u(T, n_H)
+  |   lookup built from explicit n_e(T,n_H), n_p(T,n_H)
+  |   and Ion.level_populations
   v
 n_u                    upper-level C+ number density
   |
@@ -1016,6 +1038,5 @@ CHIANTI/fiasco 的价值不是改变这条公式，而是用 atomic rates 和 st
 $$
 f_{\rm C+}(T)
 \quad\text{和}\quad
-N_u(T,n_e).
+N_u[T,n_e(T,n_{\rm H}),n_p(T,n_{\rm H})].
 $$
-

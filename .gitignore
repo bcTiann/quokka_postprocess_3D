@@ -21,6 +21,7 @@ output*/
 output_tables_*/
 *.npy
 *.npz
+!data/cii_chianti_nu_cie_v3.npz
 *.dat
 *.csv
 

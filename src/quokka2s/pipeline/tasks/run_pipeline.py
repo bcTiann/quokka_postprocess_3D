@@ -67,6 +67,10 @@ def build_pipeline(force: bool = False) -> Pipeline:
         despotic_table_path=cfg.DESPOTIC_TABLE_PATH,
         force_recompute=force,
         column_extension_lateral_kpc=cfg.COLUMN_EXTENSION_LATERAL_KPC,
+        extra_options={
+            'cplus_high_model': cfg.CPLUS_HIGH_MODEL,
+            'cii_chianti_nu_table_path': cfg.CII_CHIANTI_NU_TABLE_PATH,
+        },
     )
 
     pipeline = Pipeline(pipeline_config)
@@ -89,14 +93,36 @@ def build_pipeline(force: bool = False) -> Pipeline:
     pipeline.register_task(Build_VelocityPhase(pipeline_config))
     pipeline.register_task(Build_SpeciesSpectrum(pipeline_config))
     # weight_field, T_field, tag  (display symbol lives in Plot_PhaseCombined._SYMBOL)
-    pipeline.register_task(Build_PhaseHist(pipeline_config, 'mass', 'temperature_quokka',   tag='mass_T_QK'))
-    pipeline.register_task(Build_PhaseHist(pipeline_config, 'mass', 'temperature_despotic', tag='mass_T_DSP'))
-    pipeline.register_task(Build_PhaseHist(pipeline_config, 'mass', T_2R,                    tag='mass_T_2R'))
-    pipeline.register_task(Build_PhaseHistNHRho(pipeline_config))
-    pipeline.register_task(Build_PhaseHist(pipeline_config, 'CO_luminosity',      T_2R, tag='CO_T_2R'))
-    pipeline.register_task(Build_PhaseHist(pipeline_config, 'C+_luminosity',      T_2R, tag='Cplus_T_2R'))
-    pipeline.register_task(Build_PhaseHist(pipeline_config, 'H_alpha_luminosity', T_2R, tag='Halpha_T_2R'))
-    pipeline.register_task(Build_PhaseHist(pipeline_config, 'HI_luminosity',      T_2R, tag='HI_T_2R'))
+    # Use uniform 0.2-dex bins in every phase histogram.
+    phase_bin_dex = 0.2
+    pipeline.register_task(Build_PhaseHist(
+        pipeline_config, 'mass', 'temperature_quokka', tag='mass_T_QK',
+        bin_dex=phase_bin_dex,
+    ))
+    pipeline.register_task(Build_PhaseHist(
+        pipeline_config, 'mass', 'temperature_despotic', tag='mass_T_DSP',
+        bin_dex=phase_bin_dex,
+    ))
+    pipeline.register_task(Build_PhaseHist(
+        pipeline_config, 'mass', T_2R, tag='mass_T_2R', bin_dex=phase_bin_dex,
+    ))
+    pipeline.register_task(Build_PhaseHistNHRho(pipeline_config, bin_dex=phase_bin_dex))
+    pipeline.register_task(Build_PhaseHist(
+        pipeline_config, 'CO_luminosity', T_2R, tag='CO_T_2R',
+        bin_dex=phase_bin_dex,
+    ))
+    pipeline.register_task(Build_PhaseHist(
+        pipeline_config, 'C+_luminosity', T_2R, tag='Cplus_T_2R',
+        bin_dex=phase_bin_dex,
+    ))
+    pipeline.register_task(Build_PhaseHist(
+        pipeline_config, 'H_alpha_luminosity', T_2R, tag='Halpha_T_2R',
+        bin_dex=phase_bin_dex,
+    ))
+    pipeline.register_task(Build_PhaseHist(
+        pipeline_config, 'HI_luminosity', T_2R, tag='HI_T_2R',
+        bin_dex=phase_bin_dex,
+    ))
     pipeline.register_task(Build_MultiFieldSlices(pipeline_config, **_MFS_KW))
 
     # ── Plot tasks (--mode plot) ──

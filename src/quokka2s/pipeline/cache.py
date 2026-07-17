@@ -60,7 +60,11 @@ CACHE_SCHEMA_VERSION = 7  # 1.307e4 K CIE boundary + mu-derived intermediate H s
 CACHED_FIELDS: frozenset[tuple[str, str]] = frozenset({
     ('gas', 'temperature_despotic'),
     ('gas', 'CO_luminosity'),
-    ('gas', 'C+_luminosity'),
+    # Keep the two [C II] high-temperature models in separate files so users
+    # can switch back and forth without overwriting or recomputing either one.
+    # ('gas', 'C+_luminosity') is only a cheap runtime selector.
+    ('gas', 'C+_luminosity_lte'),
+    ('gas', 'C+_luminosity_chianti'),
     ('gas', 'H_alpha_luminosity'),
     ('gas', 'HI_luminosity'),
     ('gas', 'column_density_H'),
@@ -117,6 +121,50 @@ def compute_cache_key(
         h.update(component.encode())
         h.update(b'\x00')
     return h.hexdigest()
+
+
+def cplus_model_cache_token(
+    model: str,
+    cii_table_path: str | Path | None = None,
+) -> str:
+    """Return the cache identity for the selected high-T C+ model.
+
+    The CHIANTI result depends on the separate N_u lookup, which is not the
+    DESPOTIC table already included in the base cache key. Include the lookup
+    path, nanosecond mtime, and size so rebuilding or switching that table
+    cannot silently reuse an older C+ field or task intermediate.
+    """
+    model = str(model).strip().lower()
+    if model != 'chianti':
+        return f'cplus_high_model={model}'
+    if cii_table_path is None:
+        from .prep import config as _cfg
+        cii_table_path = _cfg.CII_CHIANTI_NU_TABLE_PATH
+    path = Path(cii_table_path)
+    if path.exists():
+        stat = path.stat()
+        identity = f'{path.resolve()}:{stat.st_mtime_ns}:{stat.st_size}'
+    else:
+        identity = f'{path.resolve()}:missing'
+    return f'cplus_high_model=chianti:cii_nu={identity}'
+
+
+def field_cache_key(
+    base_key: str,
+    field: tuple[str, str],
+    *,
+    cplus_model: str | None = None,
+    cii_table_path: str | Path | None = None,
+) -> str:
+    """Add field-specific physics inputs to a Level-1 base cache key."""
+    if field == ('gas', 'C+_luminosity_chianti'):
+        return base_key + ':' + cplus_model_cache_token(
+            cplus_model or 'chianti',
+            cii_table_path,
+        )
+    if field == ('gas', 'C+_luminosity_lte'):
+        return base_key + ':' + cplus_model_cache_token('lte')
+    return base_key
 
 
 # ── HDF5 helpers ─────────────────────────────────────────────────────────────

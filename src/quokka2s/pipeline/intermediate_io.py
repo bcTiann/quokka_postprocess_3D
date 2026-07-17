@@ -15,7 +15,7 @@ from pathlib import Path
 
 import h5py
 
-from .cache import _read_nested, compute_cache_key
+from .cache import _read_nested, compute_cache_key, cplus_model_cache_token
 
 
 # ── h5py value/key coercion (h5py returns bytes for str attrs/group names) ───
@@ -90,12 +90,18 @@ def _expected_sibling_key(config, sibling_filename: str) -> str | None:
     table = getattr(config, 'despotic_table_path', None)
     if table is None or not getattr(config, 'cache_enabled', True):
         return None
-    return compute_cache_key(
+    base_key = compute_cache_key(
         dataset_path                 = config.dataset_path,
         despotic_table_path          = table,
         downsample_factor            = config.downsample_factor,
         column_extension_lateral_kpc = config.column_extension_lateral_kpc,
-    ) + ':' + sibling_filename
+    )
+    cplus_model = config.extra_options.get('cplus_high_model', 'lte')
+    cplus_token = cplus_model_cache_token(
+        cplus_model,
+        config.extra_options.get('cii_chianti_nu_table_path'),
+    )
+    return base_key + f':{cplus_token}:' + sibling_filename
 
 
 # ── Build-result loaders used by PlotTask ────────────────────────────────────
