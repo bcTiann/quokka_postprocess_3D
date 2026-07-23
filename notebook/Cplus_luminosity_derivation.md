@@ -7,11 +7,13 @@ $$
 \quad [\mathrm{erg\,s^{-1}\,cm^{-3}}].
 $$
 
-> 更新：高温 branch 现在可由 `CPLUS_HIGH_MODEL=lte|chianti` 选择。`chianti`
-> 模式只替换 $T\ge1.307\times10^4$ K 的 upper-level population，并使用
-> H+He CIE charge neutrality 建立显式 $n_e$、$n_p$ lookup；C 对 $n_e$
-> 的微小贡献忽略，但仍用 $A_C f_{\rm C+}^{\rm CIE}$ 计算发射离子密度。本文后续的
-> LTE 推导仍对应 `lte` comparison model。
+> 更新：$T\ge1.307\times10^4$ K 时强制
+> $n_{\rm C}=n_{\rm C+}+n_{\rm C++}$，并用 C$^+\leftrightarrow$C$^{++}$
+> 的第二级 Saha 平衡计算 $x_{\rm C+}=n_e/(n_e+S_2)$。高温 excitation 仍可由
+> `CPLUS_HIGH_MODEL=lte|chianti` 选择；`chianti` 只替换 upper-level population。
+> 所有显式 C$^+$ temperature consumers（regime selection、Saha、LTE 与
+> thermal width）统一使用每个 cell 的 $T_{\rm QUOKKA}$。冷端 DESPOTIC
+> `lumPerH` 是预建 thermal/chemical/LVG solution，没有独立 runtime temperature 轴。
 
 这里的 yt field 名为 `('gas', 'C+_luminosity')`，但它的物理量实际是 **volumetric emissivity**，不是已经乘过 cell volume 的 luminosity。本文到 $\epsilon_{\mathrm{CII}}$ 为止，不包含 cell luminosity、thermal broadening、Doppler shift、spectral cube 或 integrated spectrum。
 
@@ -20,7 +22,7 @@ $$
 - field 注册：`src/quokka2s/pipeline/prep/physics_fields.py:1064-1071`
 - 主计算函数：`_Cplus_luminosity_model()`，另由 LTE/CHIANTI wrappers 选择高温 excitation
 - CHIANTI/fiasco atomic-data 初始化：同文件 `101-205`
-- Hydrogen Saha helper：同文件 `212-267`
+- mean-molecular-weight electron fraction：`src/quokka2s/line_regimes.py`
 - DESPOTIC table interpolation：同文件 `430-455` 与 `src/quokka2s/tables/lookup.py:23-165`
 
 ---
@@ -35,9 +37,9 @@ $$
 \epsilon_{\rm DSP},
 & T_{\rm QK}<3000\ \mathrm{K},\\[4pt]
 \epsilon_{\rm Saha+LTE},
-& 3000\ \mathrm{K}\le T_{\rm QK}<10^4\ \mathrm{K},\\[4pt]
-\epsilon_{\rm CHIANTI\ CIE+LTE},
-& T_{\rm QK}\ge10^4\ \mathrm{K}.
+& 3000\ \mathrm{K}\le T_{\rm QK}<1.307\times10^4\ \mathrm{K},\\[4pt]
+\epsilon_{\rm high},
+& T_{\rm QK}\ge1.307\times10^4\ \mathrm{K}.
 \end{cases}
 $$
 
@@ -47,8 +49,8 @@ $$
 hot = T_qk >= T_QK_TWO_REGIME_K       # 3000 K
 
 eps = np.where(
-    T_qk >= T_CIE_K,                   # 10000 K
-    eps_cie,
+    T_qk >= T_CIE_K,                   # 1.307e4 K
+    eps_high,
     np.where(hot, eps_hot, eps_cold),
 )
 ```
@@ -56,7 +58,7 @@ eps = np.where(
 因此：
 
 - $T_{\rm QK}=3000\ \mathrm{K}$ 属于 `Saha+LTE` branch；
-- $T_{\rm QK}=10^4\ \mathrm{K}$ 属于 `CHIANTI CIE+LTE` branch；
+- $T_{\rm QK}=1.307\times10^4\ \mathrm{K}$ 属于 high-temperature two-stage Saha branch；
 - boundaries 没有 interpolation 或 blending，允许出现数值 discontinuity；
 - NumPy 会先计算三个 branch 的 array，再由 `np.where` 选择最终值，所以“未被选中”的 branch 仍会被执行，但不会进入最终输出。
 
@@ -349,7 +351,7 @@ $$
 
 `transitions.A` 是 spontaneous radiative-decay probability；`transitions.delta_energy` 是由上下 level energies 得到的 $\Delta E$。
 
-### 4.5 CHIANTI CIE ion fraction
+### 4.5 CHIANTI H+He CIE collider fractions
 
 另建一套 grid：
 
@@ -359,111 +361,45 @@ T_j^{\rm CIE}=10^4\ldots10^{8.5}\ \mathrm{K},
 $$
 
 ```python
-xC = np.asarray(
-    fiasco.Element('carbon', T_grid_q).equilibrium_ionization
-)
-x_Cp = xC[:, 1]
+xH  = fiasco.Element('hydrogen', T_grid_q).equilibrium_ionization
+xHe = fiasco.Element('helium',   T_grid_q).equilibrium_ionization
 ```
 
-columns 的顺序是：
-
-$$
-[\mathrm{C^0},\mathrm{C^+},\mathrm{C^{++}},\ldots],
-$$
-
-所以 `xC[:, 1]` 是 $x_{\rm C+}^{\rm CIE}(T)$。
-
-需要精确区分：`equilibrium_ionization` 在本项目使用的 fiasco 0.6.2 中，不是简单返回一张预先 tabulated ion-fraction curve；它使用 CHIANTI 的 ionization/recombination rates 构造 rate matrix，并通过 SVD 在每个温度求 equilibrium population。结果仍然只依赖 $T$，不依赖 density。
-
-per-cell 使用：
-
-```python
-x_Cp_cie = np.interp(T_safe, _CIE_T_GRID, _CIE_X_CP)
-```
-
-同样是 linear-$T$ interpolation，并在 grid 外使用 endpoint value。
+它们建立 H+He CIE 的 $n_e/n_H$、$n_p/n_H$ lookup，只供预建的可选
+CHIANTI C II excitation table 使用。H$\alpha$/HI 的 runtime high-temperature
+branch 不再使用这套 CIE lookup。Carbon ion fraction 也不从 CHIANTI CIE
+读取；C$^+$/C$^{++}$ 的比例由下文 Saha 方程计算。
 
 ---
 
-## 5. Regime II：$3000\le T_{\rm QK}<10^4$ K，Saha ionization + two-level LTE
+## 5. Regime II：$3000\le T_{\rm QK}<1.307\times10^4$ K，Saha ionization + two-level LTE
 
-定义数值保护后的温度：
-
-$$
-T=\max(T_{\rm QK},1\ \mathrm{K}).
-$$
-
-在本 regime 中实际总有 $T\ge3000$ K，因此这个 floor 不改变结果。
-
-### 5.1 Hydrogen Saha 给 electron density
-
-代码先假设 electrons 只来自 hydrogen，并满足 charge neutrality：
+本 regime 直接使用 QUOKKA temperature：
 
 $$
-n_e=n_{\rm H^+}=x_{\rm H^+}n_{\rm H},
+T=T_{\rm QK}
+$$
+
+### 5.1 QUOKKA mean molecular weight 给 electron density
+
+代码由 simulation 的 internal-energy density、mass density 与温度反推
+
+$$
+\frac{1}{\mu}
+=\frac{(\gamma-1)m_{\rm H}e_{\rm int}}
+{\rho k_{\rm B}T}.
+$$
+
+把 $x_e$ 明确定义为所有来源的总 free-electron fraction，
+
+$$
+x_e=\frac{1/\mu-X-Y/4}{X},
 \qquad
-n_{\rm HI}=(1-x_{\rm H^+})n_{\rm H}.
+n_e=x_en_{\rm H},
 $$
 
-Hydrogen Saha relation 写为：
-
-$$
-\frac{n_e n_{\rm H^+}}{n_{\rm HI}}
-=K_{\rm H}(T),
-$$
-
-$$
-K_{\rm H}(T)=
-\left(\frac{2\pi m_e k_{\rm B}T}{h^2}\right)^{3/2}
-\exp\!\left(-\frac{I_{\rm H}}{k_{\rm B}T}\right).
-$$
-
-令
-
-$$
-R=\frac{K_{\rm H}(T)}{n_{\rm H}},
-$$
-
-则
-
-$$
-\frac{x_{\rm H^+}^2}{1-x_{\rm H^+}}=R.
-$$
-
-代码使用避免 catastrophic cancellation 的正根：
-
-$$
-\boxed{
-x_{\rm H^+}
-=\frac{2}{\sqrt{1+4/R}+1}
-}
-$$
-
-最终：
-
-$$
-n_e=x_{\rm H^+}n_{\rm H}.
-$$
-
-相关常数由 `astropy.constants` 计算：
-
-$$
-\frac{2\pi m_e k_{\rm B}}{h^2}
-=1.7998656465\times10^{10}\ \mathrm{cm^{-2}\,K^{-1}},
-$$
-
-$$
-\frac{I_{\rm H}}{k_{\rm B}}
-=1.5788751240\times10^5\ \mathrm{K}.
-$$
-
-实现采用 `log10(R)` 并将 exponent clip 到 $[-290,290]$，以避免 float64 overflow/underflow。density 也有
-
-$$
-n_{\rm H}\leftarrow\max(n_{\rm H},10^{-30}\ \mathrm{cm^{-3}})
-$$
-
-的 numerical floor。
+其中 $X=0.74$、$Y=0.26$。代码直接使用这个公式得到的 $x_e$，不施加
+上下限。这个 thermodynamic inversion 不区分电子来自 H、He 或 metals。
 
 ### 5.2 Carbon 两级 Saha ionization chain
 
@@ -514,9 +450,10 @@ x_{\rm C+}^{\rm Saha}
 }
 $$
 
-代码使用 $n_e^{\rm safe}=\max(n_e,10^{-30}\ \mathrm{cm^{-3}})$，并把最后的 $x_{\rm C+}$ clip 到 $[0,1]$。$S_1,S_2$ 也在 log-space 中计算并把 exponent clip 到 $[-290,290]$。
-
-这里忽略 carbon 自身以及 helium 对 $n_e$ 的贡献，先用 H-only Saha 固定 $n_e$，再解 carbon ratios。
+代码直接使用由 mean molecular weight 得到的 $n_e$ 计算 $S_1/n_e$ 和
+$S_2/n_e$，不对 $n_e$ 或 $x_{\rm C+}$ 施加 floor 或 clip。$S_1$ 和 $S_2$
+也直接按照上面的 Saha 公式计算。随后用这两个 carbon ratios 和三态守恒
+求解 $x_{\rm C+}$。
 
 ### 5.3 从 ion fraction 得到 C+ number density
 
@@ -600,59 +537,72 @@ $$
 
 ---
 
-## 6. Regime III：$T_{\rm QK}\ge10^4$ K，CHIANTI CIE ion fraction + two-level LTE
+## 6. Regime III：$T_{\rm QK}\ge1.307\times10^4$ K，两态 C$^+$/C$^{++}$ Saha
 
-高温 branch 不再使用 Hydrogen Saha electron density，也不使用 carbon Saha partition-function ratios。它直接采用 fiasco 求得的 CHIANTI CIE fraction：
-
-$$
-x_{\rm C+}^{\rm CIE}=x_{\rm C+}^{\rm CIE}(T).
-$$
-
-然后：
+高温 branch 强制：
 
 $$
-n_{\rm C+}^{\rm CIE}
-=x_{\rm C+}^{\rm CIE}A_{\rm C}n_{\rm H},
+n_{\rm C}=n_{\rm C+}+n_{\rm C++},
+\qquad n_{\rm C0}=0.
 $$
 
+只保留第二级 Saha 平衡：
+
 $$
-n_u^{\rm CIE}
-=n_{\rm C+}^{\rm CIE}
+\frac{n_e n_{\rm C++}}{n_{\rm C+}}=S_2(T),
+\qquad
+\frac{n_{\rm C++}}{n_{\rm C+}}=\frac{S_2(T)}{n_e}.
+$$
+
+与 carbon conservation 联立得到：
+
+$$
+\boxed{
+x_{\rm C+}^{\rm high}
+=\frac{n_{\rm C+}}{n_{\rm C}}
+=\frac{1}{1+S_2(T)/n_e}
+=\frac{n_e}{n_e+S_2(T)}
+}
+$$
+
+以及
+
+$$
+x_{\rm C++}^{\rm high}=1-x_{\rm C+}^{\rm high}.
+$$
+
+这里的 $n_e=x_en_H$ 与 intermediate branch 相同，来自 QUOKKA mean molecular
+weight；carbon 自身的电子贡献忽略。随后：
+
+$$
+n_{\rm C+}^{\rm high}=x_{\rm C+}^{\rm high}A_{\rm C}n_{\rm H}.
+$$
+
+`CPLUS_HIGH_MODEL=lte|chianti` 只决定 C$^+$ upper-level fraction。LTE 模式为
+
+$$
+n_u^{\rm high}=n_{\rm C+}^{\rm high}
 \frac{(g_u/g_l)e^{-T_*/T}}
 {1+(g_u/g_l)e^{-T_*/T}},
 $$
 
-最终：
+而 `chianti` 模式从预建 statistical-equilibrium table 读取 upper fraction。
+两者最终都是
 
 $$
 \boxed{
-\epsilon_{\rm CHIANTI\ CIE+LTE}
-=n_u^{\rm CIE}A_{ul}h\nu_{ul}
-}
-$$
-
-或完全展开：
-
-$$
-\boxed{
-\epsilon_{\rm CHIANTI\ CIE+LTE}
-=\left(A_{\rm C}n_{\rm H}x_{\rm C+}^{\rm CIE}(T)\right)
-\left[\frac{(g_u/g_l)e^{-T_*/T}}
-{1+(g_u/g_l)e^{-T_*/T}}\right]
-\left(A_{ul}h\nu_{ul}\right)
-}
+\epsilon_{\rm high}=n_u^{\rm high}A_{ul}h\nu_{ul}
+}.
 $$
 
 对应代码：
 
 ```python
-x_Cp_cie = np.interp(T_safe, _CIE_T_GRID, _CIE_X_CP)
-n_Cp_cie = x_Cp_cie * A_C_TOTAL * n_H_sim
-n_u_cie  = n_Cp_cie * r / (1.0 + r)
-eps_cie  = n_u_cie * _CII_A_UL * h_cgs * _CII_NU_HZ
+x_Cp_high = n_e / (n_e + S_C2)
+n_Cp_high = x_Cp_high * A_C_TOTAL * n_H_sim
+n_u_high  = n_Cp_high * upper_fraction_high
+eps_high  = n_u_high * _CII_A_UL * h_cgs * _CII_NU_HZ
 ```
-
-这里 fiasco/CHIANTI 只决定 $x_{\rm C+}^{\rm CIE}(T)$ 和 atomic constants；line excitation 仍然是代码自己的 two-level LTE，不是 CHIANTI collisional-radiative emissivity。
 
 ---
 
@@ -672,8 +622,8 @@ eps_cie  = n_u_cie * _CII_A_UL * h_cgs * _CII_NU_HZ
 | Transition energy | `cii.transitions.delta_energy[i158]` | $\Delta E$ |
 | Frequency | `delta_energy / astropy.constants.h` | $\nu_{ul}$ |
 | Equivalent temperature | `delta_energy / astropy.constants.k_B` | $T_*=\Delta E/k_B$ |
-| CIE fractions | `fiasco.Element('carbon', T).equilibrium_ionization` | 全部 carbon ion stages 的 $x_q(T)$ |
-| C+ CIE fraction | `xC[:, 1]` | $x_{\rm C+}^{\rm CIE}(T)$ |
+| High-T C+ fraction | `n_e / (n_e + S_C2)` | $n_e/(n_e+S_2)$ |
+| H+He CIE fractions | `fiasco.Element('hydrogen'/'helium', T).equilibrium_ionization` | CHIANTI excitation collider lookup |
 | 冷端 DESPOTIC | `lookup.line_field('C+', 'lumPerH', ...)` | $\ell_{\rm CII}^{\rm DSP}$ |
 
 ---
@@ -682,21 +632,29 @@ eps_cie  = n_u_cie * _CII_A_UL * h_cgs * _CII_NU_HZ
 
 1. **Cold branch 与 hot branches 的 radiative-transfer treatment 不同。** 预建 LVG DESPOTIC `lumPerH` 已包含 table build 时的 chemistry、level population 和 escape probability；两个 analytic branches 使用 $n_uA_{ul}h\nu$，没有 optical-depth 或 escape-probability factor，相当于 optically thin spontaneous escape。
 
-2. **Warm branch 使用 Saha ionization equilibrium。** 它依赖 $T$ 和 $n_e$，并采用 H-only electron budget；carbon 与 helium 对 $n_e$ 的贡献被忽略。
+2. **Warm branch 使用 Saha ionization equilibrium。** 它依赖 $T$ 和 $n_e$；
+   $n_e=x_en_H$ 来自 mean-molecular-weight inversion，$x_e$ 是所有来源的
+   total electron fraction，并直接使用公式结果而不施加上下限。
 
-3. **Hot branch 使用 CHIANTI CIE。** $x_{\rm C+}^{\rm CIE}$ 只依赖 $T$；它不是 Saha fraction，也不依赖 cell density。
+3. **Hot branch 使用两态 Saha。** 强制 $n_C=n_{C+}+n_{C++}$，所以
+   $x_{C+}=n_e/(n_e+S_2)$，同时依赖 $T$ 与由 QUOKKA mean molecular weight
+   推得的 $n_e$。
 
-4. **两个 analytic branches 都假设 two-level LTE excitation。** upper-level fraction 不依赖 collider density，因此没有 critical-density suppression；这与低密度下的 full collisional-radiative solution 不同。
+4. **`lte` comparison field 的两个 analytic branches 都使用 two-level LTE excitation。**
+   `chianti` comparison field 只在高温 branch 改用 statistical-equilibrium upper fraction。
 
 5. **固定 carbon abundance。** analytic branches 使用 $A_{\rm C}=1.6\times10^{-4}$，不随 metallicity、depletion 或 cell chemistry 改变。
 
-6. **Hard boundaries。** 3000 K 和 $10^4$ K 处没有 blending，也没有强制 continuity。
+6. **Hard boundaries。** 3000 K 和 $1.307\times10^4$ K 处没有 blending，也没有强制 continuity。
 
 7. **CHIANTI version 未由代码强制。** 项目说明使用 CHIANTI 10.1，但 `fiasco.Ion(...)` 没有显式传入 HDF5 database path/version；不同本地 database 可能改变 constants、levels 或 CIE rates。
 
-8. **Interpolation 均为 linear-$T$。** partition functions 和 CIE fractions 的 per-cell sampling 都使用 `np.interp(T, ...)`，不是 log-$T$ interpolation。
+8. **Partition-function interpolation 是 linear-$T$。** per-cell sampling 使用
+   `np.interp(T, ...)`，不是 log-$T$ interpolation。
 
-9. **Field cache。** `('gas', 'C+_luminosity')` 是 Level-1 cached field。修改任何上述公式或 atomic-data source 后，应增加 `pipeline/cache.py::CACHE_SCHEMA_VERSION`，否则旧 HDF5 field cache 可能继续被读取。
+9. **Field cache。** `C+_luminosity_lte` 和 `C+_luminosity_chianti` 是
+   Level-1 cached fields。修改任何上述公式或 atomic-data source 后，应增加
+   `pipeline/cache.py::CACHE_SCHEMA_VERSION`，否则旧 HDF5 field cache 可能继续被读取。
 
 ---
 
@@ -712,18 +670,20 @@ rho, T_QK, N_H, dV/dr
         |      -> DESPOTIC table: C+ lumPerH
         |      -> epsilon = n_H_clip * lumPerH
         |
-        +-- 3000 K <= T_QK < 1e4 K
-        |      -> H Saha -> n_e
+        +-- 3000 K <= T_QK < 1.307e4 K
+        |      -> QUOKKA mean molecular weight -> n_e
         |      -> U_C0, U_C+, U_C++ from CHIANTI levels
         |      -> two-stage carbon Saha -> x_C+
         |      -> n_C+ = A_C n_H x_C+
         |      -> two-level LTE -> n_u
         |      -> epsilon = n_u A_ul h nu
         |
-        +-- T_QK >= 1e4 K
-               -> CHIANTI rates + CIE solve -> x_C+(T)
+        +-- T_QK >= 1.307e4 K
+               -> QUOKKA mean molecular weight -> n_e
+               -> enforce n_C = n_C+ + n_C++
+               -> second Saha equilibrium -> x_C+ = n_e/(n_e+S_2)
                -> n_C+ = A_C n_H x_C+
-               -> two-level LTE -> n_u
+               -> LTE or CHIANTI excitation -> n_u
                -> epsilon = n_u A_ul h nu
 ```
 
@@ -736,4 +696,3 @@ rho, T_QK, N_H, dV/dr
 - [fiasco `Levels` API](https://fiasco.readthedocs.io/en/stable/api/fiasco.Levels.html)
 - [fiasco `Transitions` API](https://fiasco.readthedocs.io/en/stable/api/fiasco.Transitions.html)
 - [CHIANTI atomic database](https://www.chiantidatabase.org/)
-- Hydrogen Saha relation：Draine, *Physics of the Interstellar and Intergalactic Medium* (2011), Eq. 3.17。

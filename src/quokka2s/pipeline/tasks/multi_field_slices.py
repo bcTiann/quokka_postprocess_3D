@@ -1,9 +1,10 @@
 """Multi-field slice view, split into Build + Plot tasks.
 
 ``Build_MultiFieldSlices`` (compute + store): take N slices through the box and
-extract, per slice index, the 2D arrays for each panel (default 9-panel layout):
+extract, per slice index, the 2D arrays for each panel (default 10-panel layout):
     log10 ρ, log10 T_QUOKKA, log10 T_DESPOTIC, log10 T_two-regime,
-    log10 N_H, log10 ε_CO, log10 ε_{C+}, log10 ε_{Hα}, log10 ε_{HI}
+    log10 N_H, log10 ε_CO, log10 ε_{C+}, log10 ε_{Hα},
+    log10 ε_{HI}^{DESPOTIC}, log10 ε_{HI}^{QUOKKA}
 All panels are volumetric slices (no along-sight projection); intermediates stay
 in cgs.  Stores the per-index 2D arrays.
 
@@ -65,10 +66,9 @@ _PANELS = [
     ('rho_slice',  ('gas', 'density'),              r'$\log_{10}\,\rho$ [g cm$^{-3}$]',                  'inferno', 'slice',              None, None, None),
     ('T_qk_slice', ('gas', 'temperature_quokka'),   r'$\log_{10}\,T_{\rm QUOKKA}$ [K]',                  'turbo',   'slice',              2.0, 8.0, 'T'),
     ('T_dsp_slice',('gas', 'temperature_despotic'), r'$\log_{10}\,T_{\rm DESPOTIC}$ [K]',                'turbo',   'slice',              2.0, 8.0, 'T'),
-    # T_two-regime added 2026-06-20: this is the unified T used by ALL hot-branch
-    # luminosity fields (Hα, HI 21cm, C+ 158μm), so it's the "T that actually
-    # drives the right 4 emission panels".  Shares the T colorbar group with
-    # T_QK and T_DSP so they're directly comparable.
+    # T_two-regime is retained for H-line physics and phase diagnostics. CO and
+    # C+ now use T_DSP and T_QK respectively. It shares the T colorbar group
+    # with both source temperatures so the three remain directly comparable.
     ('T_2R_slice', ('gas', 'temperature_two_regime'), r'$\log_{10}\,T_{\rm two\text{-}regime}$ [K]',     'turbo',   'slice',              2.0, 8.0, 'T'),
     ('NH_slice',   ('gas', 'column_density_H'),     rf'$\log_{{10}}\,N_{{\rm H}}$ (6-dir {_NH_MEAN}, +$L_{{\rm ext}}$) [cm$^{{-2}}$]', 'inferno', 'slice', None, None, None),
     # 2026-06-01: right 4 panels changed from projection_erg_pc2 (sum along
@@ -78,7 +78,8 @@ _PANELS = [
     ('CO_slice',   ('gas', 'CO_luminosity'),        r'$\log_{10}\,\varepsilon_{\rm CO}$ [erg s$^{-1}$ cm$^{-3}$]',      'viridis', 'slice', None, None, None),
     ('Cp_slice',   ('gas', 'C+_luminosity'),        r'$\log_{10}\,\varepsilon_{\rm C^+}$ [erg s$^{-1}$ cm$^{-3}$]',     'viridis', 'slice', None, None, None),
     ('Ha_slice',   ('gas', 'H_alpha_luminosity'),   r'$\log_{10}\,\varepsilon_{\rm H\alpha}$ [erg s$^{-1}$ cm$^{-3}$]', 'viridis', 'slice', None, None, None),
-    ('HI_slice',   ('gas', 'HI_luminosity'),        r'$\log_{10}\,\varepsilon_{\rm HI}$ [erg s$^{-1}$ cm$^{-3}$]',      'viridis', 'slice', None, None, None),
+    ('HI_dsp_slice', ('gas', 'HI_luminosity_despotic'), r'$\log_{10}\,\varepsilon_{\rm HI}^{\rm DESPOTIC}$ [erg s$^{-1}$ cm$^{-3}$]', 'viridis', 'slice', None, None, 'HI'),
+    ('HI_qk_slice',  ('gas', 'HI_luminosity_quokka'),   r'$\log_{10}\,\varepsilon_{\rm HI}^{\rm QUOKKA}$ [erg s$^{-1}$ cm$^{-3}$]',   'viridis', 'slice', None, None, 'HI'),
 ]
 
 # Preset: the 3 table input axes (n_H, N_H, dVdr) + the two temperatures.

@@ -21,7 +21,7 @@ import matplotlib.pyplot as plt
 
 from ..base import PlotTask, PipelinePlotContext
 from ..utils import PHASE_ORDER, PHASE_LABEL_LINE
-from .integrated_spectrum import SPECIES_CFG, V_RANGE_KMS
+from .integrated_spectrum import SPECIES_CFG, V_RANGE_KMS, spectrum_los
 
 
 # 2026-06-20 redesign: drop 'total' (visual sum of the 5 phases — redundant)
@@ -79,9 +79,9 @@ class Plot_PhaseSpectrumOverlay(PlotTask):
         }
 
     def plot(self, context: PipelinePlotContext, inputs: dict) -> None:
-        # 2026-06-25: one PNG per (species, LOS) for all three LOS x/y/z.
-        for los in ('x', 'y', 'z'):
-            for sp in SPECIES_CFG:
+        # One PNG per configured (species, LOS). H I intentionally uses x/y only.
+        for sp in SPECIES_CFG:
+            for los in spectrum_los(sp):
                 self._plot_one_species_one_los(inputs, los, sp)
 
     def _plot_one_species_one_los(self, results: dict, los: str,

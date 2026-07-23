@@ -1,4 +1,4 @@
-"""Spatially integrated spectrum dΣ/dv for CO, C+, H-alpha, HI.
+"""Spatially integrated spectra for CO, C+, H-alpha, and two HI models.
 
 Two projection directions:
   - y-z plane: project along x, use Bulk_Doppler_factor_x, area = dy*dz
@@ -65,11 +65,20 @@ def _mass_weighted_sigma(vel_kms: np.ndarray, rho: np.ndarray) -> float:
     return float(np.sqrt(np.sum((vel_kms - v_mean) ** 2 * w)))
 
 
+DEFAULT_SPECTRUM_LOS = ('x', 'y', 'z')
+
+
+def spectrum_los(species_config: dict) -> tuple[str, ...]:
+    """LOS directions requested for one configured emission result."""
+    return tuple(species_config.get('los', DEFAULT_SPECTRUM_LOS))
+
+
 SPECIES_CFG = [
     {'name': 'CO',      'freq_field': 'CO_freq',      'lum_field': 'CO_luminosity',      'width_field': 'CO_thermal_width',      'color': 'royalblue'},
     {'name': 'C+',      'freq_field': 'C+_freq',      'lum_field': 'C+_luminosity',      'width_field': 'C+_thermal_width',      'color': 'forestgreen'},
     {'name': 'H_alpha', 'freq_field': 'H_alpha_freq', 'lum_field': 'H_alpha_luminosity', 'width_field': 'H_alpha_thermal_width', 'color': 'crimson'},
-    {'name': 'HI',      'freq_field': 'HI_freq',      'lum_field': 'HI_luminosity',      'width_field': 'HI_thermal_width',      'color': 'goldenrod'},
+    {'name': 'HI_DESPOTIC', 'freq_field': 'HI_freq', 'lum_field': 'HI_luminosity_despotic', 'width_field': 'HI_thermal_width_despotic', 'color': 'goldenrod', 'los': ('x', 'y')},
+    {'name': 'HI_QUOKKA',   'freq_field': 'HI_freq', 'lum_field': 'HI_luminosity_quokka',   'width_field': 'HI_thermal_width_quokka',   'color': 'darkorange', 'los': ('x', 'y')},
 ]
 
 N_CHANNELS  = 300    # 300 channels sufficient: LSF σ≈38ch at R=1e4 (±50 km/s grid) smears all fine structure
@@ -83,7 +92,7 @@ PROJECTIONS = [
 
 
 class IntegratedSpectrumTask(AnalysisTask):
-    """Spatially integrated spectrum dΣ/dv for CO, C+, H-alpha, HI, two projections."""
+    """Spatially integrated spectra for all configured emitters."""
 
     def __init__(self, config, axis: str | None = None, figure_units: str | None = None,
                  R: float | None = None):

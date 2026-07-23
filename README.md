@@ -182,9 +182,11 @@ MODE=compute LEXT_KPC=15 scripts/run_dataset_series.sh plt0655228
 MODE=plot    LEXT_KPC=15 scripts/run_dataset_series.sh plt0655228
 ```
 
-The default `CPLUS_HIGH_MODEL=lte` preserves the legacy [C II] result.  To
-compare only the `T >= 1.307e4 K` excitation treatment, run the two models with
-different tags (cold DESPOTIC and intermediate Saha+LTE remain identical):
+The default `CPLUS_HIGH_MODEL=lte` uses two-level LTE excitation. Both high-T
+models now share the two-stage Saha carbon fraction
+`x_C+ = n_e / (n_e + S_C2)`. To compare only the
+`T >= 1.307e4 K` excitation treatment, run the two models with different tags
+(cold DESPOTIC and intermediate Saha+LTE remain identical):
 
 ```bash
 CPLUS_HIGH_MODEL=lte RUN_TAG=cplus_high_lte \
@@ -201,9 +203,26 @@ upper-level table is stored at `data/cii_chianti_nu_cie_v3.npz`; regenerate it w
 grid settings. Its axes are `log10(T)` and simulation `log10(n_H)`. At each
 grid point, CHIANTI H/He CIE fractions plus the project composition
 `X=0.74`, `Y=0.26` explicitly determine `n_e` and `n_p`; carbon's small
-contribution to `n_e` is neglected, while `A_C` and the C+ CIE fraction still
-set the emitting-ion density. The
+contribution to `n_e` is neglected. At runtime, `A_C` and the high-temperature
+two-stage Saha fraction `x_C+ = n_e / (n_e + S_C2)` set the emitting-ion
+density. The
 level-population solve does not use fiasco's implicit proton/electron ratio.
+
+The CO/C+ temperature policy is species-specific throughout their spectral
+products and phase panels: CO uses each cell's `temperature_despotic`, while C+
+uses `temperature_quokka`. Their thermal-width fields and phase-histogram
+temperature axes follow the same mapping; neither uses
+`temperature_two_regime`.
+
+Hα retains its two-regime treatment. The main 2×4 phase figure also uses the
+two-regime H I result: DESPOTIC below 3000 K and the QUOKKA mean-molecular-weight
+method at and above 3000 K. For comparison, H I is additionally computed as two
+independent all-cell results. The pure-DESPOTIC result uses the table `n_HI` and
+`temperature_despotic` for every cell. The pure-QUOKKA result uses
+`temperature_quokka` in the mean-molecular-weight inversion for every cell,
+with `n_HI=(1-x_e)n_H` when `x_e<=1` and `n_HI=0` otherwise. Their spectra use
+matching thermal widths and are compared without peak normalization in the
+dedicated H I task.
 
 The first line printed by the runner includes the resolved Python executable.
 It should point into the active environment, not another hard-coded conda env.
@@ -223,7 +242,10 @@ one is active.
 With the standard layout, the field cache is therefore
 `intermediates/plt0655228/fields/`. The 2026-06-30 clean test produced 30 PNGs,
 including `PhaseSpectrumOverlay_*_los{x,y,z}_*.png`, `PhaseSigmaV_*.png`, the
-integrated spectra, `phase_combined.png`, and ten multi-field slices. The `*.h5`
+integrated spectra, the 2×4 `phase_combined.png`, the dedicated
+`HI_phase_comparison.png`, `HI_spectrum_DESPOTIC_Rinf.png`,
+`HI_spectrum_QUOKKA_Rinf.png`, and `HI_spectrum_overlay_Rinf.png`, and ten
+multi-field slices. The `*.h5`
 under `task_intermediates/` hold the underlying numbers for a precise comparison.
 
 ```bash

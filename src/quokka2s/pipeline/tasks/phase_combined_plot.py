@@ -1,5 +1,6 @@
 """Plot_PhaseCombined — assemble phase_combined.png from the Build_PhaseHist*
-results (Build_PhaseHist ×7, keyed by tag, + Build_PhaseHistNHRho).
+results (seven selected Build_PhaseHist results, keyed by tag, plus
+Build_PhaseHistNHRho).
 
 A pure Plot task: it computes nothing and reads the Build results fresh from
 disk at plot time (see ``_gather_inputs``).  The Build tasks must run first
@@ -8,11 +9,11 @@ yt-derived ``unit_latex`` (not hardcoded); the ``symbol`` gives the quantity.
 
 Layout (2×4) — see `_LAYOUT` below:
 
-   Row 1:  mass × T_QK | mass × T_DSP | mass × T_use | NH-ρ
-   Row 2:  CO          | C+           | Hα           | HI    (all y = T_use)
+   Row 1: mass × T_QK | mass × T_DSP | mass × T_two-regime | NH-ρ
+   Row 2: CO × T_DSP | C+ × T_QK | Hα × T_two-regime | HI × T_two-regime
 
-Row 2 species panels share y (T_use) with Row 1 col 3.  Mass columns
-share their colorbar range (pooled across the 3 T panels).
+Each species panel shares y with the corresponding mass-temperature panel.
+Mass columns share their colorbar range (pooled across the 3 T panels).
 """
 from __future__ import annotations
 
@@ -21,6 +22,7 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import Normalize
 
 from ..base import PlotTask, PipelinePlotContext
+from .phase_hist import PHASE_HISTOGRAM_SCHEMA
 
 
 # Show the six decades immediately below the largest populated bin in each
@@ -30,8 +32,7 @@ COLORBAR_DYNAMIC_RANGE = 1.0e6
 
 # Each entry:  (tag, row_y_label_for_top_row, colorbar_group)
 #   tag                : matches the `tag` field on the sibling intermediate
-#   row_y_label_for... : LaTeX y-axis label when r==0 (Row 1); ignored when r==1
-#                        (Row 2 species share a single label via species_first_idx)
+#   y_label            : LaTeX y-axis label for the panel's temperature field
 #   colorbar_group     : panels in the SAME group share a vmin/vmax pooled
 #                        from their H matrices
 _LAYOUT = [
@@ -39,13 +40,20 @@ _LAYOUT = [
     ('mass_T_QK',   r'$\log_{10}\,T_{\rm QUOKKA}$ [K]',     'mass'),
     ('mass_T_DSP',  r'$\log_{10}\,T_{\rm DESPOTIC}$ [K]',   'mass'),
     ('mass_T_2R',   r'$\log_{10}\,T_{\rm two-regime}$ [K]', 'mass'),
-    ('NH_rho',      None,                                   'NH_rho'),
-    # Row 2 — all y = T_two_regime, each its own colorbar group
-    ('CO_T_2R',     None, 'CO'),
-    ('Cplus_T_2R',  None, 'Cplus'),
-    ('Halpha_T_2R', None, 'Halpha'),
-    ('HI_T_2R',     None, 'HI'),
+    ('NH_rho',       None,                                    'NH_rho'),
+    # Row 2
+    ('CO_T_DSP',     r'$\log_{10}\,T_{\rm DESPOTIC}$ [K]',   'CO'),
+    ('Cplus_T_QK',   r'$\log_{10}\,T_{\rm QUOKKA}$ [K]',     'Cplus'),
+    ('Halpha_T_2R',  r'$\log_{10}\,T_{\rm two-regime}$ [K]', 'Halpha'),
+    ('HI_T_2R',      r'$\log_{10}\,T_{\rm two-regime}$ [K]', 'HI'),
 ]
+
+# Axes in each tuple represent the same physical temperature and may share y.
+_Y_SHARE_GROUPS = (
+    ('mass_T_QK', 'Cplus_T_QK'),
+    ('mass_T_DSP', 'CO_T_DSP'),
+    ('mass_T_2R', 'Halpha_T_2R', 'HI_T_2R'),
+)
 
 
 def _coerce_str(value) -> str:
@@ -78,10 +86,10 @@ _SYMBOL = {
     'mass_T_DSP':  r'M_{\rm bin}',
     'mass_T_2R':   r'M_{\rm bin}',
     'NH_rho':      r'M_{\rm bin}',
-    'CO_T_2R':     r'L_{\rm CO}',
-    'Cplus_T_2R':  r'L_{\rm C^+}',
+    'CO_T_DSP':    r'L_{\rm CO}',
+    'Cplus_T_QK':  r'L_{\rm C^+}',
     'Halpha_T_2R': r'L_{\rm H\alpha}',
-    'HI_T_2R':     r'L_{\rm HI}',
+    'HI_T_2R':      r'L_{\rm HI}',
 }
 
 
@@ -97,10 +105,17 @@ class Plot_PhaseCombined(PlotTask):
         results fresh from disk (cache-key validated by the loaders)."""
         panels: dict[str, dict] = {}
         for data in self._load_all(context, 'Build_PhaseHist'):
+            if int(data.get('histogram_schema', 1)) != PHASE_HISTOGRAM_SCHEMA:
+                continue
             tag = _coerce_str(data.get('tag', ''))
             if tag:
                 panels[tag] = data
         panels['NH_rho'] = self._load_one(context, 'Build_PhaseHistNHRho')
+        if int(panels['NH_rho'].get('histogram_schema', 1)) != PHASE_HISTOGRAM_SCHEMA:
+            raise RuntimeError(
+                'Plot_PhaseCombined: the NH-rho histogram uses obsolete, '
+                'misaligned dex bins; run --mode compute first.'
+            )
 
         expected = [tag for tag, _, _ in _LAYOUT]
         missing  = [t for t in expected if t not in panels]
@@ -178,24 +193,13 @@ class Plot_PhaseCombined(PlotTask):
                 r, c = _rc(i)
                 ax_grid[r][c].sharex(ax_grid[r0][c0])
 
-        # All T_two_regime panels share y (Row 1 col 3 + Row 2 cols 1-4).
-        T_2R_idx = [i for i, (tag, _, _) in enumerate(_LAYOUT)
-                    if tag.endswith('T_2R')]
-        if T_2R_idx:
-            base = T_2R_idx[0]
+        tag_to_index = {tag: i for i, (tag, _, _) in enumerate(_LAYOUT)}
+        for share_group in _Y_SHARE_GROUPS:
+            base = tag_to_index[share_group[0]]
             r0, c0 = _rc(base)
-            for i in T_2R_idx:
-                if i == base:
-                    continue
-                r, c = _rc(i)
+            for tag in share_group[1:]:
+                r, c = _rc(tag_to_index[tag])
                 ax_grid[r][c].sharey(ax_grid[r0][c0])
-
-        # All Row-2 species panels get a y-label (user 2026-06-20 — was
-        # previously only the leftmost).
-        species_idx_row2 = {
-            i for i, (tag, _, _) in enumerate(_LAYOUT)
-            if tag.endswith('T_2R') and _rc(i)[0] == 1
-        }
 
         # ── Compute union of bin-edge extents per axis-share-group ──
         # Each PhaseHistTask uses its own data-derived bin edges (tight to
@@ -219,9 +223,9 @@ class Plot_PhaseCombined(PlotTask):
         rho_x_extent = _union([_x_extent(tag) for tag, _, _ in _LAYOUT if tag != 'NH_rho'])
 
         # All rho-temperature panels use one union y extent. This makes the
-        # first-row T_QK, T_DSP, and T_two-regime panels directly comparable;
-        # T_DSP therefore keeps the empty high-T portion instead of stopping
-        # near log10(T/K)=4.7. Row-2 species already share y with T_two-regime.
+        # first-row temperature panels and the species-specific row directly
+        # comparable; T_DSP therefore keeps the empty high-T portion instead
+        # of stopping near log10(T/K)=4.7.
         temperature_y_extent = _union([
             _y_extent(tag) for tag, _, _ in _LAYOUT if tag != 'NH_rho'
         ])
@@ -274,10 +278,8 @@ class Plot_PhaseCombined(PlotTask):
                 ax.set_xlabel(r'$\log_{10}\,N_{\rm H}$ [cm$^{-2}$]', fontsize=10)
                 ax.set_ylabel(r'$\log_{10}\,\rho$ [g cm$^{-3}$]', fontsize=10)
             else:
-                if r == 0 and y_label is not None:
+                if y_label is not None:
                     ax.set_ylabel(y_label, fontsize=10)
-                elif r == 1 and i in species_idx_row2:
-                    ax.set_ylabel(r'$\log_{10}\,T_{\rm two-regime}$ [K]', fontsize=10)
                 # Every ρ panel gets its own x-axis label + ticks — including
                 # the top row (user 2026-06-24: the top mass×T panels were
                 # unlabeled because of sharex, which looked inconsistent next to

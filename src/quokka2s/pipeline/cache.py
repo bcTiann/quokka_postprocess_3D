@@ -46,7 +46,14 @@ import numpy as np
 # changes (e.g. the DESPOTIC table's `tg_final` computation, the chemistry
 # network, the column-density direction symmetrisation). All cached files
 # stamped with an older value will be silently invalidated and rebuilt.
-CACHE_SCHEMA_VERSION = 7  # 1.307e4 K CIE boundary + mu-derived intermediate H state.
+# v8: high-T carbon n_C=n_C+ + n_C++ with two-stage Saha.
+# v9: CO uses T_DSP; C+ uses T_QK in thermal widths and phase products.
+# v10: T_QK>=3000 K Halpha/HI use mu-derived total x_e and DESPOTIC H+ cap.
+# v11: Halpha/HI use H Saha at 3000<=T_QK<1.307e4 K and fully ionized H above.
+# v12: T_QK>=3000 K Halpha/HI use x_H+=min(x_e,1), with no H Saha branch.
+# v13: C+ Saha uses the direct algebraic n_e and ion fractions without clips.
+# v14: replace mixed-regime HI with separate all-cell DESPOTIC and QUOKKA fields.
+CACHE_SCHEMA_VERSION = 14
 
 
 # ── Fields worth caching to disk ─────────────────────────────────────────────
@@ -66,7 +73,9 @@ CACHED_FIELDS: frozenset[tuple[str, str]] = frozenset({
     ('gas', 'C+_luminosity_lte'),
     ('gas', 'C+_luminosity_chianti'),
     ('gas', 'H_alpha_luminosity'),
-    ('gas', 'HI_luminosity'),
+    ('gas', 'HI_luminosity_two_regime'),
+    ('gas', 'HI_luminosity_despotic'),
+    ('gas', 'HI_luminosity_quokka'),
     ('gas', 'column_density_H'),
     ('gas', 'dVdr_lvg'),
 })

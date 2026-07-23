@@ -60,7 +60,7 @@ Two kinds of intermediate data get saved to disk so repeat runs are cheap.
 ### Field intermediates — shared 3D derived fields
 
 Expensive yt derived fields (`column_density_H`, `temperature_despotic`,
-all four line luminosities, …) are written once to HDF5 and reloaded on
+the line-emissivity results, …) are written once to HDF5 and reloaded on
 subsequent runs:
 
 ```
@@ -70,7 +70,9 @@ subsequent runs:
     field_gas_Cplus_luminosity_lte.h5
     field_gas_Cplus_luminosity_chianti.h5
     field_gas_H_alpha_luminosity.h5
-    field_gas_HI_luminosity.h5
+    field_gas_HI_luminosity_two_regime.h5
+    field_gas_HI_luminosity_despotic.h5
+    field_gas_HI_luminosity_quokka.h5
 ```
 
 The full list lives in `pipeline/cache.py::CACHED_FIELDS`. Cheap fields
@@ -110,7 +112,7 @@ emission spectra **within a single pipeline run**. Any task that needs a
 spectrum calls `context.spectrum_store.get_spectrum(species, los, phase,
 R)`; the first call builds it, subsequent calls return the same array.
 This is what lets IntegratedSpectrum, PhaseSpectrumOverlay, and
-PhaseResolvedSpectrum stop re-building the same cubes. Not persisted to
+PhaseResolvedSpectrum stop re-building the same 1D spectra. Not persisted to
 disk — the task intermediates already cover the `--mode plot` case.
 
 ---
@@ -162,9 +164,9 @@ sum (six passes — forward + backward on each axis, then harmonic-mean
 symmetrised). `np.cumsum` is **fundamentally non-streaming**: the value at
 cell *k* depends on every cell from 0 to *k*.
 
-A streaming version is possible (slab-by-slab accumulator), but rewriting
-column-density + `dVdr_lvg` + spectral-cube builder to stream is a
-~1–2 week project (see *Phase 2* in the planning notes). Until then, with
+A streaming version is possible (slab-by-slab accumulator). Integrated
+spectra already use bounded cell chunks and never allocate a spatial spectral
+cube, but column-density and `dVdr_lvg` still operate on full-grid arrays. With
 `DOWNSAMPLE_FACTOR=2` the native 256×256×2048 cube becomes 128×128×1024,
 which fits comfortably in 16 GB of RAM. Increase the factor if you hit
 memory limits on a smaller machine.

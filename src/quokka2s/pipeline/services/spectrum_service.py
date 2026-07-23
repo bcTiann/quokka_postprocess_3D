@@ -26,7 +26,7 @@ import numpy as np
 import astropy.constants as _const
 import astropy.units as _u
 
-from ..prep.physics_fields import build_spectral_cube
+from ..prep.physics_fields import build_integrated_spectrum
 from ..tasks.integrated_spectrum import SPECIES_CFG, N_CHANNELS, V_RANGE_KMS
 from ..utils import (
     PHASE_ORDER,
@@ -36,7 +36,7 @@ from ..utils import (
 
 
 # Speed of light in cgs, derived from astropy (not hardcoded) → a float for the
-# numpy spectral-cube path.  The assertion catches a unit slip.
+# numpy spectrum path.  The assertion catches a unit slip.
 _c_q = _const.c.to(_u.cm / _u.s)
 assert _c_q.unit == _u.cm / _u.s
 _C_CGS = float(_c_q.value)   # = 2.99792458e10 cm/s
@@ -58,7 +58,7 @@ class SpectrumStore:
         self._species_lum: dict[str, np.ndarray] = {}             # erg/s/cm^3
         self._species_width: dict[str, np.ndarray] = {}           # cm/s
         self._species_freq0: dict[str, float] = {}                # Hz scalar (constant per species)
-        self._phase_masks: Optional[dict[str, np.ndarray]] = None
+        self._phase_masks: dict[str, dict[str, np.ndarray]] = {}
 
         # field-name lookups from SPECIES_CFG
         self._lum_field = {sp['name']: sp['lum_field']   for sp in SPECIES_CFG}
@@ -83,7 +83,7 @@ class SpectrumStore:
 
         Parameters
         ----------
-        species : 'CO' | 'C+' | 'H_alpha' | 'HI'
+        species : 'CO' | 'C+' | 'H_alpha' | 'HI_DESPOTIC' | 'HI_QUOKKA'
         los     : 'x' | 'y'
         phase   : one of the 5 ISM phase labels (CNM, UNM, WNM, WIM, HIM),
                   or ``None`` for the all-cell 'total'.
@@ -127,18 +127,15 @@ class SpectrumStore:
         # The big transients get freed when this function returns.
         lum_per_cell = lum_3d * volume
         if phase_label != 'total':
-            lum_per_cell = lum_per_cell * self._get_phase_masks()[phase_label]
+            lum_per_cell = lum_per_cell * self._get_phase_masks(species)[phase_label]
         shifted = nu_0 * doppler  # freq is constant across cells, so freq*doppler == nu_0*doppler
 
-        cube = build_spectral_cube(
+        total_lum = build_integrated_spectrum(
             shifted, lum_per_cell, width, freq_edges, _C_CGS,
         )
-        total_lum     = cube.sum(axis=(1, 2))
         # Mean surface brightness = total luminosity / projected area of the
-        # plane PERPENDICULAR to the LOS.  build_spectral_cube always collapses
-        # axis 0, so cube.shape[1:] == (ny, nz) for EVERY los — using it as the
-        # sightline count is right only for los='x' (and 'y' when nx==ny).  Use
-        # the true grid dims so los='z' (and any non-cubic grid) normalises right.
+        # plane perpendicular to the LOS. Use the true grid dimensions so the
+        # normalisation remains correct for non-cubic grids and los='z'.
         nx, ny, nz    = self._volume_3d.shape
         n_sightlines  = {'x': ny * nz, 'y': nx * nz, 'z': nx * ny}[los]
         plane         = self._PLANE_FOR_LOS[los]
@@ -179,19 +176,24 @@ class SpectrumStore:
                 freq, _ = self.provider.get_slab_z(('gas', self._freq_field[species]))
                 self._species_freq0[species] = float(freq.in_units('Hz')[0, 0, 0])
 
-    def _get_phase_masks(self) -> dict[str, np.ndarray]:
-        """Classify T into 5 phase masks once per store lifetime.
-
-        Uses ``temperature_two_regime`` (2026-06-18): T_DESPOTIC saturates at
-        ~5×10⁴ K, so all real HIM cells (T_QUOKKA > 10⁵·⁵ K) were getting
-        misclassified as WIM.  Switching to the unified T field keeps the
-        spectrum's phase masks consistent with VelocityPhaseTask's PDFs.
-        """
+    def _get_phase_masks(self, species: str) -> dict[str, np.ndarray]:
+        """Classify phases using the temperature assigned to each result."""
+        temperature_fields = {
+            'CO': 'temperature_despotic',
+            'C+': 'temperature_quokka',
+            'H_alpha': 'temperature_two_regime',
+            'HI_DESPOTIC': 'temperature_despotic',
+            'HI_QUOKKA': 'temperature_quokka',
+        }
         with self._load_lock:
-            if self._phase_masks is None:
-                T, _ = self.provider.get_slab_z(('gas', 'temperature_two_regime'))
-                self._phase_masks = classify_temperature_phase(np.asarray(T.in_units('K')))
-            return self._phase_masks
+            if species not in self._phase_masks:
+                T, _ = self.provider.get_slab_z(
+                    ('gas', temperature_fields[species])
+                )
+                self._phase_masks[species] = classify_temperature_phase(
+                    np.asarray(T.in_units('K'))
+                )
+            return self._phase_masks[species]
 
 
 # Backward-compat alias so any external caller using the old name still works.

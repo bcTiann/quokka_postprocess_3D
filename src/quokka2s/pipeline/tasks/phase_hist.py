@@ -14,8 +14,11 @@ Usage (in `run_pipeline.py`):
     pipeline.register_task(Build_PhaseHist(cfg, 'mass', 'temperature_quokka',
                                            tag='mass_T_QK', symbol=r'M_{\\rm bin}'))
     pipeline.register_task(Build_PhaseHist(cfg, 'CO_luminosity',
-                                           'temperature_two_regime',
-                                           tag='CO_T_2R', symbol=r'L_{\\rm CO}'))
+                                           'temperature_despotic',
+                                           tag='CO_T_DSP'))
+    pipeline.register_task(Build_PhaseHist(cfg, 'C+_luminosity',
+                                           'temperature_quokka',
+                                           tag='Cplus_T_QK'))
     ...
     pipeline.register_task(Plot_PhaseCombined(cfg))   # reads all the above
 """
@@ -28,15 +31,25 @@ import numpy as np
 from ..base import BuildTask, PipelinePlotContext
 
 
+PHASE_HISTOGRAM_SCHEMA = 2
+
+
 def _aligned_edges(lo: float, hi: float, step: float) -> np.ndarray:
     """Snap (lo, hi) to multiples of `step` and return uniform bin edges.
 
-    Returns array of length n_bins+1 with bins of width ~`step`.
+    Integer-dex major ticks therefore land on every fifth edge when
+    ``step=0.2``.
     """
-    lo_snap = np.floor(lo / step) * step
-    hi_snap = (np.ceil(hi / step) + 0.5) * step
-    n_bins  = int(np.round((hi_snap - lo_snap) / step))
-    return np.linspace(lo_snap, hi_snap, n_bins + 1)
+    if not np.isfinite(lo) or not np.isfinite(hi):
+        raise ValueError('phase-histogram bounds must be finite')
+    if step <= 0:
+        raise ValueError('phase-histogram bin width must be positive')
+
+    lo_index = int(np.floor(lo / step))
+    hi_index = int(np.ceil(hi / step))
+    if hi_index <= lo_index:
+        hi_index = lo_index + 1
+    return np.arange(lo_index, hi_index + 1, dtype=float) * step
 
 
 # ─── Build_PhaseHist ──────────────────────────────────────────────────────────
@@ -49,7 +62,8 @@ class Build_PhaseHist(BuildTask):
         Either ``'mass'`` (weight = ρ·dV) or a yt luminosity field name like
         ``'CO_luminosity'`` (weight = ε·dV).
     T_field : str
-        yt field for the y axis, e.g. ``'temperature_two_regime'``.
+        yt field for the y axis. CO uses ``'temperature_despotic'`` and C+
+        uses ``'temperature_quokka'``.
     tag : str
         Short identity label stored in the result; Plot_PhaseCombined finds the
         right panel (and its display symbol) by this tag.  Must be unique across
@@ -71,6 +85,7 @@ class Build_PhaseHist(BuildTask):
         self.T_field      = str(T_field)
         self.tag          = str(tag)
         self.bin_dex      = float(bin_dex)
+        self.histogram_schema = PHASE_HISTOGRAM_SCHEMA
 
     def compute(self, context: PipelinePlotContext) -> dict:
         p = context.provider
@@ -136,6 +151,7 @@ class Build_PhaseHist(BuildTask):
             'weight_field': self.weight_field,
             'T_field':      self.T_field,
             'weight_unit':  weight_unit,
+            'histogram_schema': self.histogram_schema,
         }
 
 
@@ -143,13 +159,13 @@ class Build_PhaseHist(BuildTask):
 class Build_PhaseHistNHRho(BuildTask):
     """Special: mass histogram on (log N_H, log ρ).
 
-    Uses the DESPOTIC table's 35-pt N_H grid for x bins and the same log_ρ bins
-    as Build_PhaseHist for y.
+    Both axes use the same aligned ``bin_dex`` grid as Build_PhaseHist.
     """
 
     def __init__(self, config, bin_dex: float = 0.2):
         super().__init__(config, name='Build_PhaseHistNHRho')
         self.bin_dex = float(bin_dex)
+        self.histogram_schema = PHASE_HISTOGRAM_SCHEMA
 
     def compute(self, context: PipelinePlotContext) -> dict:
         p = context.provider
@@ -174,14 +190,13 @@ class Build_PhaseHistNHRho(BuildTask):
         mass = m_q.value
         del rho, nh, rho_q, dV_q, m_q
 
-        # y (ρ) edges from this task's own data range.
+        # Both axes use the requested dex width and align to the same global
+        # multiples, so one integer decade always contains exactly 1/bin_dex
+        # cells (five cells for bin_dex=0.2).
         rho_lo, rho_hi = float(np.nanmin(log_rho)), float(np.nanmax(log_rho))
+        nh_lo, nh_hi = float(np.nanmin(log_nh)), float(np.nanmax(log_nh))
         y_edges = _aligned_edges(rho_lo, rho_hi, self.bin_dex)
-
-        # x (N_H) uses the DESPOTIC table's 35-pt grid.
-        from ...tables.plotting import _log_edges
-        table_npz = np.load(self.config.despotic_table_path, allow_pickle=True)
-        x_edges = _log_edges(table_npz['col_density_values'])
+        x_edges = _aligned_edges(nh_lo, nh_hi, self.bin_dex)
 
         valid = (np.isfinite(log_nh) & np.isfinite(log_rho) & np.isfinite(mass))
         H, _, _ = np.histogram2d(
@@ -203,4 +218,5 @@ class Build_PhaseHistNHRho(BuildTask):
             'weight_field': 'mass',
             'T_field':      None,
             'weight_unit':  weight_unit,
+            'histogram_schema': self.histogram_schema,
         }

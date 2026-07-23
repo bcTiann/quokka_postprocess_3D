@@ -906,7 +906,7 @@ $$
 | 物理步骤 | 当前 pipeline | CHIANTI/fiasco 完整方法 |
 |---|---|---|
 | $n_{\rm C}$ | $A_{\rm C}n_{\rm H}$ | `Ion.abundance * n_H` |
-| $f_{\rm C+}$ | high-$T$ 使用 `Element.equilibrium_ionization[:,1]` | 可使用同一 result，或 `Ion` 默认 tabulated fraction |
+| $f_{\rm C+}$ | high-$T$ 强制 C$^+$/C$^{++}$ 两态，并使用 $n_e/(n_e+S_2)$ | 可使用 `Element.equilibrium_ionization[:,1]`，或 `Ion` 默认 tabulated fraction |
 | $n_{\rm C+}$ | $A_{\rm C}n_{\rm H}f_{\rm C+}$ | 相同 bookkeeping |
 | $N_u$ | two-level Boltzmann LTE | multi-level statistical equilibrium |
 | Electron collisions | 不显式计算 | CHIANTI $\Upsilon(T)$ → $q_{ij}(T)$ |
@@ -958,8 +958,9 @@ $$
 > \(N_u^{\rm CHIANTI}(T,n_{\rm H})\)。runtime 再用每个 cell 自己的
 > \((T,n_{\rm H}^{\rm sim})\) 插值。所以下面以
 > \(G(T,n_e)\) 为轴的段落是通用替代方案，不是本项目当前采用的接口。
-> C 对自由电子密度的微小贡献在这里忽略；但发射端仍保留
-> \(n_{\rm C+}=A_{\rm C}f_{\rm C+}^{\rm CIE}n_{\rm H}\)。
+> C 对自由电子密度的微小贡献在这里忽略；发射端使用当前高温两态
+> Saha fraction：
+> \(n_{\rm C+}=A_{\rm C}[n_e/(n_e+S_2)]n_{\rm H}\)。
 
 不能对上亿个 cells 直接调用一次完整 `Ion.level_populations` matrix solve。更现实的流程是预建一个 CHIANTI emissivity lookup table：
 

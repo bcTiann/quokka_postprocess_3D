@@ -135,5 +135,20 @@ def load_all_builds(output_dir, build_class_name: str, config) -> list[dict]:
     for p in sorted(cache_dir.glob(f'{build_class_name}_*.h5')):
         if _class_prefix(p.name) != build_class_name:
             continue
-        out.append(_load_results(p, expected_key=_expected_sibling_key(config, p.name)))
+        try:
+            out.append(
+                _load_results(
+                    p,
+                    expected_key=_expected_sibling_key(config, p.name),
+                )
+            )
+        except ValueError as exc:
+            if 'cache_key mismatch' not in str(exc):
+                raise
+            # Multi-instance task sets evolve over time. Old task hashes can
+            # remain beside the current set even after --force because no
+            # currently registered task owns those filenames. Ignore those
+            # stale siblings; the consuming Plot task still checks that every
+            # currently required tag is present.
+            print(f'[cache] skipped stale sibling: {p.name}')
     return out

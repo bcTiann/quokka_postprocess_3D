@@ -2,13 +2,13 @@
 
 ``Build_SpeciesSpectrum`` (compute + store): the single source of truth for the
 emission-line spectra.  For each species it builds one 'total' (all-cell) 1D
-spectrum (intrinsic R=∞) via `build_spectral_cube`, then an LSF-convolved
+spectrum (intrinsic R=∞) via direct cell-to-channel accumulation, then an LSF-convolved
 variant.  It also reads σ_gas from ``Build_VelocityPhase``'s stored result (for
 the IntegratedSpectrum vertical-line markers) and stores everything.
 
 ``Plot_SpeciesSpectrum`` (plot only): renders
-  IntegratedSpectrum_{CO,Cplus,H_alpha,HI}.png   (intrinsic + LSF overlay)
-  IntegratedSpectrum_overlay.png                 (4 species, peak-normalised)
+  IntegratedSpectrum_{CO,Cplus,H_alpha,HI_DESPOTIC,HI_QUOKKA}.png
+  IntegratedSpectrum_overlay.png                 (5 results, peak-normalised)
 from the stored result.
 
 The PhaseSpectrumOverlay plots live in their own Plot task because they also
@@ -26,7 +26,7 @@ from scipy.optimize import curve_fit
 from ..prep import config as _cfg
 from ..base import BuildTask, PlotTask, PipelinePlotContext
 from ..utils import PHASE_ORDER, PHASE_LABEL_LINE
-from .integrated_spectrum import SPECIES_CFG, V_RANGE_KMS
+from .integrated_spectrum import SPECIES_CFG, V_RANGE_KMS, spectrum_los
 from .velocity_phase import PHASE_COLOR
 
 
@@ -76,7 +76,7 @@ class Build_SpeciesSpectrum(BuildTask):
         provider = context.provider
 
         # 1) Evict any in-RAM fields carried over from prior tasks before we
-        # start allocating species cubes — otherwise OOM kicks in on 16 GB Mac
+        # start allocating species arrays — otherwise OOM kicks in on 16 GB Mac
         # at down=1.  The disk-backed field intermediates remain.
         import gc
         provider._cached_grid = None
@@ -93,26 +93,28 @@ class Build_SpeciesSpectrum(BuildTask):
               f'x={sigma_x_gas:.2f} km/s, y={sigma_y_gas:.2f} km/s, '
               f'z={sigma_z_gas:.2f} km/s')
 
-        # Per-species build: 3 LOS (x/y/z) × 1 'total' = 3 unique 1D spectra each.
+        # Per-species build: one exact 'total' spectrum for each requested LOS.
+        # CO, C+, and Halpha use x/y/z; the two dedicated H I results use x/y.
         # (2026-06-19 refactor — phase decomposition removed; downstream
         # consumers only need 'total'.  SpectrumStore.get_spectrum(phase=None)
-        # hits the 'total' code path — one cube covering all cells.)
+        # hits the 'total' code path and directly accumulates all cells.)
         # (2026-06-25 — LOS x/y/z all built so PhaseSpectrumOverlay can plot each
         # projection; the per-LOS emission curve must match its LOS velocity axis.)
         from ..services import SpectrumStore
-        # 2 workers: ~13 GB peak per species — under the 16 GB Mac limit.  Building
-        # 3 LOS (not 1) triples the per-species wall time; peak RAM is unchanged
-        # (still ≤2 cubes in flight; the store reuses lum/width/volume across LOS).
-        # Pinned low (2) because each worker holds a ~13 GB spectral cube; raise
-        # via QK_SPECTRUM_WORKERS when more RAM is available (e.g. an HPC node).
+        # The integrated-spectrum path does not allocate spatial spectral cubes;
+        # it accumulates bounded cell chunks directly into the channel axis.
+        # Keep two workers because each LOS still owns full-volume shifted-frequency
+        # and cell-luminosity arrays. Raise QK_SPECTRUM_WORKERS only when more RAM
+        # is available (for example on an HPC node).
         N_WORKERS = int(os.environ.get("QK_SPECTRUM_WORKERS", "2"))
         spectra: dict[str, dict[str, dict]] = {
-            sp['name']: {'x': {}, 'y': {}, 'z': {}} for sp in SPECIES_CFG
+            sp['name']: {los: {} for los in spectrum_los(sp)}
+            for sp in SPECIES_CFG
         }
         for sp in SPECIES_CFG:
             name  = sp['name']
             store = SpectrumStore(provider)
-            jobs  = [(name, los, None) for los in ('x', 'y', 'z')]  # phase=None → 'total'
+            jobs  = [(name, los, None) for los in spectrum_los(sp)]  # phase=None → 'total'
             print(f'SpeciesSpectrum [{name}]: '
                   f'{len(jobs)} (los × total) build, {N_WORKERS} workers ...')
 
@@ -138,7 +140,7 @@ class Build_SpeciesSpectrum(BuildTask):
             from ..services.spectrum_service import apply_spectral_lsf
             for sp in SPECIES_CFG:
                 name = sp['name']
-                for los in ('x', 'y', 'z'):
+                for los in spectrum_los(sp):
                     block = spectra[name][los]['total']
                     v_axis = block['v_axis']
                     dv = abs(v_axis[1] - v_axis[0])
@@ -215,7 +217,7 @@ class Plot_SpeciesSpectrum(PlotTask):
             plt.close(fig)
             print(f'Saved: {out}')
 
-    # IntegratedSpectrum_overlay.png — 4 species, peak-normalised
+    # IntegratedSpectrum_overlay.png — all configured results, peak-normalised
     def _plot_integrated_overlay(self, results: dict) -> None:
         spectra = results['spectra']
         R       = results['R']

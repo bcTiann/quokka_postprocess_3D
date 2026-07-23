@@ -138,7 +138,18 @@ Energy
 
 $$n_{\rm HI} = n_{F=0} + n_{F=1}$$
 
-具体在 ISM 里 $n_{\rm HI}$ 跟温度、密度、电离率有关，DESPOTIC chemistry 解出来给我们。Pipeline 里它就是 `('gas', 'H')` 这个字段。
+具体在 ISM 里 $n_{\rm HI}$ 跟温度、密度、电离率有关。当前 pipeline
+不再把两种方法按温度拼接，而是计算两个覆盖所有 cell 的独立结果：
+
+- DESPOTIC result：所有 cell 都使用 DESPOTIC chemistry 的
+  `('gas', 'HI')` 数密度；
+- QUOKKA result：所有 cell 都使用 $T_{\rm QK}$ 和 mean molecular
+  weight 反推 $x_e=n_e/n_H$。当 $x_e\le1$ 时，
+  $n_{\rm HI}=(1-x_e)n_H$；当 $x_e>1$ 时，$n_{\rm HI}=0$。
+
+两个 HI spectrum 的 thermal width 也分别使用
+`temperature_despotic` 和 `temperature_quokka`。H$\alpha$ 仍保留原来的
+`temperature_two_regime` 处理。
 
 ### §3.2 怎么把 $n_{\rm HI}$ 分到 F=0 和 F=1？
 

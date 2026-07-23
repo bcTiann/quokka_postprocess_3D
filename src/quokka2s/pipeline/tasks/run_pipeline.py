@@ -30,6 +30,7 @@ from ..base import Pipeline, PipelineConfig
 from ..cache import cache_root_for_dataset
 from ..prep import config as cfg
 from ..prep import physics_fields as phys
+from ...line_regimes import emitter_temperature_field_name
 from . import (
     # Build tasks (--mode compute)
     Build_VelocityPhase,
@@ -43,6 +44,7 @@ from . import (
     Plot_MultiFieldSlices,
     Plot_PhaseCombined,
     Plot_PhaseSpectrumOverlay,
+    Plot_HIComparison,
     # toggle-able plotting utilities (commented registrations below)
     TemperatureSlicesTask,
     TemperatureProjectionTask,
@@ -87,6 +89,8 @@ def build_pipeline(force: bool = False) -> Pipeline:
     _MFS_KW = dict(slice_axis='x', slice_indices=_MFS_INDICES, figure_units='kpc',
                    subdir='multi_field_slices_10x', share_lext_partners=())
     T_2R = 'temperature_two_regime'
+    T_CO = emitter_temperature_field_name('CO')
+    T_CPLUS = emitter_temperature_field_name('C+')
 
     # ── Build tasks (--mode compute).  VelocityPhase first: SpeciesSpectrum
     #    reads its σ_gas; PhaseCombined reads all the PhaseHist results. ──
@@ -108,11 +112,11 @@ def build_pipeline(force: bool = False) -> Pipeline:
     ))
     pipeline.register_task(Build_PhaseHistNHRho(pipeline_config, bin_dex=phase_bin_dex))
     pipeline.register_task(Build_PhaseHist(
-        pipeline_config, 'CO_luminosity', T_2R, tag='CO_T_2R',
+        pipeline_config, 'CO_luminosity', T_CO, tag='CO_T_DSP',
         bin_dex=phase_bin_dex,
     ))
     pipeline.register_task(Build_PhaseHist(
-        pipeline_config, 'C+_luminosity', T_2R, tag='Cplus_T_2R',
+        pipeline_config, 'C+_luminosity', T_CPLUS, tag='Cplus_T_QK',
         bin_dex=phase_bin_dex,
     ))
     pipeline.register_task(Build_PhaseHist(
@@ -120,7 +124,17 @@ def build_pipeline(force: bool = False) -> Pipeline:
         bin_dex=phase_bin_dex,
     ))
     pipeline.register_task(Build_PhaseHist(
-        pipeline_config, 'HI_luminosity', T_2R, tag='HI_T_2R',
+        pipeline_config, 'HI_luminosity_two_regime', T_2R, tag='HI_T_2R',
+        bin_dex=phase_bin_dex,
+    ))
+    # The two all-temperature H I models feed the dedicated H I comparison
+    # task; the main 2x4 PhaseCombined figure uses HI_T_2R above.
+    pipeline.register_task(Build_PhaseHist(
+        pipeline_config, 'HI_luminosity_despotic', T_CO, tag='HI_DSP_T_DSP',
+        bin_dex=phase_bin_dex,
+    ))
+    pipeline.register_task(Build_PhaseHist(
+        pipeline_config, 'HI_luminosity_quokka', T_CPLUS, tag='HI_QK_T_QK',
         bin_dex=phase_bin_dex,
     ))
     pipeline.register_task(Build_MultiFieldSlices(pipeline_config, **_MFS_KW))
@@ -130,6 +144,7 @@ def build_pipeline(force: bool = False) -> Pipeline:
     pipeline.register_task(Plot_SpeciesSpectrum(pipeline_config))
     pipeline.register_task(Plot_MultiFieldSlices(pipeline_config, **_MFS_KW))
     pipeline.register_task(Plot_PhaseCombined(pipeline_config))
+    pipeline.register_task(Plot_HIComparison(pipeline_config))
     pipeline.register_task(Plot_PhaseSpectrumOverlay(pipeline_config))                # R = ∞ (no LSF)
 
     # ── Optional plotting utilities (legacy lifecycle; uncomment to include) ──

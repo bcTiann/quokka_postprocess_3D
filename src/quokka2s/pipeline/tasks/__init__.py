@@ -23,6 +23,7 @@ from .species_spectrum import Plot_SpeciesSpectrum
 from .multi_field_slices import Plot_MultiFieldSlices
 from .phase_combined_plot import Plot_PhaseCombined
 from .phase_spectrum_overlay import Plot_PhaseSpectrumOverlay
+from .hi_comparison import Plot_HIComparison
 
 # ── Toggle-able plotting utilities (legacy lifecycle; not in the default run) ──
 from .temperature_slices import TemperatureSlicesTask
@@ -45,6 +46,7 @@ __all__ = [
     "Plot_MultiFieldSlices",
     "Plot_PhaseCombined",
     "Plot_PhaseSpectrumOverlay",
+    "Plot_HIComparison",
     # toggle-able utilities
     "TemperatureSlicesTask",
     "TemperatureProjectionTask",
