@@ -1,0 +1,42 @@
+############################################################
+#### Sparse HM2012 [C II] high-temperature zero scan ########
+############################################################
+
+cloudyExe               = /Users/tianbaochen/cloudy/c17.02/source/cloudy.exe
+
+# Keep compact line-map output only.  This scan determines the highest
+# temperature at which Cloudy still returns non-zero [C II] emissivity.
+saveCloudyOutputFiles   = 0
+exitOnCrash             = 0
+outputFilePrefix        = hm_2012_cii_zero_sparse
+outputDir               = /Users/tianbaochen/quokka_postprocess_3D/work/cloudy_cooling_tools_history/examples/grackle/hm_2012_cii_zero_sparse_output
+runStartIndex           = 1
+test                    = 0
+
+cloudyRunMode           = 4
+lineMapLine             = C  2 157.636m
+
+# Coarse logarithmic scan over the complete requested temperature interval.
+# Delta log10(T) is about 0.197 dex; the transition will be refined later.
+coolingMapTmin          = 3e3
+coolingMapTmax          = 1e9
+coolingMapTpoints       = 29
+coolingScaleFactor      = 1
+coolingMapUseJeansLength = 0
+
+# Identical physics to the confirmed production table.
+command iterate to convergence
+command stop temperature off
+command set WeakHeatCool -20
+command no H2 molecule
+command no charge transfer
+command metals 0 log
+command element carbon abundance -3.795880
+
+# Five existing production nodes spanning the full density range.
+loop [hden] -4.71428571428571 -1.85714285714286 1 3.85714285714286 6
+
+# Five existing production nodes spanning the full column-density range.
+loop [stop column density] 15 17.5714285714286 19.5 22.0714285714286 24
+
+loop [init "HM12_UVB/z_*.out"] 0.0000e+00

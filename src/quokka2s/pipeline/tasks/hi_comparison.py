@@ -16,6 +16,8 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import Normalize
 
 from ..base import PlotTask, PipelinePlotContext
+from ..spectrum_units import dsigma_dv_ylabel
+from .hi_temperature_spectrum import shared_hi_spectrum_ylim
 from .phase_hist import PHASE_HISTOGRAM_SCHEMA
 
 
@@ -40,7 +42,7 @@ _HI_SPECTRUM_CONFIG = (
     ('HI_QUOKKA', _HI_QUOKKA_COLOR, 'QUOKKA'),
 )
 
-_HI_SPECTRUM_LOS = ('x', 'y')
+_HI_SPECTRUM_LOS = ('y',)
 
 
 def _intrinsic_surface_spectrum(block: dict) -> np.ndarray:
@@ -93,6 +95,9 @@ class Plot_HIComparison(PlotTask):
         return {
             'phase_panels': phase_panels,
             'species_spectrum': self._load_one(context, 'Build_SpeciesSpectrum'),
+            'selected_spectrum': self._load_one(
+                context, 'Build_HITemperatureSpectrum',
+            ),
         }
 
     def plot(self, context: PipelinePlotContext, inputs: dict) -> None:
@@ -108,7 +113,11 @@ class Plot_HIComparison(PlotTask):
             dynamic_range=1.0e4,
             filename=self.phase_4dex_filename,
         )
-        self._plot_spectra(context, inputs['species_spectrum'])
+        self._plot_spectra(
+            context,
+            inputs['species_spectrum'],
+            inputs['selected_spectrum'],
+        )
 
     def _plot_phase(
         self,
@@ -193,12 +202,9 @@ class Plot_HIComparison(PlotTask):
         print(f'Saved: {out}')
 
     @staticmethod
-    def _format_spectrum_axis(ax, los: str) -> None:
+    def _format_spectrum_axis(ax, los: str, unit: str | bytes) -> None:
         ax.set_xlabel('Velocity [km/s]')
-        ax.set_ylabel(
-            r'$\mathrm{d}\Sigma_L/\mathrm{d}\nu$ '
-            r'[erg s$^{-1}$ Hz$^{-1}$ cm$^{-2}$]'
-        )
+        ax.set_ylabel(dsigma_dv_ylabel(unit))
         ax.set_title(f'LOS {los}')
         ax.ticklabel_format(
             style='sci', axis='y', scilimits=(0, 0), useMathText=True,
@@ -213,9 +219,11 @@ class Plot_HIComparison(PlotTask):
         color: str,
         temperature_name: str,
         filename: str,
+        ylim: tuple[float, float],
+        unit: str | bytes,
     ) -> None:
-        fig, axes = plt.subplots(1, 2, figsize=(10.0, 4.2), sharey=False)
-        for ax, los in zip(axes, _HI_SPECTRUM_LOS):
+        fig, ax = plt.subplots(1, 1, figsize=(7.2, 4.8))
+        for los in _HI_SPECTRUM_LOS:
             block = spectra[species][los]['total']
             ax.plot(
                 np.asarray(block['v_axis']),
@@ -224,7 +232,8 @@ class Plot_HIComparison(PlotTask):
                 lw=1.6,
                 drawstyle='steps-mid',
             )
-            self._format_spectrum_axis(ax, los)
+            self._format_spectrum_axis(ax, los, unit)
+            ax.set_ylim(*ylim)
 
         fig.suptitle(
             rf'$\mathrm{{H\,I}}$: $T_{{\rm {temperature_name}}}$, $R=\infty$',
@@ -240,9 +249,11 @@ class Plot_HIComparison(PlotTask):
         self,
         context: PipelinePlotContext,
         spectra: dict,
+        ylim: tuple[float, float],
+        unit: str | bytes,
     ) -> None:
-        fig, axes = plt.subplots(1, 2, figsize=(10.0, 4.2), sharey=False)
-        for ax, los in zip(axes, _HI_SPECTRUM_LOS):
+        fig, ax = plt.subplots(1, 1, figsize=(7.2, 4.8))
+        for los in _HI_SPECTRUM_LOS:
             for species, color, label in _HI_SPECTRUM_CONFIG:
                 block = spectra[species][los]['total']
                 ax.plot(
@@ -253,7 +264,8 @@ class Plot_HIComparison(PlotTask):
                     drawstyle='steps-mid',
                     label=label,
                 )
-            self._format_spectrum_axis(ax, los)
+            self._format_spectrum_axis(ax, los, unit)
+            ax.set_ylim(*ylim)
             ax.legend(frameon=False)
 
         fig.suptitle(
@@ -266,8 +278,16 @@ class Plot_HIComparison(PlotTask):
         plt.close(fig)
         print(f'Saved: {out}')
 
-    def _plot_spectra(self, context: PipelinePlotContext, results: dict) -> None:
+    def _plot_spectra(
+        self,
+        context: PipelinePlotContext,
+        results: dict,
+        selected_results: dict,
+    ) -> None:
         spectra = results['spectra']
+        ylim = shared_hi_spectrum_ylim(results, selected_results)
+        sample = spectra['HI_DESPOTIC'][_HI_SPECTRUM_LOS[0]]['total']['dsigma_dv']
+        unit = getattr(sample, 'units', results['dsigma_dv_units'])
         self._plot_single_spectrum(
             context,
             spectra,
@@ -275,6 +295,8 @@ class Plot_HIComparison(PlotTask):
             color=_HI_DESPOTIC_COLOR,
             temperature_name='DESPOTIC',
             filename=self.despotic_spectrum_filename,
+            ylim=ylim,
+            unit=unit,
         )
         self._plot_single_spectrum(
             context,
@@ -283,5 +305,7 @@ class Plot_HIComparison(PlotTask):
             color=_HI_QUOKKA_COLOR,
             temperature_name='QUOKKA',
             filename=self.quokka_spectrum_filename,
+            ylim=ylim,
+            unit=unit,
         )
-        self._plot_overlay_spectrum(context, spectra)
+        self._plot_overlay_spectrum(context, spectra, ylim, unit)

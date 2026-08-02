@@ -19,7 +19,9 @@ x_e\equiv\frac{n_e}{n_{\rm H}}
 \frac{\mu^{-1}-X-Y/4}{X},
 $$
 
-where $X$ and $Y$ are the hydrogen and helium mass fractions, respectively.
+where $X$, $Y$, and $Z$ are the hydrogen, helium, and metal mass fractions,
+respectively. The adopted composition includes $Z$, but this working EOS
+inversion follows $\mu^{-1}=X+Y/4+Xx_e$ and omits a separate metal-nucleus term.
 No upper or lower limit is imposed on the value of $x_e$ obtained from this
 expression. The electron number density is
 

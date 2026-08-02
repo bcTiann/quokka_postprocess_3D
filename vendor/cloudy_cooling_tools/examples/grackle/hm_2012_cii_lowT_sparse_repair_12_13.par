@@ -1,0 +1,32 @@
+############################################################
+#### Repair runs 12 and 13 of low-temperature C II grid ####
+############################################################
+
+cloudyExe               = /Users/tianbaochen/cloudy/c17.02/source/cloudy.exe
+saveCloudyOutputFiles   = 0
+exitOnCrash             = 0
+outputFilePrefix        = hm_2012_cii_lowT_sparse_repair
+outputDir               = /Users/tianbaochen/quokka_postprocess_3D/work/cloudy_cooling_tools_history/examples/grackle/hm_2012_cii_lowT_sparse_repair_output
+runStartIndex           = 1
+test                    = 0
+
+cloudyRunMode           = 4
+lineMapLine             = C  2 157.636m
+coolingMapTmin          = 10
+coolingMapTmax          = 3000
+coolingMapTpoints       = 21
+coolingScaleFactor      = 1
+coolingMapUseJeansLength = 0
+
+command iterate to convergence
+command stop temperature off
+command set WeakHeatCool -20
+command no H2 molecule
+command no charge transfer
+command metals 0 log
+command element carbon abundance -3.795880
+
+# Original runs 12 and 13: log10(nH)=1 at the two columns below.
+loop [hden] 1
+loop [stop column density] 17.5714285714286 19.5
+loop [init "HM12_UVB/z_*.out"] 0.0000e+00

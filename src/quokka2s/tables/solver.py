@@ -19,6 +19,7 @@ LOGGER = logging.getLogger(__name__)
 LINE_RESULT_FIELDS = ("freq", "intIntensity", "intTB", "lumPerH", "tau", "tauDust")
 DEFAULT_EMITTERS = ("CO", "C", "C+", "HCO+", "O")
 LVG_GEOMETRY = "LVG"
+CO21_TABLE_TOKEN = "CO21"
 
 warnings.filterwarnings(
     "ignore",
@@ -57,14 +58,36 @@ def _configure_despotic_home() -> None:
 
 
 def _nan_line_results(species: Sequence[str]) -> dict[str, LineLumResult]:
-    return {name: _NAN_LINE_RESULT for name in species}
+    names = list(species)
+    if "CO" in names:
+        names.append(CO21_TABLE_TOKEN)
+    return {name: _NAN_LINE_RESULT for name in names}
 
 
-def _extract_line_result(transitions: Sequence[Mapping[str, float]]) -> LineLumResult:
-    if not transitions:
+def _extract_line_result(
+    transitions: Sequence[Mapping[str, float]],
+    index: int = 0,
+) -> LineLumResult:
+    if index < 0 or index >= len(transitions):
         return _NAN_LINE_RESULT
-    entry = transitions[0]
+    entry = transitions[index]
     return LineLumResult(*(float(entry.get(field, float("nan"))) for field in LINE_RESULT_FIELDS))
+
+
+def _extract_transition_result(
+    transitions: Sequence[Mapping[str, float]],
+    upper: int,
+    lower: int,
+) -> LineLumResult:
+    """Extract a transition by level numbers, independent of LAMDA order."""
+    for entry in transitions:
+        matches_upper = int(entry.get("upper", -1)) == upper
+        matches_lower = int(entry.get("lower", -1)) == lower
+        if matches_upper and matches_lower:
+            return LineLumResult(
+                *(float(entry.get(field, float("nan"))) for field in LINE_RESULT_FIELDS)
+            )
+    return _NAN_LINE_RESULT
 
 
 def _log_despotic_stdout(output: io.StringIO) -> None:
@@ -184,7 +207,15 @@ def solve_gow_lvg_point(
         lines: dict[str, LineLumResult] = {}
         with contextlib.redirect_stdout(output):
             for name in species_order:
-                lines[name] = _extract_line_result(cell.lineLum(name, escapeProbGeom=LVG_GEOMETRY))
+                transitions = cell.lineLum(name, escapeProbGeom=LVG_GEOMETRY)
+                if name == "CO":
+                    # Keep the legacy CO token for 1-0 and expose 2-1 without
+                    # adding a generic transition dimension. Match by levels
+                    # so a future LAMDA ordering change cannot swap the lines.
+                    lines[name] = _extract_transition_result(transitions, 1, 0)
+                    lines[CO21_TABLE_TOKEN] = _extract_transition_result(transitions, 2, 1)
+                else:
+                    lines[name] = _extract_line_result(transitions)
         _log_despotic_stdout(output)
         last_lines = lines
         failed = not bool(converged)

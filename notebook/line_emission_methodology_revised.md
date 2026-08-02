@@ -85,14 +85,15 @@ $$
 n_{\rm H}=\frac{X\rho}{m_{\rm H}},
 $$
 
-where $X=0.74$ is the hydrogen mass fraction. We define the total free-electron
+where $X=1/(1+0.1\times3.971)$ is the hydrogen mass fraction. We define the total free-electron
 fraction as
 
 $$
 x_e\equiv\frac{n_e}{n_{\rm H}}.
 $$
 
-Counting hydrogen and helium nuclei together with all free electrons gives
+The working QUOKKA EOS inversion counts hydrogen and helium nuclei together
+with all free electrons as
 
 $$
 \frac{1}{\mu}
@@ -100,7 +101,8 @@ $$
 X+\frac{Y}{4}+Xx_e,
 $$
 
-where $Y=0.26$ is the helium mass fraction. Therefore,
+where the composition still uses $Z=0.02$ and $Y=1-X-Z$, but no separate
+metal-nucleus term is included in this inversion. Therefore,
 
 $$
 x_e

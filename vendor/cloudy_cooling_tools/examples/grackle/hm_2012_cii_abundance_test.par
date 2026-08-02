@@ -1,0 +1,79 @@
+###########################################################
+################ Santa Cruz Galaxy Project ################
+################ Haardt & Madau (2012) UV background ######
+###########################################################
+
+###########################################################
+##################### Run parameters ######################
+
+# path to Cloudy executable
+cloudyExe               = /Users/tianbaochen/cloudy/c17.02/source/cloudy.exe
+
+# save per-temperature line output for validation
+saveCloudyOutputFiles   = 1
+
+# stop immediately if any Cloudy model crashes
+exitOnCrash             = 1
+
+# give this run a name
+outputFilePrefix        = hm_2012_cii_abundance_test
+
+# output directory
+outputDir               = /Users/tianbaochen/quokka_postprocess_3D/work/cloudy_cooling_tools_history/examples/grackle/hm_2012_cii_abundance_test_output
+
+# index of first run
+runStartIndex           = 1
+
+# execute Cloudy rather than only generating the run file
+test                    = 0
+
+# line emissivity map mode
+cloudyRunMode           = 4
+
+# [C II] 158 micron line
+lineMapLine             = C  2 157.636m
+
+############################################################
+################# Cooling Map Parameters ###################
+
+# Four logarithmically spaced temperatures: 3e3, 3e4, 3e5, 3e6 K
+coolingMapTmin          = 3e3
+coolingMapTmax          = 3e6
+coolingMapTpoints       = 4
+
+# Normalize output emissivity by n_H^2
+coolingScaleFactor      = 1
+
+# Column density is supplied explicitly below, not inferred from a Jeans length
+coolingMapUseJeansLength = 0
+
+############################################################
+############ Commands to be executed every time ############
+
+# Do not stop after one zone; integrate to the requested H column density
+# command stop zone 1
+
+command iterate to convergence
+command stop temperature off
+command set WeakHeatCool -20
+
+# Retain the HM2012/Grackle chemistry simplifications above 3000 K
+command no H2 molecule
+command no charge transfer
+
+# Match the DESPOTIC/GOW gas-phase carbon abundance, C/H = 1.6e-4.
+# Other metals remain at the Cloudy solar mixture.
+command metals 0 log
+command element carbon abundance -3.795880
+
+#######################################################
+############# Commands to be looped over ##############
+
+# log10 n_H [cm^-3]
+loop [hden] 0
+
+# log10 N_H [cm^-2]: 1e18, 1e20, 1e22
+loop [stop column density] 18 20 22
+
+# z=0 HM2012 UV background
+loop [init "HM12_UVB/z_*.out"] 0.0000e+00

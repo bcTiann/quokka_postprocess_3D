@@ -1,13 +1,15 @@
 """Species 1D emission-line spectra, split into Build + Plot tasks.
 
 ``Build_SpeciesSpectrum`` (compute + store): the single source of truth for the
-emission-line spectra.  For each species it builds one 'total' (all-cell) 1D
+emission-line spectra.  For each canonical species it builds one 'total' (all-cell) 1D
 spectrum (intrinsic R=∞) via direct cell-to-channel accumulation, then an LSF-convolved
-variant.  It also reads σ_gas from ``Build_VelocityPhase``'s stored result (for
+variant.  The two all-temperature H I alternatives are also retained solely
+for the dedicated H I diagnostic comparison.  It reads σ_gas from
+``Build_VelocityPhase``'s stored result (for
 the IntegratedSpectrum vertical-line markers) and stores everything.
 
 ``Plot_SpeciesSpectrum`` (plot only): renders
-  IntegratedSpectrum_{CO,Cplus,H_alpha,HI_DESPOTIC,HI_QUOKKA}.png
+  IntegratedSpectrum_{CO10,CO21,Cplus,H_alpha,HI}.png
   IntegratedSpectrum_overlay.png                 (5 results, peak-normalised)
 from the stored result.
 
@@ -25,8 +27,14 @@ from scipy.optimize import curve_fit
 
 from ..prep import config as _cfg
 from ..base import BuildTask, PlotTask, PipelinePlotContext
+from ..spectrum_units import DSIGMA_DV_UNIT, dsigma_dv_ylabel
 from ..utils import PHASE_ORDER, PHASE_LABEL_LINE
-from .integrated_spectrum import SPECIES_CFG, V_RANGE_KMS, spectrum_los
+from .integrated_spectrum import (
+    SPECIES_CFG,
+    SPECTRUM_BUILD_CFG,
+    V_RANGE_KMS,
+    spectrum_los,
+)
 from .velocity_phase import PHASE_COLOR
 
 
@@ -71,6 +79,10 @@ class Build_SpeciesSpectrum(BuildTask):
     def __init__(self, config, R: float | None = None):
         super().__init__(config)
         self.R = R if R is not None else _cfg.SPECTRAL_RESOLUTION_R
+        # Public init state is included in the Level-2 filename hash.  This
+        # prevents an older five-species cache from masquerading as the new
+        # canonical-hybrid result without invalidating expensive field caches.
+        self.spectrum_schema = 5
 
     def compute(self, context: PipelinePlotContext) -> dict:
         provider = context.provider
@@ -94,7 +106,8 @@ class Build_SpeciesSpectrum(BuildTask):
               f'z={sigma_z_gas:.2f} km/s')
 
         # Per-species build: one exact 'total' spectrum for each requested LOS.
-        # CO, C+, and Halpha use x/y/z; the two dedicated H I results use x/y.
+        # Canonical H I is the T_QUOKKA-selected hybrid and uses LOS y.  The two
+        # all-temperature H I alternatives are computed only for diagnostics.
         # (2026-06-19 refactor — phase decomposition removed; downstream
         # consumers only need 'total'.  SpectrumStore.get_spectrum(phase=None)
         # hits the 'total' code path and directly accumulates all cells.)
@@ -109,11 +122,11 @@ class Build_SpeciesSpectrum(BuildTask):
         N_WORKERS = int(os.environ.get("QK_SPECTRUM_WORKERS", "2"))
         spectra: dict[str, dict[str, dict]] = {
             sp['name']: {los: {} for los in spectrum_los(sp)}
-            for sp in SPECIES_CFG
+            for sp in SPECTRUM_BUILD_CFG
         }
-        for sp in SPECIES_CFG:
+        for sp in SPECTRUM_BUILD_CFG:
             name  = sp['name']
-            store = SpectrumStore(provider)
+            store = SpectrumStore(provider, species_config=(sp,))
             jobs  = [(name, los, None) for los in spectrum_los(sp)]  # phase=None → 'total'
             print(f'SpeciesSpectrum [{name}]: '
                   f'{len(jobs)} (los × total) build, {N_WORKERS} workers ...')
@@ -138,7 +151,7 @@ class Build_SpeciesSpectrum(BuildTask):
         # spectrum only.  Stored under key 'dsigma_dv_obs' for IntegratedSpectrum.
         if np.isfinite(self.R) and self.R > 0:
             from ..services.spectrum_service import apply_spectral_lsf
-            for sp in SPECIES_CFG:
+            for sp in SPECTRUM_BUILD_CFG:
                 name = sp['name']
                 for los in spectrum_los(sp):
                     block = spectra[name][los]['total']
@@ -151,6 +164,7 @@ class Build_SpeciesSpectrum(BuildTask):
             'spectra':     spectra,
             'sigma_v_gas': {'x': sigma_x_gas, 'y': sigma_y_gas, 'z': sigma_z_gas},
             'R':           self.R,
+            'dsigma_dv_units': DSIGMA_DV_UNIT,
         }
 
 
@@ -201,8 +215,12 @@ class Plot_SpeciesSpectrum(PlotTask):
 
                 ax.axvline(0, color='gray', ls=':', lw=0.8, alpha=0.6)
                 ax.set_xlabel('Velocity [km/s]', fontsize=12)
-                ax.set_ylabel(r'$\mathrm{d}\Sigma/\mathrm{d}v$ [erg s$^{-1}$ Hz$^{-1}$ cm$^{-2}$]',
-                              fontsize=11)
+                ax.set_ylabel(
+                    dsigma_dv_ylabel(
+                        getattr(spec, 'units', results['dsigma_dv_units'])
+                    ),
+                    fontsize=11,
+                )
                 ax.ticklabel_format(style='sci', axis='y', scilimits=(0, 0), useMathText=True)
                 ax.set_title(title, fontsize=12)
                 ax.legend(fontsize=9, framealpha=0.85)
@@ -291,7 +309,9 @@ r'''
                 if r == n_species - 1:
                     ax.set_xlabel('Velocity [km/s]', fontsize=11)
                 if col == 0:
-                    ax.set_ylabel(r'd$\Sigma$/dv  [erg s$^{-1}$ Hz$^{-1}$ cm$^{-2}$]', fontsize=9)
+                    ax.set_ylabel(dsigma_dv_ylabel(
+                        getattr(total_spec, 'units', results['dsigma_dv_units'])
+                    ), fontsize=9)
         fig.suptitle('Phase-resolved emission spectra\n' + PHASE_LABEL_LINE, fontsize=12)
         plt.tight_layout()
         out = self.config.output_dir / 'PhaseResolvedSpectrum.png'

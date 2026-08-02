@@ -12,7 +12,7 @@ from tqdm import tqdm
 from tqdm_joblib import tqdm_joblib
 
 from .models import AttemptRecord, DespoticTable, LineLumResult, LogGrid, SpeciesLineGrid, SpeciesRecord
-from .solver import LINE_RESULT_FIELDS, solve_gow_lvg_point
+from .solver import CO21_TABLE_TOKEN, LINE_RESULT_FIELDS, solve_gow_lvg_point
 
 
 LOGGER = logging.getLogger(__name__)
@@ -69,14 +69,17 @@ def build_gow_lvg_table(
     mu_grid = np.full(shape, np.nan)
     cv_grid = np.full(shape, np.nan)
     eint_grid = np.full(shape, np.nan)
-    line_buffers = {
-        spec.name: {field: np.full(shape, np.nan) for field in LINE_RESULT_FIELDS}
-        for spec in specs if spec.is_emitter
-    }
     energy_fields: dict[str, np.ndarray] = {}
 
     emitter_names = tuple(spec.name for spec in specs if spec.is_emitter)
     abundance_only = tuple(spec.name for spec in specs if not spec.is_emitter)
+    line_output_names = emitter_names + (
+        (CO21_TABLE_TOKEN,) if "CO" in emitter_names else ()
+    )
+    line_buffers = {
+        name: {field: np.full(shape, np.nan) for field in LINE_RESULT_FIELDS}
+        for name in line_output_names
+    }
 
     def _solve_row(row_idx: int):
         row_shape = (num_cols, num_dvdr)
@@ -86,8 +89,8 @@ def build_gow_lvg_table(
         cv_row = np.full(row_shape, np.nan)
         eint_row = np.full(row_shape, np.nan)
         line_rows = {
-            spec.name: {field: np.full(row_shape, np.nan) for field in LINE_RESULT_FIELDS}
-            for spec in specs if spec.is_emitter
+            name: {field: np.full(row_shape, np.nan) for field in LINE_RESULT_FIELDS}
+            for name in line_output_names
         }
         abundance_rows = {spec.name: np.full(row_shape, np.nan) for spec in specs}
         energy_rows: dict[str, np.ndarray] = {}
@@ -117,12 +120,10 @@ def build_gow_lvg_table(
 
                 for spec in specs:
                     abundance_rows[spec.name][col_idx, dvdr_idx] = chem_abunds.get(spec.name, np.nan)
-                for spec in specs:
-                    if not spec.is_emitter:
-                        continue
-                    line = line_results.get(spec.name, DEFAULT_LINE_RESULT)
+                for name in line_output_names:
+                    line = line_results.get(name, DEFAULT_LINE_RESULT)
                     for field in LINE_RESULT_FIELDS:
-                        line_rows[spec.name][field][col_idx, dvdr_idx] = getattr(line, field)
+                        line_rows[name][field][col_idx, dvdr_idx] = getattr(line, field)
                 for term, value in energy_terms.items():
                     energy_rows.setdefault(term, np.full(row_shape, np.nan))[col_idx, dvdr_idx] = value
 
@@ -170,6 +171,18 @@ def build_gow_lvg_table(
                 abundance=abundance,
             )
         species_data[spec.name] = SpeciesRecord(spec.name, abundance, line, spec.is_emitter)
+
+    if CO21_TABLE_TOKEN in line_buffers:
+        fields = line_buffers[CO21_TABLE_TOKEN]
+        co_abundance = abundance_map["CO"]
+        line = SpeciesLineGrid(
+            freq=fields["freq"], intIntensity=fields["intIntensity"], intTB=fields["intTB"],
+            lumPerH=fields["lumPerH"], tau=fields["tau"], tauDust=fields["tauDust"],
+            abundance=co_abundance,
+        )
+        species_data[CO21_TABLE_TOKEN] = SpeciesRecord(
+            CO21_TABLE_TOKEN, co_abundance, line, True,
+        )
 
     return DespoticTable(
         species_data=species_data,

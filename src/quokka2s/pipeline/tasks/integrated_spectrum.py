@@ -1,4 +1,4 @@
-"""Spatially integrated spectra for CO, C+, H-alpha, and two HI models.
+"""Spatially integrated spectra for CO, C+, H-alpha, and hybrid H I.
 
 Two projection directions:
   - y-z plane: project along x, use Bulk_Doppler_factor_x, area = dy*dz
@@ -17,6 +17,7 @@ import matplotlib.pyplot as plt
 from ..prep import config as _cfg
 from ...utils.axes import axis_index
 from ..base import AnalysisTask, PipelinePlotContext
+from ..spectrum_units import DSIGMA_DV_UNIT, dsigma_dv_ylabel
 from ..utils import make_axis_labels
 
 
@@ -74,12 +75,28 @@ def spectrum_los(species_config: dict) -> tuple[str, ...]:
 
 
 SPECIES_CFG = [
-    {'name': 'CO',      'freq_field': 'CO_freq',      'lum_field': 'CO_luminosity',      'width_field': 'CO_thermal_width',      'color': 'royalblue'},
+    {'name': 'CO10',    'freq_field': 'CO_freq',      'lum_field': 'CO_luminosity',      'width_field': 'CO_thermal_width',      'color': 'royalblue'},
+    {'name': 'CO21',    'freq_field': 'CO21_freq',    'lum_field': 'CO21_luminosity',    'width_field': 'CO21_thermal_width',    'color': 'darkviolet'},
     {'name': 'C+',      'freq_field': 'C+_freq',      'lum_field': 'C+_luminosity',      'width_field': 'C+_thermal_width',      'color': 'forestgreen'},
     {'name': 'H_alpha', 'freq_field': 'H_alpha_freq', 'lum_field': 'H_alpha_luminosity', 'width_field': 'H_alpha_thermal_width', 'color': 'crimson'},
-    {'name': 'HI_DESPOTIC', 'freq_field': 'HI_freq', 'lum_field': 'HI_luminosity_despotic', 'width_field': 'HI_thermal_width_despotic', 'color': 'goldenrod', 'los': ('x', 'y')},
-    {'name': 'HI_QUOKKA',   'freq_field': 'HI_freq', 'lum_field': 'HI_luminosity_quokka',   'width_field': 'HI_thermal_width_quokka',   'color': 'darkorange', 'los': ('x', 'y')},
+    # Canonical H I spectrum: T_QUOKKA selects the neutral-H prescription.
+    #   T_QUOKKA < 3000 K  -> DESPOTIC-table n_HI
+    #   T_QUOKKA >= 3000 K -> QUOKKA mu-derived analytic n_HI
+    # Both branches use T_QUOKKA for the H I thermal width, so this spectrum
+    # is exactly the sum of the green and hot-QUOKKA curves in the selected
+    # H I comparison.
+    {'name': 'HI', 'freq_field': 'HI_freq', 'lum_field': 'HI_luminosity_two_regime', 'width_field': 'HI_thermal_width_quokka', 'color': 'darkorange', 'los': ('y',)},
 ]
+
+# All-temperature alternatives are retained only as inputs to the dedicated
+# H I diagnostic comparison.  They are deliberately excluded from the normal
+# per-species and overlay plots, where ``HI`` above is now the sole H I result.
+HI_COMPARISON_SPECIES_CFG = [
+    {'name': 'HI_DESPOTIC', 'freq_field': 'HI_freq', 'lum_field': 'HI_luminosity_despotic', 'width_field': 'HI_thermal_width_despotic', 'color': 'goldenrod', 'los': ('y',)},
+    {'name': 'HI_QUOKKA',   'freq_field': 'HI_freq', 'lum_field': 'HI_luminosity_quokka',   'width_field': 'HI_thermal_width_quokka',   'color': 'darkorange', 'los': ('y',)},
+]
+
+SPECTRUM_BUILD_CFG = [*SPECIES_CFG, *HI_COMPARISON_SPECIES_CFG]
 
 N_CHANNELS  = 300    # 300 channels sufficient: LSF σ≈38ch at R=1e4 (±50 km/s grid) smears all fine structure
 V_RANGE_KMS = 50.0   # ±50 km/s window
@@ -128,7 +145,12 @@ class IntegratedSpectrumTask(AnalysisTask):
         import gc
         from ..services import SpectrumStore
         los_for_proj = {'yz': 'x', 'xz': 'y'}
-        out = {'yz': {}, 'xz': {}, 'sigma_v_data': {'yz': sigma_x, 'xz': sigma_y}}
+        out = {
+            'yz': {},
+            'xz': {},
+            'sigma_v_data': {'yz': sigma_x, 'xz': sigma_y},
+            'dsigma_dv_units': DSIGMA_DV_UNIT,
+        }
 
         for sp in SPECIES_CFG:
             name = sp['name']
@@ -142,8 +164,8 @@ class IntegratedSpectrumTask(AnalysisTask):
                     'dsigma_dv':      dsigma_dv,
                     'dsigma_dv_obs':  dsigma_dv_obs,
                 }
-                print(f'  [{name}] {proj_key} peak intrinsic={dsigma_dv.max():.3e}'
-                      f'  observed={dsigma_dv_obs.max():.3e} erg/s/Hz/cm²')
+                print(f'  [{name}] {proj_key} peak intrinsic={float(dsigma_dv.max()):.3e}'
+                      f'  observed={float(dsigma_dv_obs.max()):.3e} {DSIGMA_DV_UNIT}')
             del store
             provider._cached_grid = None
             gc.collect()
@@ -164,8 +186,12 @@ class IntegratedSpectrumTask(AnalysisTask):
                     drawstyle='steps-mid', label=name)
         ax.axvline(0, color='gray', ls=':', lw=0.8, alpha=0.6)
         ax.set_xlabel('Velocity [km/s]', fontsize=12)
-        ax.set_ylabel(r'$\mathrm{d}\Sigma/\mathrm{d}v$ [erg s$^{-1}$ Hz$^{-1}$ cm$^{-2}$]',
-                      fontsize=11)
+        ax.set_ylabel(
+            dsigma_dv_ylabel(
+                getattr(spec, 'units', results['dsigma_dv_units'])
+            ),
+            fontsize=11,
+        )
         ax.ticklabel_format(style='sci', axis='y', scilimits=(0, 0), useMathText=True)
         ax.set_title(title, fontsize=12)
         ax.legend(fontsize=10, framealpha=0.8)
@@ -216,8 +242,12 @@ class IntegratedSpectrumTask(AnalysisTask):
                 self._annotate_sigma(ax, v, spec_obs, sp['color'], sigma_data=sigma_data)
                 ax.axvline(0, color='gray', ls=':', lw=0.8, alpha=0.6)
                 ax.set_xlabel('Velocity [km/s]', fontsize=12)
-                ax.set_ylabel(r'$\mathrm{d}\Sigma/\mathrm{d}v$ [erg s$^{-1}$ Hz$^{-1}$ cm$^{-2}$]',
-                              fontsize=11)
+                ax.set_ylabel(
+                    dsigma_dv_ylabel(
+                        getattr(spec, 'units', results['dsigma_dv_units'])
+                    ),
+                    fontsize=11,
+                )
                 ax.ticklabel_format(style='sci', axis='y', scilimits=(0, 0), useMathText=True)
                 ax.set_title(title, fontsize=12)
                 ax.grid(True, alpha=0.25, ls='--', lw=0.5)

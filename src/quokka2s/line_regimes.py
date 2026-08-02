@@ -9,8 +9,15 @@ from __future__ import annotations
 import numpy as np
 
 
-HYDROGEN_MASS_FRACTION = 0.74
-HELIUM_MASS_FRACTION = 0.26
+CLOUDY_HELIUM_TO_HYDROGEN_NUMBER_RATIO = 0.1
+CLOUDY_HELIUM_ATOMIC_WEIGHT = 3.971
+HYDROGEN_MASS_FRACTION = 1.0 / (
+    1.0
+    + CLOUDY_HELIUM_TO_HYDROGEN_NUMBER_RATIO * CLOUDY_HELIUM_ATOMIC_WEIGHT
+)
+METAL_MASS_FRACTION = 0.02
+HELIUM_MASS_FRACTION = 1.0 - HYDROGEN_MASS_FRACTION - METAL_MASS_FRACTION
+MEAN_METAL_ATOMIC_WEIGHT = 16.0
 QUOKKA_ADIABATIC_INDEX = 5.0 / 3.0
 
 # Species-specific temperatures for the molecular/ionic line products.  Keep
@@ -18,6 +25,7 @@ QUOKKA_ADIABATIC_INDEX = 5.0 / 3.0
 # registration cannot silently choose different temperatures.
 EMITTER_TEMPERATURE_FIELDS = {
     'CO': 'temperature_despotic',
+    'CO21': 'temperature_despotic',
     'C+': 'temperature_quokka',
     # Retained for archived callers; HCO+ is no longer registered by default.
     'HCO+': 'temperature_despotic',
@@ -64,10 +72,11 @@ def electron_fraction_from_mean_molecular_weight(
         1/mu = (gamma-1) m_H e_int / (rho k_B T)
         x_e  = (1/mu - X - Y/4) / X.
 
-    The baseline particles are all H and He nuclei; every free electron adds
-    one particle regardless of whether it came from H, He, or a trace metal.
-    Return the direct algebraic result without clipping ``x_e`` to a presumed
-    physical interval.
+    The baseline particles in this inversion are H and He nuclei.  The adopted
+    X/Y/Z composition remains normalized to one, but the metal-nucleus term is
+    deliberately omitted to match QUOKKA's working EOS relation.  Every free
+    electron adds one particle regardless of which element supplied it. Return
+    the direct algebraic result without clipping ``x_e``.
     """
     e_int = np.asarray(internal_energy_density_erg_cm3, dtype=np.float64)
     rho = np.asarray(density_g_cm3, dtype=np.float64)
@@ -77,6 +86,11 @@ def electron_fraction_from_mean_molecular_weight(
         (gamma - 1.0) * hydrogen_mass_g * e_int
         / (rho * boltzmann_erg_K * temperature)
     )
+    if X <= 0.0:
+        raise ValueError('X must be positive')
+    if Y < 0.0:
+        raise ValueError('Y must be non-negative')
+
     x_e = (inverse_mu - X - Y / 4.0) / X
     return x_e
 

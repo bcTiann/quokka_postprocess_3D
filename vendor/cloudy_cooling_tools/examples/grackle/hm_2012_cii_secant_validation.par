@@ -1,0 +1,44 @@
+###########################################################
+######## HM2012 [C II] electron-solver validation #########
+###########################################################
+
+cloudyExe               = /Users/tianbaochen/cloudy/c17.02/source/cloudy.exe
+saveCloudyOutputFiles   = 1
+exitOnCrash             = 0
+outputFilePrefix        = hm_2012_cii_secant_validation
+outputDir               = /Users/tianbaochen/quokka_postprocess_3D/work/cloudy_cooling_tools_history/examples/grackle/hm_2012_cii_secant_validation_output
+runStartIndex           = 1
+
+# Execute Cloudy; dry-run verified exactly five paired models.
+test                    = 0
+
+cloudyRunMode           = 4
+lineMapLine             = C  2 157.636m
+
+# Original coarse-grid temperature indices 4..18, exactly 15 log-spaced points.
+coolingMapTmin          = 5267.619162064792
+coolingMapTmax          = 37786.81333625805
+coolingMapTpoints       = 15
+coolingScaleFactor      = 1
+coolingMapUseJeansLength = 0
+
+command iterate to convergence
+command stop temperature off
+command set WeakHeatCool -20
+command no H2 molecule
+command no charge transfer
+command metals 0 log
+command element carbon abundance -3.795880
+
+# Change only the numerical electron-density solver.
+command set eden solver secant
+
+# Five paired (log n_H, log N_H) models corresponding to original failed runs
+# 120, 134, 163, 205, and 224.  The loop-set syntax varies the two commands
+# simultaneously rather than taking their Cartesian product.
+loop {
+    [hden] 1 1.71428571428571 3.14285714285714 5.28571428571429 6
+    [stop column density] 24 23.3571428571429 22.7142857142857 20.7857142857143 23.3571428571429
+}
+
+loop [init "HM12_UVB/z_*.out"] 0.0000e+00

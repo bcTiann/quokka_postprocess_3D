@@ -1,0 +1,43 @@
+############################################################
+#### Sparse HM2012 H-alpha temperature/density scan ########
+############################################################
+
+cloudyExe               = /Users/tianbaochen/cloudy/c17.02/source/cloudy.exe
+
+# Keep compact normalized line-map data and warnings.  Failed points can be
+# rerun separately with raw Cloudy output enabled if diagnosis is needed.
+saveCloudyOutputFiles   = 0
+exitOnCrash             = 0
+outputFilePrefix        = hm_2012_halpha_sparse
+outputDir               = /Users/tianbaochen/quokka_postprocess_3D/work/cloudy_cooling_tools_history/examples/grackle/hm_2012_halpha_sparse_output
+runStartIndex           = 1
+test                    = 0
+
+cloudyRunMode           = 4
+lineMapLine             = H  1 6562.81A
+
+# This is a discovery scan, not a production cutoff.  H-alpha must not inherit
+# the independently determined [C II] upper-temperature boundary.
+coolingMapTmin          = 3e3
+coolingMapTmax          = 1e9
+coolingMapTpoints       = 21
+coolingScaleFactor      = 1
+coolingMapUseJeansLength = 0
+
+# Keep the same HM2012/Grackle assumptions as the [C II] production table so
+# this scan changes only the requested line and its temperature coverage.
+command iterate to convergence
+command stop temperature off
+command set WeakHeatCool -20
+command no H2 molecule
+command no charge transfer
+command metals 0 log
+command element carbon abundance -3.795880
+
+# Five existing production-grid nodes spanning the complete density range.
+loop [hden] -4.71428571428571 -1.85714285714286 1 3.85714285714286 6
+
+# Five existing production-grid nodes spanning the complete column range.
+loop [stop column density] 15 17.5714285714286 19.5 22.0714285714286 24
+
+loop [init "HM12_UVB/z_*.out"] 0.0000e+00

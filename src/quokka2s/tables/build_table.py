@@ -21,7 +21,11 @@ N_H_RANGE = (1e-4, 1e6)
 COL_DEN_RANGE = (1e15, 1e24)
 DVDR_RANGE = (1e-19, 1e-12)
 GRID_POINTS = 35
-DEFAULT_OUTPUT = Path(__file__).resolve().parents[3] / "output_tables_3D_GOW_LVG" / "despotic_table.npz"
+DEFAULT_OUTPUT = (
+    Path(__file__).resolve().parents[3]
+    / "output_tables_3D_GOW_LVG"
+    / "despotic_table_co10_co21.npz"
+)
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:

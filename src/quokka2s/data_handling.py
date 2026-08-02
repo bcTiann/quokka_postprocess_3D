@@ -407,13 +407,6 @@ class YTDataProvider:
         When a non-default slab is requested a fresh covering_grid is created
         as before, so the behaviour for sub-domain slabs is unchanged.
         """
-        # The public C+ field is a runtime selector.  Resolve it before the
-        # Level-1 cache lookup so LTE and CHIANTI use their own persistent
-        # files instead of recomputing through the cheap yt alias.
-        if field == ('gas', 'C+_luminosity'):
-            from .pipeline.prep import config as _cfg
-            field = ('gas', f'C+_luminosity_{_cfg.CPLUS_HIGH_MODEL}')
-
         # Detect whether the caller wants the full domain (all defaults).
         # We check BEFORE applying defaults so the sentinel is unambiguous.
         use_full_grid = (slab_width is None and center is None and level is None)

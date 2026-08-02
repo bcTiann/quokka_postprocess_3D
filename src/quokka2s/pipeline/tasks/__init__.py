@@ -14,6 +14,18 @@ package (NOT exported as tasks) because live tasks import shared code from them
 # ── Build tasks (compute + store) ─────────────────────────────────────────
 from .velocity_phase import Build_VelocityPhase
 from .species_spectrum import Build_SpeciesSpectrum
+from .hi_temperature_spectrum import (
+    Build_HITemperatureComplementSpectrum,
+    Build_HITemperatureSpectrum,
+)
+from .cplus_temperature_spectrum import Build_CplusTemperatureSpectrum
+from .cplus_high_model_comparison import (
+    Build_CplusHighModelComparison,
+    Build_CplusColdSahaComparison,
+)
+from .cplus_low_cloudy_comparison import Build_CplusLowCloudyComparison
+from .cplus_projection_comparison import Build_CplusProjectionComparison
+from .halpha_cloudy_comparison import Build_HalphaCloudyComparison
 from .phase_hist import Build_PhaseHist, Build_PhaseHistNHRho
 from .multi_field_slices import Build_MultiFieldSlices
 
@@ -24,6 +36,16 @@ from .multi_field_slices import Plot_MultiFieldSlices
 from .phase_combined_plot import Plot_PhaseCombined
 from .phase_spectrum_overlay import Plot_PhaseSpectrumOverlay
 from .hi_comparison import Plot_HIComparison
+from .hi_temperature_spectrum import (
+    Plot_HITemperatureComplementSpectrum,
+    Plot_HITemperatureSpectrum,
+)
+from .cplus_temperature_spectrum import Plot_CplusTemperatureSpectrum
+from .cplus_high_model_comparison import Plot_CplusHighModelComparison
+from .cplus_low_cloudy_comparison import Plot_CplusLowCloudyComparison
+from .cplus_projection_comparison import Plot_CplusProjectionComparison
+from .halpha_cloudy_comparison import Plot_HalphaCloudyComparison
+from .cplus_cloudy_combined_plot import Plot_CplusCloudyCombinedComparison
 
 # ── Toggle-able plotting utilities (legacy lifecycle; not in the default run) ──
 from .temperature_slices import TemperatureSlicesTask
@@ -37,6 +59,14 @@ __all__ = [
     # Build
     "Build_VelocityPhase",
     "Build_SpeciesSpectrum",
+    "Build_HITemperatureSpectrum",
+    "Build_HITemperatureComplementSpectrum",
+    "Build_CplusTemperatureSpectrum",
+    "Build_CplusHighModelComparison",
+    "Build_CplusColdSahaComparison",
+    "Build_CplusLowCloudyComparison",
+    "Build_CplusProjectionComparison",
+    "Build_HalphaCloudyComparison",
     "Build_PhaseHist",
     "Build_PhaseHistNHRho",
     "Build_MultiFieldSlices",
@@ -47,6 +77,14 @@ __all__ = [
     "Plot_PhaseCombined",
     "Plot_PhaseSpectrumOverlay",
     "Plot_HIComparison",
+    "Plot_HITemperatureSpectrum",
+    "Plot_HITemperatureComplementSpectrum",
+    "Plot_CplusTemperatureSpectrum",
+    "Plot_CplusHighModelComparison",
+    "Plot_CplusLowCloudyComparison",
+    "Plot_CplusProjectionComparison",
+    "Plot_HalphaCloudyComparison",
+    "Plot_CplusCloudyCombinedComparison",
     # toggle-able utilities
     "TemperatureSlicesTask",
     "TemperatureProjectionTask",

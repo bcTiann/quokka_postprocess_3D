@@ -35,6 +35,14 @@ from . import (
     # Build tasks (--mode compute)
     Build_VelocityPhase,
     Build_SpeciesSpectrum,
+    Build_HITemperatureSpectrum,
+    Build_HITemperatureComplementSpectrum,
+    Build_CplusTemperatureSpectrum,
+    Build_CplusHighModelComparison,
+    Build_CplusColdSahaComparison,
+    Build_CplusLowCloudyComparison,
+    Build_CplusProjectionComparison,
+    Build_HalphaCloudyComparison,
     Build_PhaseHist,
     Build_PhaseHistNHRho,
     Build_MultiFieldSlices,
@@ -45,6 +53,14 @@ from . import (
     Plot_PhaseCombined,
     Plot_PhaseSpectrumOverlay,
     Plot_HIComparison,
+    Plot_HITemperatureSpectrum,
+    Plot_HITemperatureComplementSpectrum,
+    Plot_CplusTemperatureSpectrum,
+    Plot_CplusHighModelComparison,
+    Plot_CplusLowCloudyComparison,
+    Plot_CplusProjectionComparison,
+    Plot_HalphaCloudyComparison,
+    Plot_CplusCloudyCombinedComparison,
     # toggle-able plotting utilities (commented registrations below)
     TemperatureSlicesTask,
     TemperatureProjectionTask,
@@ -69,10 +85,6 @@ def build_pipeline(force: bool = False) -> Pipeline:
         despotic_table_path=cfg.DESPOTIC_TABLE_PATH,
         force_recompute=force,
         column_extension_lateral_kpc=cfg.COLUMN_EXTENSION_LATERAL_KPC,
-        extra_options={
-            'cplus_high_model': cfg.CPLUS_HIGH_MODEL,
-            'cii_chianti_nu_table_path': cfg.CII_CHIANTI_NU_TABLE_PATH,
-        },
     )
 
     pipeline = Pipeline(pipeline_config)
@@ -96,6 +108,14 @@ def build_pipeline(force: bool = False) -> Pipeline:
     #    reads its σ_gas; PhaseCombined reads all the PhaseHist results. ──
     pipeline.register_task(Build_VelocityPhase(pipeline_config))
     pipeline.register_task(Build_SpeciesSpectrum(pipeline_config))
+    pipeline.register_task(Build_HITemperatureSpectrum(pipeline_config))
+    pipeline.register_task(Build_HITemperatureComplementSpectrum(pipeline_config))
+    pipeline.register_task(Build_CplusTemperatureSpectrum(pipeline_config))
+    pipeline.register_task(Build_CplusHighModelComparison(pipeline_config))
+    pipeline.register_task(Build_CplusColdSahaComparison(pipeline_config))
+    pipeline.register_task(Build_CplusLowCloudyComparison(pipeline_config))
+    pipeline.register_task(Build_CplusProjectionComparison(pipeline_config))
+    pipeline.register_task(Build_HalphaCloudyComparison(pipeline_config))
     # weight_field, T_field, tag  (display symbol lives in Plot_PhaseCombined._SYMBOL)
     # Use uniform 0.2-dex bins in every phase histogram.
     phase_bin_dex = 0.2
@@ -145,6 +165,14 @@ def build_pipeline(force: bool = False) -> Pipeline:
     pipeline.register_task(Plot_MultiFieldSlices(pipeline_config, **_MFS_KW))
     pipeline.register_task(Plot_PhaseCombined(pipeline_config))
     pipeline.register_task(Plot_HIComparison(pipeline_config))
+    pipeline.register_task(Plot_HITemperatureSpectrum(pipeline_config))
+    pipeline.register_task(Plot_HITemperatureComplementSpectrum(pipeline_config))
+    pipeline.register_task(Plot_CplusTemperatureSpectrum(pipeline_config))
+    pipeline.register_task(Plot_CplusHighModelComparison(pipeline_config))
+    pipeline.register_task(Plot_CplusLowCloudyComparison(pipeline_config))
+    pipeline.register_task(Plot_CplusProjectionComparison(pipeline_config))
+    pipeline.register_task(Plot_HalphaCloudyComparison(pipeline_config))
+    pipeline.register_task(Plot_CplusCloudyCombinedComparison(pipeline_config))
     pipeline.register_task(Plot_PhaseSpectrumOverlay(pipeline_config))                # R = ∞ (no LSF)
 
     # ── Optional plotting utilities (legacy lifecycle; uncomment to include) ──

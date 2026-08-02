@@ -5,6 +5,10 @@ import unittest
 import numpy as np
 
 from quokka2s.line_regimes import (
+    HELIUM_MASS_FRACTION,
+    HYDROGEN_MASS_FRACTION,
+    MEAN_METAL_ATOMIC_WEIGHT,
+    METAL_MASS_FRACTION,
     electron_fraction_from_mean_molecular_weight,
     emitter_temperature_field_name,
     hydrogen_ionization_fraction_from_mean_molecular_weight,
@@ -13,9 +17,29 @@ from quokka2s.line_regimes import (
 
 
 class LineRegimeTests(unittest.TestCase):
+    def test_default_composition_follows_cloudy_definition(self):
+        expected_X = 1.0 / (1.0 + 0.1 * 3.971)
+        self.assertAlmostEqual(HYDROGEN_MASS_FRACTION, expected_X)
+        self.assertAlmostEqual(METAL_MASS_FRACTION, 0.02)
+        self.assertAlmostEqual(
+            HELIUM_MASS_FRACTION,
+            1.0 - expected_X - METAL_MASS_FRACTION,
+        )
+        self.assertAlmostEqual(MEAN_METAL_ATOMIC_WEIGHT, 16.0)
+        self.assertAlmostEqual(
+            HYDROGEN_MASS_FRACTION
+            + HELIUM_MASS_FRACTION
+            + METAL_MASS_FRACTION,
+            1.0,
+        )
+
     def test_emitter_temperature_policy(self):
         self.assertEqual(
             emitter_temperature_field_name('CO'),
+            'temperature_despotic',
+        )
+        self.assertEqual(
+            emitter_temperature_field_name('CO21'),
             'temperature_despotic',
         )
         self.assertEqual(
@@ -44,14 +68,14 @@ class LineRegimeTests(unittest.TestCase):
         np.testing.assert_array_equal(high, [False, False, False, True])
 
     def test_mean_molecular_weight_inversion_recovers_xe(self):
-        X, Y = 0.74, 0.26
+        X, Y = HYDROGEN_MASS_FRACTION, HELIUM_MASS_FRACTION
         gamma = 5.0 / 3.0
         m_h = 1.6735575e-24
         k_b = 1.380649e-16
         rho = np.array([1.0e-24, 2.0e-24, 3.0e-24])
         temperature = np.array([4000.0, 8000.0, 12000.0])
         expected_xe = np.array([0.0, 0.25, 1.0])
-        inverse_mu = (1.0 + expected_xe) * X + Y / 4.0
+        inverse_mu = X + Y / 4.0 + X * expected_xe
         e_int = inverse_mu * rho * k_b * temperature / ((gamma - 1.0) * m_h)
 
         actual = hydrogen_ionization_fraction_from_mean_molecular_weight(
@@ -84,7 +108,7 @@ class LineRegimeTests(unittest.TestCase):
         np.testing.assert_array_equal(actual, expected)
 
     def test_total_electron_fraction_returns_unclipped_formula_result(self):
-        X, Y = 0.74, 0.26
+        X, Y = HYDROGEN_MASS_FRACTION, HELIUM_MASS_FRACTION
         gamma = 5.0 / 3.0
         m_h = 1.6735575e-24
         k_b = 1.380649e-16
@@ -103,6 +127,25 @@ class LineRegimeTests(unittest.TestCase):
         )
 
         np.testing.assert_allclose(actual, expected_xe, rtol=1e-13, atol=1e-13)
+
+    def test_metal_nucleus_term_is_omitted_from_eos_inversion(self):
+        X, Y = 0.70, 0.28
+        inverse_mu_without_electrons = X + Y / 4.0
+        e_int = np.array([
+            inverse_mu_without_electrons / (5.0 / 3.0 - 1.0)
+        ])
+
+        actual = electron_fraction_from_mean_molecular_weight(
+            e_int,
+            np.array([1.0]),
+            np.array([1.0]),
+            hydrogen_mass_g=1.0,
+            boltzmann_erg_K=1.0,
+            X=X,
+            Y=Y,
+        )
+
+        np.testing.assert_allclose(actual, [0.0], atol=1e-15)
 
 if __name__ == "__main__":
     unittest.main()

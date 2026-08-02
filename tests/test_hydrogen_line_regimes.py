@@ -5,6 +5,10 @@ import unittest
 import numpy as np
 import yt
 
+from quokka2s.line_regimes import (
+    HELIUM_MASS_FRACTION,
+    HYDROGEN_MASS_FRACTION,
+)
 from quokka2s.pipeline.cache import CACHED_FIELDS
 from quokka2s.pipeline.prep.physics_fields import (
     A_HI_21,
@@ -22,7 +26,12 @@ from quokka2s.pipeline.prep.physics_fields import (
     lambda_Halpha,
     m_H,
 )
-from quokka2s.pipeline.tasks.integrated_spectrum import SPECIES_CFG, spectrum_los
+from quokka2s.pipeline.tasks.integrated_spectrum import (
+    HI_COMPARISON_SPECIES_CFG,
+    SPECIES_CFG,
+    SPECTRUM_BUILD_CFG,
+    spectrum_los,
+)
 
 
 class HydrogenLineRegimeTests(unittest.TestCase):
@@ -32,7 +41,7 @@ class HydrogenLineRegimeTests(unittest.TestCase):
         rho = np.full(5, 2.0e-24)
         self.expected_xe = np.array([0.2, 0.4, 0.8, 0.8, 1.1])
 
-        X, Y = 0.74, 0.26
+        X, Y = HYDROGEN_MASS_FRACTION, HELIUM_MASS_FRACTION
         inverse_mu = X + Y / 4.0 + X * self.expected_xe
         e_int = (
             inverse_mu
@@ -99,6 +108,20 @@ class HydrogenLineRegimeTests(unittest.TestCase):
         coefficient = 0.75 * A_HI_21 * float(h.in_cgs().value) * NU_HI_21
         np.testing.assert_allclose(actual, coefficient * expected_n_HI)
 
+        # The canonical emissivity is exactly cold DESPOTIC plus hot QUOKKA;
+        # the equality cell belongs to the hot branch so no cell is omitted.
+        despotic = _HI_luminosity_despotic(None, self.data).to_value(
+            'erg/s/cm**3'
+        )
+        quokka = _HI_luminosity_quokka(None, self.data).to_value(
+            'erg/s/cm**3'
+        )
+        T_qk = self.data[('gas', 'temperature_quokka')].to_value('K')
+        np.testing.assert_allclose(
+            actual,
+            np.where(T_qk < 3000.0, despotic, quokka),
+        )
+
     def test_legacy_hi_name_selects_two_regime_result(self):
         legacy = _HI_luminosity(None, self.data)
         two_regime = _HI_luminosity_two_regime(None, self.data)
@@ -113,18 +136,33 @@ class HydrogenLineRegimeTests(unittest.TestCase):
         )
         np.testing.assert_allclose(width_qk / width_dsp, expected_ratio)
 
-    def test_pipeline_exposes_two_explicit_hi_results(self):
+    def test_pipeline_uses_one_canonical_hybrid_hi_result(self):
         by_name = {entry['name']: entry for entry in SPECIES_CFG}
         self.assertEqual(
-            by_name['HI_DESPOTIC']['lum_field'],
+            by_name['HI']['lum_field'],
+            'HI_luminosity_two_regime',
+        )
+        self.assertEqual(
+            by_name['HI']['width_field'],
+            'HI_thermal_width_quokka',
+        )
+        self.assertEqual(spectrum_los(by_name['HI']), ('y',))
+        self.assertNotIn('HI_DESPOTIC', by_name)
+        self.assertNotIn('HI_QUOKKA', by_name)
+
+        diagnostic_by_name = {
+            entry['name']: entry for entry in HI_COMPARISON_SPECIES_CFG
+        }
+        self.assertEqual(
+            diagnostic_by_name['HI_DESPOTIC']['lum_field'],
             'HI_luminosity_despotic',
         )
         self.assertEqual(
-            by_name['HI_QUOKKA']['lum_field'],
+            diagnostic_by_name['HI_QUOKKA']['lum_field'],
             'HI_luminosity_quokka',
         )
-        self.assertEqual(spectrum_los(by_name['HI_DESPOTIC']), ('x', 'y'))
-        self.assertEqual(spectrum_los(by_name['HI_QUOKKA']), ('x', 'y'))
+        build_names = {entry['name'] for entry in SPECTRUM_BUILD_CFG}
+        self.assertTrue({'HI', 'HI_DESPOTIC', 'HI_QUOKKA'} <= build_names)
         self.assertIn(('gas', 'HI_luminosity_despotic'), CACHED_FIELDS)
         self.assertIn(('gas', 'HI_luminosity_quokka'), CACHED_FIELDS)
         self.assertIn(('gas', 'HI_luminosity_two_regime'), CACHED_FIELDS)

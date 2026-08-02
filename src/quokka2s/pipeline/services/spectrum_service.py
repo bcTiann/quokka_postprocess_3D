@@ -20,13 +20,17 @@ design and it accumulated ~12 GB of species fields in memory.
 from __future__ import annotations
 
 import threading
+from collections.abc import Sequence
 from typing import Optional
 
 import numpy as np
-import astropy.constants as _const
-import astropy.units as _u
+from yt.units.yt_array import YTArray, YTQuantity
 
 from ..prep.physics_fields import build_integrated_spectrum
+from ..spectrum_units import (
+    SPEED_OF_LIGHT_CGS,
+    convert_dsigma_dnu_to_dsigma_dv,
+)
 from ..tasks.integrated_spectrum import SPECIES_CFG, N_CHANNELS, V_RANGE_KMS
 from ..utils import (
     PHASE_ORDER,
@@ -35,11 +39,36 @@ from ..utils import (
 )
 
 
-# Speed of light in cgs, derived from astropy (not hardcoded) → a float for the
-# numpy spectrum path.  The assertion catches a unit slip.
-_c_q = _const.c.to(_u.cm / _u.s)
-assert _c_q.unit == _u.cm / _u.s
-_C_CGS = float(_c_q.value)   # = 2.99792458e10 cm/s
+# Bare cgs value for the numpy channel kernel, derived from yt's unit-checked
+# physical constant in spectrum_units.py.
+_C_CGS = float(SPEED_OF_LIGHT_CGS.value)
+_SPECIES_ALIASES = {'CO': 'CO10'}
+
+
+def temperature_selection_mask(
+    temperature_K: np.ndarray,
+    operator: str,
+    cutoff_K: float,
+) -> np.ndarray:
+    """Return a temperature-selection mask.
+
+    Supported operators are ``lt``/``gt`` for strict selections and
+    ``le``/``ge`` for their exact complements. Thus ``gt`` paired with ``le``
+    (or ``lt`` paired with ``ge``) covers every cell exactly once.
+    """
+    temperature_K = np.asarray(temperature_K)
+    if operator == 'lt':
+        return temperature_K < cutoff_K
+    if operator == 'gt':
+        return temperature_K > cutoff_K
+    if operator == 'le':
+        return temperature_K <= cutoff_K
+    if operator == 'ge':
+        return temperature_K >= cutoff_K
+    raise ValueError(
+        f"unknown temperature selection operator {operator!r}; "
+        "expected 'lt', 'gt', 'le', or 'ge'"
+    )
 
 
 class SpectrumStore:
@@ -48,8 +77,13 @@ class SpectrumStore:
     # Which plane (perpendicular to the LOS) belongs to each LOS choice.
     _PLANE_FOR_LOS = {'x': 'yz', 'y': 'xz', 'z': 'xy'}
 
-    def __init__(self, provider):
+    def __init__(self, provider, species_config: Sequence[dict] | None = None):
         self.provider = provider
+
+        # Most callers use the canonical emission species.  Dedicated tasks
+        # can supply a small task-local configuration without adding their
+        # diagnostic variants to every standard spectrum/overlay figure.
+        configured_species = SPECIES_CFG if species_config is None else species_config
 
         # Lazy-loaded primitives — populated on first call that needs them.
         self._volume_3d: Optional[np.ndarray] = None              # cm^3
@@ -60,12 +94,28 @@ class SpectrumStore:
         self._species_freq0: dict[str, float] = {}                # Hz scalar (constant per species)
         self._phase_masks: dict[str, dict[str, np.ndarray]] = {}
 
-        # field-name lookups from SPECIES_CFG
-        self._lum_field = {sp['name']: sp['lum_field']   for sp in SPECIES_CFG}
-        self._width_field = {sp['name']: sp['width_field'] for sp in SPECIES_CFG}
-        self._freq_field = {sp['name']: sp['freq_field']  for sp in SPECIES_CFG}
+        # Field-name lookups from the selected species configuration.
+        self._lum_field = {
+            sp['name']: sp['lum_field'] for sp in configured_species
+        }
+        self._width_field = {
+            sp['name']: sp['width_field'] for sp in configured_species
+        }
+        self._freq_field = {
+            sp['name']: sp['freq_field'] for sp in configured_species
+        }
+        self._temperature_selection = {
+            sp['name']: (
+                sp['selection_temperature_field'],
+                sp['selection_operator'],
+                float(sp['selection_cutoff_K']),
+            )
+            for sp in configured_species
+            if 'selection_temperature_field' in sp
+        }
 
         # The actual store: (species, los, phase_label) → (v_axis, dsigma_dv_preLSF).
+        # dsigma_dv carries yt units: Lsun/pc^2/(km/s).
         self._spectra: dict[tuple[str, str, str], tuple[np.ndarray, np.ndarray]] = {}
 
         # Lock guarding the lazy-loaded primitives so that parallel callers
@@ -83,7 +133,8 @@ class SpectrumStore:
 
         Parameters
         ----------
-        species : 'CO' | 'C+' | 'H_alpha' | 'HI_DESPOTIC' | 'HI_QUOKKA'
+        species : name from the store's species configuration. Legacy ``CO``
+                  is accepted as an alias of ``CO10`` in the default config.
         los     : 'x' | 'y'
         phase   : one of the 5 ISM phase labels (CNM, UNM, WNM, WIM, HIM),
                   or ``None`` for the all-cell 'total'.
@@ -91,6 +142,8 @@ class SpectrumStore:
         """
         if los not in self._PLANE_FOR_LOS:
             raise ValueError(f"unknown LOS: {los!r}")
+        if species not in self._lum_field:
+            species = _SPECIES_ALIASES.get(species, species)
         phase_label = phase if phase is not None else 'total'
         if phase_label != 'total' and phase_label not in PHASE_ORDER:
             raise ValueError(f"unknown phase label: {phase_label!r}")
@@ -140,7 +193,13 @@ class SpectrumStore:
         n_sightlines  = {'x': ny * nz, 'y': nx * nz, 'z': nx * ny}[los]
         plane         = self._PLANE_FOR_LOS[los]
         total_area_cm = n_sightlines * self._plane_cell_area[plane]
-        dsigma_dv     = total_lum / total_area_cm
+        # build_integrated_spectrum returns dL/dnu [erg/s/Hz].  Dividing by
+        # projected source area therefore first gives dSigma_L/dnu.  Since the
+        # horizontal axis above is velocity, apply |dnu/dv| before returning.
+        spectral_luminosity = YTArray(total_lum, "erg/s/Hz")
+        projected_area = YTQuantity(total_area_cm, "cm**2")
+        dsigma_dnu = spectral_luminosity / projected_area
+        dsigma_dv = convert_dsigma_dnu_to_dsigma_dv(dsigma_dnu, nu_0)
 
         print(f'[spectrum-store] built  ({species:>8s}, los={los}, '
               f'phase={phase_label:<6s})')
@@ -170,7 +229,24 @@ class SpectrumStore:
 
             if species not in self._species_lum:
                 lum, _ = self.provider.get_slab_z(('gas', self._lum_field[species]))
-                self._species_lum[species] = np.asarray(lum.in_units('erg/s/cm**3'))
+                lum_values = np.asarray(lum.in_units('erg/s/cm**3'))
+                if species in self._temperature_selection:
+                    field, operator, cutoff_K = self._temperature_selection[species]
+                    temperature, _ = self.provider.get_slab_z(('gas', field))
+                    mask = temperature_selection_mask(
+                        np.asarray(temperature.in_units('K')),
+                        operator,
+                        cutoff_K,
+                    )
+                    if mask.shape != lum_values.shape:
+                        raise ValueError(
+                            f'temperature selection for {species!r} has shape '
+                            f'{mask.shape}, expected {lum_values.shape}'
+                        )
+                    # np.where creates a private masked luminosity array.  Do
+                    # not mutate the provider/yt cached field in place.
+                    lum_values = np.where(mask, lum_values, 0.0)
+                self._species_lum[species] = lum_values
                 width, _ = self.provider.get_slab_z(('gas', self._width_field[species]))
                 self._species_width[species] = np.asarray(width.in_units('cm/s'))
                 freq, _ = self.provider.get_slab_z(('gas', self._freq_field[species]))
@@ -179,9 +255,11 @@ class SpectrumStore:
     def _get_phase_masks(self, species: str) -> dict[str, np.ndarray]:
         """Classify phases using the temperature assigned to each result."""
         temperature_fields = {
-            'CO': 'temperature_despotic',
+            'CO10': 'temperature_despotic',
+            'CO21': 'temperature_despotic',
             'C+': 'temperature_quokka',
             'H_alpha': 'temperature_two_regime',
+            'HI': 'temperature_quokka',
             'HI_DESPOTIC': 'temperature_despotic',
             'HI_QUOKKA': 'temperature_quokka',
         }
