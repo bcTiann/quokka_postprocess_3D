@@ -53,7 +53,15 @@ import numpy as np
 # v12: T_QK>=3000 K Halpha/HI use x_H+=min(x_e,1), with no H Saha branch.
 # v13: C+ Saha uses the direct algebraic n_e and ion fractions without clips.
 # v14: replace mixed-regime HI with separate all-cell DESPOTIC and QUOKKA fields.
-CACHE_SCHEMA_VERSION = 14
+# v15: use the Cloudy X/Y/Z composition and subtract metal nuclei (Z/A_Z)
+#      in the mean-molecular-weight electron-fraction inversion.
+# v16: retain the Cloudy X/Y/Z composition but match QUOKKA's working EOS
+#      inversion, 1/mu = X + Y/4 + X*x_e, without a Z/A_Z nucleus term.
+# v17: remove the optional CHIANTI [C II] excitation branch; C+ now has one
+#      canonical DESPOTIC/Saha+LTE luminosity field.
+# v18: add the independently cached CO(2-1) DESPOTIC luminosity field.
+# v19: replace the C+ Saha/LTE branch with the HM2012 Cloudy emissivity table.
+CACHE_SCHEMA_VERSION = 19
 
 
 # ── Fields worth caching to disk ─────────────────────────────────────────────
@@ -67,11 +75,11 @@ CACHE_SCHEMA_VERSION = 14
 CACHED_FIELDS: frozenset[tuple[str, str]] = frozenset({
     ('gas', 'temperature_despotic'),
     ('gas', 'CO_luminosity'),
-    # Keep the two [C II] high-temperature models in separate files so users
-    # can switch back and forth without overwriting or recomputing either one.
-    # ('gas', 'C+_luminosity') is only a cheap runtime selector.
-    ('gas', 'C+_luminosity_lte'),
-    ('gas', 'C+_luminosity_chianti'),
+    ('gas', 'CO21_luminosity'),
+    ('gas', 'C+_luminosity'),
+    ('gas', 'C+_luminosity_despotic'),
+    ('gas', 'C+_luminosity_saha'),
+    ('gas', 'C+_luminosity_saha_cold_diagnostic'),
     ('gas', 'H_alpha_luminosity'),
     ('gas', 'HI_luminosity_two_regime'),
     ('gas', 'HI_luminosity_despotic'),
@@ -108,8 +116,10 @@ def compute_cache_key(
     try:
         from .prep import config as _cfg
         _colden_mean = getattr(_cfg, 'COLUMN_DENSITY_MEAN', 'harmonic')
+        _cloudy_cii_table = getattr(_cfg, 'CLOUDY_CII_TABLE_PATH', '')
     except Exception:
         _colden_mean = 'harmonic'
+        _cloudy_cii_table = ''
     # DVDR_FLOOR is defined in physics_fields rather than config; import lazily.
     try:
         from .prep.physics_fields import DVDR_FLOOR as _dvdr_floor
@@ -121,6 +131,8 @@ def compute_cache_key(
         f'{_file_mtime(dataset_path):.0f}',
         str(Path(despotic_table_path).resolve()),
         f'{_file_mtime(despotic_table_path):.0f}',
+        str(Path(_cloudy_cii_table).resolve()) if _cloudy_cii_table else '',
+        f'{_file_mtime(_cloudy_cii_table):.0f}' if _cloudy_cii_table else '0',
         f'downsample={int(downsample_factor)}',
         f'L_ext_kpc={float(column_extension_lateral_kpc):g}',
         f'colden_mean={_colden_mean}',
@@ -132,47 +144,11 @@ def compute_cache_key(
     return h.hexdigest()
 
 
-def cplus_model_cache_token(
-    model: str,
-    cii_table_path: str | Path | None = None,
-) -> str:
-    """Return the cache identity for the selected high-T C+ model.
-
-    The CHIANTI result depends on the separate N_u lookup, which is not the
-    DESPOTIC table already included in the base cache key. Include the lookup
-    path, nanosecond mtime, and size so rebuilding or switching that table
-    cannot silently reuse an older C+ field or task intermediate.
-    """
-    model = str(model).strip().lower()
-    if model != 'chianti':
-        return f'cplus_high_model={model}'
-    if cii_table_path is None:
-        from .prep import config as _cfg
-        cii_table_path = _cfg.CII_CHIANTI_NU_TABLE_PATH
-    path = Path(cii_table_path)
-    if path.exists():
-        stat = path.stat()
-        identity = f'{path.resolve()}:{stat.st_mtime_ns}:{stat.st_size}'
-    else:
-        identity = f'{path.resolve()}:missing'
-    return f'cplus_high_model=chianti:cii_nu={identity}'
-
-
 def field_cache_key(
     base_key: str,
     field: tuple[str, str],
-    *,
-    cplus_model: str | None = None,
-    cii_table_path: str | Path | None = None,
 ) -> str:
-    """Add field-specific physics inputs to a Level-1 base cache key."""
-    if field == ('gas', 'C+_luminosity_chianti'):
-        return base_key + ':' + cplus_model_cache_token(
-            cplus_model or 'chianti',
-            cii_table_path,
-        )
-    if field == ('gas', 'C+_luminosity_lte'):
-        return base_key + ':' + cplus_model_cache_token('lte')
+    """Return the Level-1 cache identity for a derived field."""
     return base_key
 
 
@@ -322,7 +298,14 @@ def _read_nested(group: h5py.Group) -> dict:
         if isinstance(item, h5py.Group):
             out[key] = _read_nested(item)
         else:
-            out[key] = np.asarray(item[...])
+            values = np.asarray(item[...])
+            units = item.attrs.get('units')
+            if units:
+                if isinstance(units, bytes):
+                    units = units.decode()
+                from yt.units.yt_array import YTArray
+                values = YTArray(values, str(units))
+            out[key] = values
     return out
 
 

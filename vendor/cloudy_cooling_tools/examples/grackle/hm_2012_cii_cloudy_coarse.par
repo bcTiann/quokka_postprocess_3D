@@ -1,0 +1,44 @@
+###########################################################
+############ Coarse HM2012 [C II] Cloudy grid ############
+###########################################################
+
+cloudyExe               = /Users/tianbaochen/cloudy/c17.02/source/cloudy.exe
+
+# The .dat lookup values are retained; bulky raw Cloudy input/output and
+# per-zone line files are not needed for this production prototype.
+saveCloudyOutputFiles   = 0
+exitOnCrash             = 0
+outputFilePrefix        = hm_2012_cii_cloudy_coarse
+outputDir               = /Users/tianbaochen/quokka_postprocess_3D/work/cloudy_cooling_tools_history/examples/grackle/hm_2012_cii_cloudy_coarse_output
+runStartIndex           = 1
+
+# Execute Cloudy; the two 15-point axes were dry-run verified as 225 runs.
+test                    = 0
+
+cloudyRunMode           = 4
+lineMapLine             = C  2 157.636m
+
+# Cloudy handles the T_QUOKKA >= 3000 K branch.  The upper bound is the
+# maximum temperature present in the local DESPOTIC production table.
+coolingMapTmin          = 3e3
+coolingMapTmax          = 4.349742488077094e4
+coolingMapTpoints       = 20
+coolingScaleFactor      = 1
+coolingMapUseJeansLength = 0
+
+command iterate to convergence
+command stop temperature off
+command set WeakHeatCool -20
+command no H2 molecule
+command no charge transfer
+command metals 0 log
+command element carbon abundance -3.795880
+
+# Explicit values avoid endpoint loss in CIAOLoop's floating-point loop parser.
+# log10(n_H/cm^-3), 15 points from -4 to 6.
+loop [hden] -4 -3.28571428571429 -2.57142857142857 -1.85714285714286 -1.14285714285714 -0.428571428571428 0.285714285714286 1 1.71428571428571 2.42857142857143 3.14285714285714 3.85714285714286 4.57142857142857 5.28571428571429 6
+
+# log10(N_H/cm^-2), 15 points from 15 to 24.
+loop [stop column density] 15 15.6428571428571 16.2857142857143 16.9285714285714 17.5714285714286 18.2142857142857 18.8571428571429 19.5 20.1428571428571 20.7857142857143 21.4285714285714 22.0714285714286 22.7142857142857 23.3571428571429 24
+
+loop [init "HM12_UVB/z_*.out"] 0.0000e+00

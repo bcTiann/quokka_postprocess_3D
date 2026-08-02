@@ -54,7 +54,7 @@ BUILD_PARAMS = (
     r'$\sigma_{10}=2{\times}10^{-25}\,$cm$^2$   $\beta=2.0$   $\alpha_{\rm GD}=3.2{\times}10^{-34}$'
     '\n'
     r'gas:  $\sigma_{\rm NT}=2\,$km/s   $x_{\rm He}=0.1$   ($x_{o\rm H2},x_{p\rm H2}$ init $=0.1,0.4$)   '
-    r'$X_{\rm H}=0.74$   $A_V/N_{\rm H}=4{\times}10^{-22}\,$mag cm$^2$'
+    rf'$X_{{\rm H}}={cfg.X_H:.5f}$   $A_V/N_{{\rm H}}=4{{\times}}10^{{-22}}\,$mag cm$^2$'
 )
 
 

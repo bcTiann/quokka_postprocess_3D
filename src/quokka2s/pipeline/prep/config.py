@@ -4,6 +4,13 @@ from pathlib import Path
 from matplotlib.colors import LogNorm
 from yt.units import K, mp, kb, mh, planck_constant, cm, m, s, g, erg
 
+from quokka2s.line_regimes import (
+    HELIUM_MASS_FRACTION,
+    HYDROGEN_MASS_FRACTION,
+    MEAN_METAL_ATOMIC_WEIGHT,
+    METAL_MASS_FRACTION,
+)
+
 # Dataset-level block-mean downsampling applied at load time.  1 = no
 # downsample (full native resolution).  2 = each axis ÷2 (volume ÷8); useful
 # when the native dataset is too large to fit derived-field intermediates
@@ -33,7 +40,32 @@ YT_DATASET_PATH = os.environ.get(
 # temporary alternate table is intentionally needed.
 DESPOTIC_TABLE_PATH = os.environ.get(
     "DESPOTIC_TABLE",
-    str(_PROJECT_ROOT / "output_tables_3D_GOW_LVG" / "despotic_table_clean.npz"),
+    str(_PROJECT_ROOT / "output_tables_3D_GOW_LVG" / "despotic_table_co10_co21_clean.npz"),
+)
+# HM2012 z=0 shielded Cloudy 17.02 [C II] production table. It stores
+# epsilon_CII/n_H^2 on (n_H, N_H, T_QUOKKA). Unused failed Cloudy nodes remain
+# explicitly unavailable; the lookup raises if a query touches one.
+CLOUDY_CII_TABLE_PATH = os.environ.get(
+    "CLOUDY_CII_TABLE",
+    str(_PROJECT_ROOT / "data" / "cloudy_cii_hm2012_z0_full.npz"),
+)
+# Sparse 10--3000 K Cloudy table used only for the cold-model diagnostic.
+# It is deliberately separate from CLOUDY_CII_TABLE_PATH so this comparison
+# cannot change the production DESPOTIC-cold/Cloudy-hot emissivity field.
+CLOUDY_CII_LOWT_DIAGNOSTIC_TABLE_PATH = os.environ.get(
+    "CLOUDY_CII_LOWT_DIAGNOSTIC_TABLE",
+    str(_PROJECT_ROOT / "data" / "cloudy_cii_hm2012_z0_lowT_sparse_diagnostic.npz"),
+)
+# Sparse HM2012 z=0 Cloudy H-alpha diagnostic tables.  These are kept as two
+# files because the 3000 K split is also the comparison boundary used by the
+# pipeline task.
+CLOUDY_HALPHA_LOWT_TABLE_PATH = os.environ.get(
+    "CLOUDY_HALPHA_LOWT_TABLE",
+    str(_PROJECT_ROOT / "data" / "cloudy_halpha_hm2012_z0_lowT_sparse.npz"),
+)
+CLOUDY_HALPHA_HIGH_TABLE_PATH = os.environ.get(
+    "CLOUDY_HALPHA_HIGH_TABLE",
+    str(_PROJECT_ROOT / "data" / "cloudy_halpha_hm2012_z0_highT_sparse.npz"),
 )
 _DATASET_BASENAME = os.path.basename(YT_DATASET_PATH)
 # Output root for all figures + task_intermediates.  On a cluster point this at
@@ -47,22 +79,14 @@ _OUTPUT_ROOT = os.environ.get("QUOKKA_OUTPUT_ROOT", str(_PROJECT_ROOT / "output"
 # Hot-gas line physics is handled per species in physics_fields; the DESPOTIC
 # table supplies the self-consistent cold/warm GOW chemistry branch.
 
-X_H = 0.74  # Mass fraction of Hydrogen
-Y_HE = 0.26  # Mass fraction of helium (used by high-T CIE charge neutrality)
+# Cloudy composition used consistently by n_H, the mu -> x_e inversion, and
+# the high-temperature H/He CIE calculation.
+X_H = HYDROGEN_MASS_FRACTION
+Y_HE = HELIUM_MASS_FRACTION
+Z_METALS = METAL_MASS_FRACTION
+MEAN_METALS_A = MEAN_METAL_ATOMIC_WEIGHT
 A_C = 1.6e-4  # gas-phase carbon abundance per H nucleus (GOW xC default; used by [C II])
 A_LAMBDA_OVER_NH = 4e-22 * cm**2  # Dust extinction cross-section (mag * cm^2 / N_H)
-
-# [C II] high-temperature excitation model.  The default preserves the legacy
-# two-level LTE result; set CPLUS_HIGH_MODEL=chianti to use the precomputed
-# CHIANTI statistical-equilibrium upper-level population for T >= 1.307e4 K.
-CPLUS_HIGH_MODEL = os.environ.get('CPLUS_HIGH_MODEL', 'lte').strip().lower()
-if CPLUS_HIGH_MODEL not in {'lte', 'chianti'}:
-    raise ValueError("CPLUS_HIGH_MODEL must be either 'lte' or 'chianti'")
-
-CII_CHIANTI_NU_TABLE_PATH = os.environ.get(
-    'CII_CHIANTI_NU_TABLE',
-    str(_PROJECT_ROOT / 'data' / 'cii_chianti_nu_cie_v3.npz'),
-)
 
 # --- Simulation Control ---
 PROJECTION_AXIS = 'x'     # Axis for projection ('x', 'y', or 'z')
@@ -106,7 +130,7 @@ OUTPUT_DIR = f"{_OUTPUT_ROOT}/{_DATASET_BASENAME}_down{DOWNSAMPLE_FACTOR}{_LEXT_
 # --- Instrument / Observational Parameters ---
 # Spectral resolving power R = λ/Δλ.  LSF FWHM (velocity) = c/R.
 # Typical values: 1e3 (low-res, Δv≈300 km/s), 1e4 (mid, Δv≈30 km/s), 1e5 (ALMA, Δv≈3 km/s).
-SPECTRAL_RESOLUTION_R = 1e6
+SPECTRAL_RESOLUTION_R = float('inf')
 # Spatial bin factor: n×n simulation cells → 1 instrument pixel (SUM reduce).
 # Default 1 = native resolution (no binning).  4 means 4×4 cells per pixel.
 SPATIAL_BIN = 4

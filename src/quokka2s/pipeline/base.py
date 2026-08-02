@@ -126,7 +126,7 @@ class AnalysisTask:
             return None
         if cfg.despotic_table_path is None:
             return None
-        from .cache import compute_cache_key, cplus_model_cache_token
+        from .cache import compute_cache_key
         # L2 key = L1 key + task identity (class + init args).
         base_key = compute_cache_key(
             dataset_path        = cfg.dataset_path,
@@ -134,12 +134,7 @@ class AnalysisTask:
             downsample_factor   = cfg.downsample_factor,
             column_extension_lateral_kpc = cfg.column_extension_lateral_kpc,
         )
-        cplus_model = cfg.extra_options.get('cplus_high_model', 'lte')
-        cplus_token = cplus_model_cache_token(
-            cplus_model,
-            cfg.extra_options.get('cii_chianti_nu_table_path'),
-        )
-        return base_key + f':{cplus_token}:' + self._cache_filename()
+        return base_key + ':' + self._cache_filename()
 
     def _save_results(self, context: PipelinePlotContext, results: Dict[str, Any]) -> None:
         key = self._l2_cache_key(context)

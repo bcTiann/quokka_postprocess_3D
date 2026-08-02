@@ -4,11 +4,12 @@ Post-processing for [QUOKKA](https://github.com/quokka-astro/quokka) radiation-M
 snapshots: turns a simulation `plt*` output into **synthetic line emission and
 multi-phase ISM diagnostics**, so simulations can be compared against real
 observations. Line emissivities use a pre-built [DESPOTIC](https://despotic.readthedocs.io)
-chemistry/cooling table plus CHIANTI atomic data (via `fiasco`).
+chemistry/cooling table plus an HM2012 shielded Cloudy [C II] table.
 
 ### What it produces
 
-- **Synthetic line emission** — CO J=1–0, [C II] 158 µm, Hα, and H I 21 cm:
+- **Synthetic line emission** — CO J=1–0 and J=2–1, [C II] 158 µm, Hα,
+  and H I 21 cm:
   spatially integrated 1D spectra (intrinsic + instrument-convolved) and
   phase/line-profile overlays for all three lines of sight.
 - **Multi-phase ISM diagnostics** — mass- and luminosity-weighted histograms over
@@ -46,12 +47,11 @@ tested end-to-end in a clean clone on 2026-06-30 with Python 3.11.15.
 
 - **`conda`/`mamba`** and a **C compiler** (yt builds Cython extensions from source —
   on macOS install the Xcode Command Line Tools, on Linux `gcc`).
-- **At least 20 GB free disk** for the 8 GB snapshot, roughly 6 GB of
-  full-resolution (`down=1`) field caches, figures/task results, and the
-  **~2.3 GB** CHIANTI atomic database (step 3).
+- **At least 18 GB free disk** for the 8 GB snapshot, roughly 6 GB of
+  full-resolution (`down=1`) field caches, figures, and task results.
 - From the author: the dataset directory (e.g. `plt0655228/`) and the prebuilt
-  table `output_tables_3D_GOW_LVG/despotic_table.npz`. **You do not rebuild the
-  table** — place both inputs as shown in step 4.
+  table `output_tables_3D_GOW_LVG/despotic_table_co10_co21_clean.npz`.
+  **You do not rebuild the table** — place both inputs as shown in step 4.
 
 ## 1. Create the environment
 
@@ -70,7 +70,7 @@ the stable yt release tested during this project had only a partial reader:
 git clone https://github.com/bcTiann/quokka_postprocess_3D.git
 cd quokka_postprocess_3D
 
-pip install -r requirements.txt      # yt-from-git + numpy/scipy/astropy/h5py/fiasco/…
+pip install -r requirements.txt      # yt-from-git + numpy/scipy/astropy/h5py/…
 pip install -e .                      # the quokka2s package itself
 ```
 
@@ -85,27 +85,20 @@ Verify the install:
 python -c "import quokka2s, yt; print('yt', yt.__version__); print('quokka2s', quokka2s.__file__)"
 ```
 
-## 3. CHIANTI atomic database (automatic — nothing extra to install)
+## 3. Build the runtime Cloudy [C II] table
 
-The [C II] 158 µm emissivity uses CHIANTI atomic data through `fiasco`. The `fiasco`
-*package* was already installed in step 2, but the CHIANTI **database** itself is a
-~2.3 GB science dataset, not a pip package — so it can't live in `requirements.txt`.
-`fiasco` fetches and builds it into `~/.fiasco/` the **first time it's used**, which
-happens automatically on your first pipeline run. There is no separate install step.
-
-It only downloads once and is shared across all conda environments (it lives in your
-home directory). If you'd rather pull it now than have it happen mid-run, trigger it:
+The Cloudy 17.02 HM2012 runs are converted once into the compact runtime table.
+The 42 failed cells are filled linearly in
+`log10(T)–log10(epsilon_CII/n_H²)` while their original mask is retained:
 
 ```bash
-python -c "import astropy.units as u; import fiasco; print(fiasco.Ion('C 2', 1e4*u.K))"   # accept the download prompt
+PYTHONPATH=src python scripts/build_cloudy_cii_table.py
 ```
 
-The temperature must carry an Astropy unit; `fiasco` 0.6 rejects unitless lists
-such as `[1e4]` before it checks or downloads the database.
+This writes `data/cloudy_cii_hm2012_z0_coarse.npz`. Override its runtime path
+with `CLOUDY_CII_TABLE=/absolute/path/to/table.npz` when needed.
 
-This work used **CHIANTI 10.1**; if `fiasco` offers a choice, pick 10.1 to match.
-
-## 4. Put the snapshot and DESPOTIC table in place
+## 4. Put the snapshot and lookup tables in place
 
 Do this **before** running `MODE=compute`. The runner derives the repository root
 from its own location, so the standard local setup does not require editing
@@ -117,7 +110,9 @@ quokka_postprocess_3D/
 │   ├── metadata.yaml
 │   └── ...
 ├── output_tables_3D_GOW_LVG/
-│   └── despotic_table.npz              # precomputed 3D GOW/LVG lookup table
+│   └── despotic_table_co10_co21_clean.npz  # precomputed 3D GOW/LVG lookup table
+├── data/
+│   └── cloudy_cii_hm2012_z0_coarse.npz      # HM2012 Cloudy [C II] lookup table
 ├── scripts/
 └── src/
 ```
@@ -129,7 +124,7 @@ them from local storage, for example:
 cd ~/quokka_postprocess_3D
 cp -a /path/to/plt0655228 ./
 mkdir -p output_tables_3D_GOW_LVG
-cp /path/to/despotic_table.npz output_tables_3D_GOW_LVG/
+cp /path/to/despotic_table_co10_co21_clean.npz output_tables_3D_GOW_LVG/
 ```
 
 For a large snapshot, a symlink is also valid:
@@ -138,23 +133,38 @@ For a large snapshot, a symlink is also valid:
 ln -s /absolute/path/to/plt0655228 ./plt0655228
 ```
 
-To rebuild the canonical table, install the table extra and run the single
-GOW/LVG builder. The production grid and physics are fixed; only output path,
-worker count, and overwrite permission are configurable:
+To rebuild the canonical table, install the table extra, run the fixed GOW/LVG
+builder, then apply the conservative convex-hull cleaner. The production grid
+and physics are fixed; only output path, worker count, and overwrite permission
+are configurable:
 
 ```bash
 python -m pip install -e ".[tables]"
 python -m quokka2s.tables.build_table \
-  --output output_tables_3D_GOW_LVG/despotic_table.npz \
+  --output output_tables_3D_GOW_LVG/despotic_table_co10_co21.npz \
   --workers -1 --force
+python scripts/fill_table_convex_hull_only.py \
+  output_tables_3D_GOW_LVG/despotic_table_co10_co21.npz \
+  output_tables_3D_GOW_LVG/despotic_table_co10_co21_clean.npz
 ```
+
+If the older raw and clean tables are already present, add CO(2–1) without
+repeating the expensive chemistry/thermal solve:
+
+```bash
+python -m quokka2s.tables.augment_co21 --workers -1
+```
+
+This writes `despotic_table_co10_co21.npz` and
+`despotic_table_co10_co21_clean.npz`. The legacy table token `CO` remains the
+CO(1–0) compatibility name; the added token is `CO21`.
 
 Check both inputs before starting the expensive run:
 
 ```bash
 test -d plt0655228 && echo "snapshot: OK"
-test -f output_tables_3D_GOW_LVG/despotic_table.npz && echo "table: OK"
-python -c "import numpy as np; p='output_tables_3D_GOW_LVG/despotic_table.npz'; z=np.load(p, allow_pickle=True); print(p, len(z.files), 'arrays')"
+test -f output_tables_3D_GOW_LVG/despotic_table_co10_co21_clean.npz && echo "table: OK"
+python -c "import numpy as np; p='output_tables_3D_GOW_LVG/despotic_table_co10_co21_clean.npz'; z=np.load(p, allow_pickle=True); print(p, len(z.files), 'arrays')"
 ```
 
 To analyze a different plotfile stored under the repository root, pass its
@@ -162,7 +172,8 @@ directory name to the runner, for example
 `scripts/run_dataset_series.sh plt0857000`. For inputs stored elsewhere, either
 symlink them into the layout above or use the direct module with
 `YT_DATASET=/absolute/path/to/plt...` and
-`DESPOTIC_TABLE=/absolute/path/to/despotic_table.npz`.
+`DESPOTIC_TABLE=/absolute/path/to/despotic_table_co10_co21_clean.npz` and
+`CLOUDY_CII_TABLE=/absolute/path/to/cloudy_cii_hm2012_z0_coarse.npz`.
 
 ## 5. Run the pipeline
 
@@ -182,35 +193,15 @@ MODE=compute LEXT_KPC=15 scripts/run_dataset_series.sh plt0655228
 MODE=plot    LEXT_KPC=15 scripts/run_dataset_series.sh plt0655228
 ```
 
-The default `CPLUS_HIGH_MODEL=lte` uses two-level LTE excitation. Both high-T
-models now share the two-stage Saha carbon fraction
-`x_C+ = n_e / (n_e + S_C2)`. To compare only the
-`T >= 1.307e4 K` excitation treatment, run the two models with different tags
-(cold DESPOTIC and intermediate Saha+LTE remain identical):
-
-```bash
-CPLUS_HIGH_MODEL=lte RUN_TAG=cplus_high_lte \
-  MODE=compute LEXT_KPC=15 scripts/run_dataset_series.sh plt0655228
-
-CPLUS_HIGH_MODEL=chianti RUN_TAG=cplus_high_chianti \
-  MODE=compute LEXT_KPC=15 scripts/run_dataset_series.sh plt0655228
-```
-
-The model fields have independent Level-1 caches, so switching back to
-`CPLUS_HIGH_MODEL=lte` does not overwrite the CHIANTI result.  The CHIANTI
-upper-level table is stored at `data/cii_chianti_nu_cie_v3.npz`; regenerate it with
-`python scripts/build_cii_chianti_nu_table.py` when changing CHIANTI data or
-grid settings. Its axes are `log10(T)` and simulation `log10(n_H)`. At each
-grid point, CHIANTI H/He CIE fractions plus the project composition
-`X=0.74`, `Y=0.26` explicitly determine `n_e` and `n_p`; carbon's small
-contribution to `n_e` is neglected. At runtime, `A_C` and the high-temperature
-two-stage Saha fraction `x_C+ = n_e / (n_e + S_C2)` set the emitting-ion
-density. The
-level-population solve does not use fiasco's implicit proton/electron ratio.
+The canonical C+ field uses `T_QUOKKA` as its model selector: cells below
+3000 K use the DESPOTIC GOW/LVG emissivity, while cells at or above 3000 K use
+the HM2012 shielded Cloudy table at `(T_QUOKKA, n_H, N_H)`. Temperatures above
+the intentionally truncated Cloudy grid return zero. The dedicated C+ split
+task plots the cold, hot, and channel-by-channel total spectra.
 
 The CO/C+ temperature policy is species-specific throughout their spectral
-products and phase panels: CO uses each cell's `temperature_despotic`, while C+
-uses `temperature_quokka`. Their thermal-width fields and phase-histogram
+products and phase panels: both CO lines use each cell's
+`temperature_despotic`, while C+ uses `temperature_quokka`. Their thermal-width fields and phase-histogram
 temperature axes follow the same mapping; neither uses
 `temperature_two_regime`.
 
@@ -266,8 +257,7 @@ publish results based on this pipeline:
   used here from the `main` branch for the QUOKKA frontend.
 - **[DESPOTIC](https://despotic.readthedocs.io)** — chemistry/cooling and line
   luminosities (Krumholz 2014).
-- **[CHIANTI](https://www.chiantidatabase.org/)** via **[fiasco](https://fiasco.readthedocs.io)**
-  — atomic data for the [C II] 158 µm line (Dere et al. 1997; Del Zanna et al. 2021).
+- **Cloudy 17.02** — HM2012 shielded [C II] 158 µm emissivity grid.
 
 ## License
 

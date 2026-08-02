@@ -6,8 +6,9 @@ import numpy as np
 from yt.units.yt_array import YTArray
 from matplotlib.colors import LogNorm
 from scipy.ndimage import gaussian_filter1d
+from .spectrum_units import SPEED_OF_LIGHT_CGS
 
-C_KMS = 299_792.458  # speed of light [km/s]
+C_KMS = float(SPEED_OF_LIGHT_CGS.to('km/s').value)
 
 
 def apply_spectral_lsf(spec: np.ndarray, dv_per_channel_kms: float, R: float,
@@ -20,7 +21,11 @@ def apply_spectral_lsf(spec: np.ndarray, dv_per_channel_kms: float, R: float,
     """
     sigma_kms      = (C_KMS / R) / 2.355
     sigma_channels = sigma_kms / dv_per_channel_kms
-    return gaussian_filter1d(spec, sigma=sigma_channels, axis=axis, mode='nearest')
+    units = getattr(spec, 'units', None)
+    convolved = gaussian_filter1d(
+        np.asarray(spec), sigma=sigma_channels, axis=axis, mode='nearest',
+    )
+    return YTArray(convolved, units) if units is not None else convolved
 
 
 def apply_spatial_bin(cube: np.ndarray, bin_size: int) -> np.ndarray:

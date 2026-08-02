@@ -1,20 +1,22 @@
 # physics_models.py
 
+from pathlib import Path
+
 import yt
 import numpy as np
 import astropy.constants as _const_ap
-import astropy.units as _u_ap
 from scipy.special import erf as scipy_erf
+from yt.fields.field_detector import FieldDetector
 from yt.units import K, mp, kb, mh, planck_constant, cm, m, s, g, erg, amu, kpc
 from ...analysis import along_sight_cumulation
-from ...cii_chianti_lookup import CiiUpperFractionLookup
 from . import config as cfg
 from ...tables import load_table
 from ...tables.lookup import TableLookup
+from ...cloudy_cii_lookup import CloudyCIILookup
+from ...saha_cii import legacy_saha_lte_emissivity
 from ...line_regimes import (
     electron_fraction_from_mean_molecular_weight,
     emitter_temperature_field_name,
-    temperature_regime_masks,
 )
 
 
@@ -23,10 +25,11 @@ m_H = mh.in_cgs()
 lambda_Halpha = 656.3e-7 * cm
 h = planck_constant
 c = float(_const_ap.c.to('cm/s').value) * (cm / s)   # speed of light from astropy (not hardcoded)
-# eV → K conversion (= e / k_B), derived from astropy (was the hardcoded 11604.518)
-_EV_TO_K = float((1.0 * _u_ap.eV / _const_ap.k_B).to('K').value)
 TABLE_LOOKUP_CACHE: TableLookup | None = None
-CII_UPPER_FRACTION_LOOKUP_CACHE: CiiUpperFractionLookup | None = None
+CLOUDY_CII_LOOKUP_CACHE: CloudyCIILookup | None = None
+CLOUDY_CII_LOWT_LOOKUP_CACHE: CloudyCIILookup | None = None
+CLOUDY_HALPHA_LOWT_LOOKUP_CACHE: CloudyCIILookup | None = None
+CLOUDY_HALPHA_HIGH_LOOKUP_CACHE: CloudyCIILookup | None = None
 
 # Lower bound on |∇·v|/3 used as the LVG dVdr field. Cells with smaller
 # divergence are pinned to this floor — the table's dVdr axis bottoms
@@ -35,23 +38,10 @@ CII_UPPER_FRACTION_LOOKUP_CACHE: CiiUpperFractionLookup | None = None
 # (quiescent halo), measured 2026-05-09.
 DVDR_FLOOR = 1e-18
 
-# Methodology temperature boundaries, both applied to T_QUOKKA:
-#     T < 3000 K              → DESPOTIC
-#     3000 K ≤ T < 1.307e4 K → x_e from QUOKKA's mean molecular weight
-#     T ≥ 1.307e4 K          → two-stage C+/C++ Saha for carbon;
-#                                prebuilt CHIANTI CII excitation tables retain
-#                                their H/He CIE collider model
+# C+ temperature boundary, applied to T_QUOKKA:
+#     T < 3000 K  -> DESPOTIC GOW/LVG table
+#     T >= 3000 K -> HM2012 shielded Cloudy table
 T_QK_TWO_REGIME_K = 3000.0
-T_CIE_K = 1.307e4
-
-
-def _temperature_regime_masks(T_quokka_K):
-    """Return low/intermediate/high masks using the two constants above."""
-    return temperature_regime_masks(
-        T_quokka_K,
-        T_QK_TWO_REGIME_K,
-        T_CIE_K,
-    )
 
 # ─── H atomic / line constants ──────────────────────────────────────
 # Per user rule [[no-silent-simplification]] (2026-06-20): the three
@@ -109,93 +99,6 @@ print(f"[physics_fields] H constants: "
       f"A_21={A_HI_21:.3e} s⁻¹ (Furlanetto+2006)")
 
 
-# ── CHIANTI atomic data for [C II] 158 μm hot-branch LTE  (2026-06-18) ──
-# Built ONCE at module import via fiasco/CHIANTI; per-cell evaluation in
-# _Cplus_luminosity_model uses np.interp on these grids.  Constants
-# (A_ul, ν, T_star, g_u/l, I_C) are T-independent — extracted from the
-# 158 μm transition (CHIANTI level 1 → 2 of C II, λ=157.74 μm).  See
-# memory `[[fiasco-chianti-installed]]` for install state.
-#
-# Per user-stated rule `[[no-silent-simplification]]`: if fiasco / CHIANTI
-# is missing we RAISE rather than fall back to analytic fits.
-A_C_TOTAL = cfg.A_C   # gas-phase C per H (moved to config.py; GOW xC default = 1.6e-4)
-
-
-def _build_cii_lte_atomic_tables():
-    """Import-time builder. Returns:
-        T_grid     : (n_T,) ndarray in K, log-spaced 10^2.5 .. 10^7.5
-        U_C0_grid  : (n_T,) C I   partition function
-        U_Cp_grid  : (n_T,) C II  partition function (Σ_i g_i exp(-E_i/kT))
-        U_Cpp_grid : (n_T,) C III partition function (added 2026-06-18
-                     to handle C+ → C++ at high T)
-        I_C_eV     : float, C I  → C II  ionisation potential [eV]  (≈11.26)
-        I_C2_eV    : float, C II → C III ionisation potential [eV]  (≈24.38)
-        A_ul       : float, 158 μm spontaneous-emission rate [s⁻¹]
-        nu_Hz      : float, transition frequency [Hz]
-        T_star_K   : float, ΔE/k_B of the transition [K]
-        g_l, g_u   : floats, lower/upper level statistical weights
-    """
-    import fiasco
-    import astropy.units as u
-    from astropy import constants as const_ap
-
-    T_grid_q = np.logspace(2.5, 7.5, 600) * u.K
-    T_grid   = T_grid_q.to('K').value
-
-    cii  = fiasco.Ion('C 2', T_grid_q)
-    ci   = fiasco.Ion('C 1', T_grid_q)
-    ciii = fiasco.Ion('C 3', T_grid_q)        # C++ for the 2-stage Saha
-
-    # U(T) = Σ_i g_i exp(-E_i/kT) — full CHIANTI level lists
-    beta = (1.0 / (const_ap.k_B * T_grid_q)).to('1/erg')           # (n_T,)
-    E_cii  = cii .levels.energy.to('erg').value[:, None]            # (n_lev,1)
-    E_ci   = ci  .levels.energy.to('erg').value[:, None]
-    E_ciii = ciii.levels.energy.to('erg').value[:, None]
-    g_cii  = cii .levels.weight[:, None]
-    g_ci   = ci  .levels.weight[:, None]
-    g_ciii = ciii.levels.weight[:, None]
-    exp_cii  = np.exp(-(E_cii  * beta.value[None, :]))              # (n_lev, n_T)
-    exp_ci   = np.exp(-(E_ci   * beta.value[None, :]))
-    exp_ciii = np.exp(-(E_ciii * beta.value[None, :]))
-    U_Cp_grid  = (g_cii  * exp_cii ).sum(axis=0)                    # (n_T,)
-    U_C0_grid  = (g_ci   * exp_ci  ).sum(axis=0)
-    U_Cpp_grid = (g_ciii * exp_ciii).sum(axis=0)
-
-    # Ionisation potentials — T-independent
-    I_C_eV  = float(np.atleast_1d(fiasco.Ion('C 1', np.array([8000.0])*u.K)
-                    .ionization_potential.to(u.eV).value)[0])       # ≈ 11.26
-    I_C2_eV = float(np.atleast_1d(fiasco.Ion('C 2', np.array([8000.0])*u.K)
-                    .ionization_potential.to(u.eV).value)[0])       # ≈ 24.38
-
-    # 158 μm transition: CHIANTI 1-indexed levels 1 → 2 (ground 2P_{1/2} → 2P_{3/2})
-    lo = cii.transitions.lower_level
-    up = cii.transitions.upper_level
-    sel = np.where((lo == 1) & (up == 2))[0]
-    if sel.size == 0:
-        raise RuntimeError("CHIANTI C II: 158 μm transition (1→2) not found.")
-    i158 = int(sel[0])
-    A_ul     = float(cii.transitions.A[i158].to('1/s').value)
-    nu_Hz    = float((cii.transitions.delta_energy[i158] / const_ap.h).to('Hz').value)
-    T_star_K = float((cii.transitions.delta_energy[i158] / const_ap.k_B).to('K').value)
-    g_l      = float(cii.levels.weight[0])   # level 0 in numpy = CHIANTI level 1
-    g_u      = float(cii.levels.weight[1])   # level 1 in numpy = CHIANTI level 2
-
-    return (T_grid, U_C0_grid, U_Cp_grid, U_Cpp_grid,
-            I_C_eV, I_C2_eV, A_ul, nu_Hz, T_star_K, g_l, g_u)
-
-
-# Module-level cache, built at import; fail loud if CHIANTI absent.
-(_CII_T_GRID, _CII_U_C0, _CII_U_CP, _CII_U_CPP,
- _CII_I_C_EV, _CII_I_C2_EV, _CII_A_UL, _CII_NU_HZ,
- _CII_T_STAR, _CII_G_L, _CII_G_U) = _build_cii_lte_atomic_tables()
-_CII_T_C_K  = _CII_I_C_EV  * _EV_TO_K   # eV → K via k_B (astropy-derived)
-_CII_T_C2_K = _CII_I_C2_EV * _EV_TO_K   # C+ → C++ ionisation T scale
-print(f"[physics_fields] CHIANTI [C II] LTE tables built: "
-      f"A_ul={_CII_A_UL:.3e} s⁻¹, ν={_CII_NU_HZ:.3e} Hz, "
-      f"T*={_CII_T_STAR:.3f} K, g_l={_CII_G_L:.0f}, g_u={_CII_G_U:.0f}, "
-      f"I_C={_CII_I_C_EV:.4f} eV, I_C2={_CII_I_C2_EV:.4f} eV")
-
-
 def _temperature_two_regime(field, data):
     """Two-regime per-cell temperature retained for H lines and diagnostics.
 
@@ -225,6 +128,52 @@ def ensure_table_lookup(path: str | None) -> TableLookup:
         table = load_table(path or cfg.DESPOTIC_TABLE_PATH)
         TABLE_LOOKUP_CACHE = TableLookup(table)
     return TABLE_LOOKUP_CACHE
+
+
+def ensure_cloudy_cii_lookup(path: str | None = None) -> CloudyCIILookup:
+    global CLOUDY_CII_LOOKUP_CACHE
+    requested = path or cfg.CLOUDY_CII_TABLE_PATH
+    if (
+        CLOUDY_CII_LOOKUP_CACHE is None
+        or CLOUDY_CII_LOOKUP_CACHE.path != Path(requested)
+    ):
+        CLOUDY_CII_LOOKUP_CACHE = CloudyCIILookup(requested)
+    return CLOUDY_CII_LOOKUP_CACHE
+
+
+def ensure_cloudy_cii_lowT_lookup(path: str | None = None) -> CloudyCIILookup:
+    """Return the isolated 10--3000 K Cloudy diagnostic lookup."""
+    global CLOUDY_CII_LOWT_LOOKUP_CACHE
+    requested = path or cfg.CLOUDY_CII_LOWT_DIAGNOSTIC_TABLE_PATH
+    if (
+        CLOUDY_CII_LOWT_LOOKUP_CACHE is None
+        or CLOUDY_CII_LOWT_LOOKUP_CACHE.path != Path(requested)
+    ):
+        CLOUDY_CII_LOWT_LOOKUP_CACHE = CloudyCIILookup(requested)
+    return CLOUDY_CII_LOWT_LOOKUP_CACHE
+
+
+def ensure_cloudy_halpha_lookup(
+    branch: str,
+    path: str | None = None,
+) -> CloudyCIILookup:
+    """Return one strict sparse HM2012 H-alpha lookup table."""
+    global CLOUDY_HALPHA_LOWT_LOOKUP_CACHE, CLOUDY_HALPHA_HIGH_LOOKUP_CACHE
+    if branch == 'low':
+        requested = path or cfg.CLOUDY_HALPHA_LOWT_TABLE_PATH
+        cache = CLOUDY_HALPHA_LOWT_LOOKUP_CACHE
+        if cache is None or cache.path != Path(requested):
+            cache = CloudyCIILookup(requested)
+            CLOUDY_HALPHA_LOWT_LOOKUP_CACHE = cache
+        return cache
+    if branch == 'high':
+        requested = path or cfg.CLOUDY_HALPHA_HIGH_TABLE_PATH
+        cache = CLOUDY_HALPHA_HIGH_LOOKUP_CACHE
+        if cache is None or cache.path != Path(requested):
+            cache = CloudyCIILookup(requested)
+            CLOUDY_HALPHA_HIGH_LOOKUP_CACHE = cache
+        return cache
+    raise ValueError(f"unknown Cloudy H-alpha branch: {branch!r}")
 
 
 def _number_density_H(field, data):
@@ -556,6 +505,17 @@ def build_integrated_spectrum(
     if cell_chunk <= 0:
         raise ValueError('cell_chunk must be positive')
 
+    # Temperature/model selections often leave almost the entire cube at
+    # exactly zero luminosity.  Those cells contribute identically zero to
+    # every channel, so discard them before allocating Gaussian channel
+    # kernels.  This changes neither the sum nor the treatment of finite
+    # positive/negative diagnostic luminosities.
+    emitting = luminosity != 0.0
+    if not emitting.all():
+        shifted = shifted[emitting]
+        luminosity = luminosity[emitting]
+        thermal = thermal[emitting]
+
     n_channels = len(freq_edges_hz) - 1
     integrated = np.zeros(n_channels, dtype=np.result_type(luminosity, float))
     delta_nu_bin = float(freq_edges_hz[1] - freq_edges_hz[0])
@@ -584,9 +544,10 @@ def build_integrated_spectrum(
 def _make_luminosity_field(species: str):
     """3D DESPOTIC LAMDA-table line luminosity, returned as volumetric
     emissivity (erg/s/cm³). No temperature gate is applied here.  The only
-    registered caller is CO; its table ``lumPerH`` and ``tg_final`` come from
-    the same DESPOTIC thermal/chemical solution at (n_H, N_H, dVdr), so its
-    luminosity temperature is intrinsically T_DESPOTIC.
+    registered callers are the CO(1-0) and CO(2-1) lines; their table
+    ``lumPerH`` and ``tg_final`` come from the same DESPOTIC thermal/chemical
+    solution at (n_H, N_H, dVdr), so their luminosity temperature is
+    intrinsically T_DESPOTIC.
     """
     lookup = ensure_table_lookup(cfg.DESPOTIC_TABLE_PATH)
     yt_safe_name = species.replace('+', '_plus').replace('-','_minus')
@@ -689,6 +650,38 @@ def _Halpha_luminosity(field, data):
 
     # Return as a YTArray with explicit units (matches the field declaration).
     return yt.YTArray(eps, "erg/s/cm**3")
+
+
+def _Halpha_luminosity_cloudy_branch(data, branch: str):
+    """Cloudy H-alpha emissivity for one side of the T_QUOKKA=3000 K split."""
+    T_qk = data[('gas', 'temperature_quokka')].to('K').value
+    emissivity = np.zeros_like(T_qk, dtype=float)
+    if isinstance(data, FieldDetector):
+        return yt.YTArray(emissivity, 'erg/s/cm**3')
+
+    if branch == 'low':
+        selected = T_qk < T_QK_TWO_REGIME_K
+    elif branch == 'high':
+        selected = T_qk >= T_QK_TWO_REGIME_K
+    else:
+        raise ValueError(f"unknown Cloudy H-alpha branch: {branch!r}")
+
+    if selected.any():
+        n_H = data[('gas', 'number_density_H')].to('cm**-3').value
+        colDen_H = data[('gas', 'column_density_H')].to('cm**-2').value
+        lookup = ensure_cloudy_halpha_lookup(branch)
+        emissivity[selected] = lookup.emissivity(
+            T_qk[selected], n_H[selected], colDen_H[selected],
+        )
+    return yt.YTArray(emissivity, 'erg/s/cm**3')
+
+
+def _Halpha_luminosity_cloudy_low(field, data):
+    return _Halpha_luminosity_cloudy_branch(data, 'low')
+
+
+def _Halpha_luminosity_cloudy_high(field, data):
+    return _Halpha_luminosity_cloudy_branch(data, 'high')
 
 
 def _HI_luminosity_two_regime(field, data):
@@ -799,6 +792,12 @@ def _H_atom_thermal_width(field, data):
     return sigma_v
 
 
+def _H_atom_thermal_width_quokka(field, data):
+    """Hydrogen thermal width evaluated at T_QUOKKA for the Cloudy models."""
+    T = data[('gas', 'temperature_quokka')].to('K')
+    return np.sqrt((kb * T) / (1.00794 * amu)).to('cm/s')
+
+
 def _HI_thermal_width_despotic(field, data):
     """HI thermal width using T_DESPOTIC for every cell."""
     T = data[('gas', 'temperature_despotic')].to('K')
@@ -811,89 +810,84 @@ def _HI_thermal_width_quokka(field, data):
     return np.sqrt((kb * T) / (1.00794 * amu)).to('cm/s')
 
 
-def _get_cii_upper_fraction_lookup() -> CiiUpperFractionLookup:
-    """Lazily load the CHIANTI N_u(T,n_H) table.
+def _Cplus_luminosity(field, data):
+    """Hybrid [C II] 158 micron volumetric emissivity.
 
-    LTE-only runs therefore preserve the previous startup behaviour and do
-    not require the additional lookup artifact.
+    ``T_QUOKKA < 3000 K`` uses the existing DESPOTIC GOW/LVG table at
+    ``(n_H, N_H, dVdr)``.  ``T_QUOKKA >= 3000 K`` uses the HM2012 shielded
+    Cloudy 17.02 table at ``(T_QUOKKA, n_H, N_H)``.  The Cloudy table stores
+    ``epsilon/n_H**2`` together with a mask of unavailable Cloudy nodes.
+    Failed nodes are not numerically filled: the strict lookup raises if a
+    query gives one positive interpolation weight.  Temperatures above the
+    independently verified exact-zero boundary return zero instead of being
+    clamped to the final grid value.
     """
-    global CII_UPPER_FRACTION_LOOKUP_CACHE
-    if CII_UPPER_FRACTION_LOOKUP_CACHE is None:
-        CII_UPPER_FRACTION_LOOKUP_CACHE = CiiUpperFractionLookup.from_npz(
-            cfg.CII_CHIANTI_NU_TABLE_PATH,
-            hydrogen_mass_fraction=cfg.X_H,
-            helium_mass_fraction=cfg.Y_HE,
-        )
-    return CII_UPPER_FRACTION_LOOKUP_CACHE
-
-
-def _Cplus_luminosity_model(field, data, *, high_model: str):
-    """[C II] 158 μm emissivity with a selectable high-T excitation model.
-
-    Cold (T_QUOKKA < 3000 K)
-        Replicate the legacy `_make_luminosity_field('C+')` lookup —
-        ε = n_H · lumPerH from the 3D DESPOTIC LAMDA table at
-        (n_H, N_H, dVdr).  Unchanged.
-
-    Intermediate (3000 K ≤ T_QUOKKA < 1.307e4 K) — provisional
-    Saha+LTE retained because the Methodology marks this regime "to be
-    determined":
-
-        Step 1.  Infer x_e from QUOKKA's mean molecular weight, following
-                 the shared intermediate-temperature hydrogen treatment;
-                 n_e = x_e n_H.
-
-        Step 2.  Two-stage C Saha for x_C+ — 3-state conservation (added
-                 2026-06-18 to fix the high-T x_C+ → 1 saturation bug):
-            S_C1 = 2·(2π m_e k_B T / h²)^(3/2) · (U_Cp/U_C0)  · exp(-I_C /kT)
-            S_C2 = 2·(2π m_e k_B T / h²)^(3/2) · (U_Cpp/U_Cp) · exp(-I_C2/kT)
-            r1   = S_C1 / n_e        # n_C+ / n_C0
-            r2   = S_C2 / n_e        # n_C++ / n_C+
-            x_Cp = r1 / (1 + r1 + r1·r2)        # C0 : C+ : C++ = 1 : r1 : r1·r2
-            (U_C0, U_Cp, U_Cpp from CHIANTI full level lists, NOT single
-            g_ground — see 2026-06-17 test, the difference is 3× in S_C1.
-            Low-T r2 → 0 recovers the old 2-state form r1/(1+r1).)
-
-        Step 3.  n_Cp = x_Cp · A_C · n_H,   A_C = 1.6e-4 (GOW xC default)
-
-        Step 4.  Boltzmann level pop (LTE, NOT collisional-radiative)
-            r   = (g_u/g_l) · exp(-T_star/T)          # T_star=91.21 K
-            n_u = n_Cp · r / (1 + r)
-
-        Step 5.  P = n_u · A_ul · h · ν                [erg s⁻¹ cm⁻³]
-
-    High (T_QUOKKA ≥ 1.307e4 K)
-        The electron density remains the QUOKKA mean-molecular-weight result
-        from Step 1.  Enforce n_C = n_C+ + n_C++ and use only the second Saha
-        equilibrium:
-
-            r2   = S_C2 / n_e = n_C++ / n_C+
-            x_Cp = n_C+ / n_C = 1 / (1 + r2) = n_e / (n_e + S_C2)
-
-        The emitting-ion density is n_Cp = x_Cp A_C n_H.  ``high_model`` then
-        selects either two-level LTE or the CHIANTI statistical-equilibrium
-        upper-level fraction; it does not change this Saha ion fraction.
-
-    Atomic constants A_ul, ν, T_star, g_u/l, I_C, U_Cp(T), U_C0(T) all
-    come from CHIANTI 10.1 via fiasco (see `[[fiasco-chianti-installed]]`).
-    Tables built at module import.  n_H = sim's `('gas','number_density_H')`
-    = ρ·X_H/m_H = total H nuclei (matches the per-H definition of A_C).
-    """
-    # ───────────────────── inputs (cgs values) ──────────────────────
-    T_qk    = data[('gas', 'temperature_quokka')].to('K').value
-    n_H_sim = data[('gas', 'number_density_H')].to('cm**-3').value
-
-    _, intermediate, high = _temperature_regime_masks(T_qk)
-
-    # ─────────────── COLD branch: DESPOTIC LAMDA table ──────────────
-    lookup   = ensure_table_lookup(cfg.DESPOTIC_TABLE_PATH)
+    T_qk = data[('gas', 'temperature_quokka')].to('K').value
+    n_H = data[('gas', 'number_density_H')].to('cm**-3').value
     colDen_H = data[('gas', 'column_density_H')].to('cm**-2').value
-    dVdr     = data[('gas', 'dVdr_lvg')].in_cgs().value
-    eps_cold = _table_emissivity(lookup, 'C+', n_H_sim, colDen_H, dVdr)  # erg/s/cm³
 
-    # ───── Shared analytic-branch inputs (intermediate + high) ─────
-    # Step 1: Methodology mean-molecular-weight inversion → total n_e.
-    T = T_qk
+    despotic = ensure_table_lookup(cfg.DESPOTIC_TABLE_PATH)
+    dVdr = data[('gas', 'dVdr_lvg')].in_cgs().value
+    eps_cold = _table_emissivity(
+        despotic, 'C+', n_H, colDen_H, dVdr,
+    )
+
+    cloudy = ensure_cloudy_cii_lookup(cfg.CLOUDY_CII_TABLE_PATH)
+    eps_cloudy = np.zeros_like(T_qk, dtype=float)
+    hot = T_qk >= T_QK_TWO_REGIME_K
+    # Evaluate only the Cloudy branch.  The strict full table deliberately
+    # starts at 3000 K, so cold DESPOTIC cells must not reach its lookup.
+    eps_cloudy[hot] = cloudy.emissivity(
+        T_qk[hot], n_H[hot], colDen_H[hot],
+    )
+
+    eps = np.where(~hot, eps_cold, eps_cloudy)
+    return yt.YTArray(eps, 'erg/s/cm**3')
+
+
+def _Cplus_luminosity_despotic(field, data):
+    """All-cell DESPOTIC [C II] emissivity for model diagnostics."""
+    lookup = ensure_table_lookup(cfg.DESPOTIC_TABLE_PATH)
+    n_H = data[('gas', 'number_density_H')].to('cm**-3').value
+    colDen_H = data[('gas', 'column_density_H')].to('cm**-2').value
+    dVdr = data[('gas', 'dVdr_lvg')].in_cgs().value
+    return yt.YTArray(
+        _table_emissivity(lookup, 'C+', n_H, colDen_H, dVdr),
+        'erg/s/cm**3',
+    )
+
+
+def _Cplus_luminosity_cloudy_lowT_diagnostic(field, data):
+    """Cloudy [C II] emissivity for cells with T_QUOKKA < 3000 K only.
+
+    This diagnostic does not alter the production hybrid field.  It samples
+    the sparse 10--3000 K HM2012 table at each cold cell's own
+    ``(T_QUOKKA, n_H, N_H)`` and leaves all other cells at exactly zero.
+    The strict lookup raises instead of silently clamping any cold cell that
+    lies outside the table domain.
+    """
+    T_qk = data[('gas', 'temperature_quokka')].to('K').value
+    n_H = data[('gas', 'number_density_H')].to('cm**-3').value
+    colDen_H = data[('gas', 'column_density_H')].to('cm**-2').value
+
+    emissivity = np.zeros_like(T_qk, dtype=float)
+    cold = T_qk < T_QK_TWO_REGIME_K
+    # yt calls derived fields once with synthetic values while discovering
+    # dependencies.  Those values are not physical table coordinates.
+    if isinstance(data, FieldDetector):
+        return yt.YTArray(emissivity, 'erg/s/cm**3')
+    if cold.any():
+        lookup = ensure_cloudy_cii_lowT_lookup()
+        emissivity[cold] = lookup.emissivity(
+            T_qk[cold], n_H[cold], colDen_H[cold],
+        )
+    return yt.YTArray(emissivity, 'erg/s/cm**3')
+
+
+def _Cplus_luminosity_saha(field, data):
+    """Pre-Cloudy two-stage carbon Saha + LTE diagnostic emissivity."""
+    T_qk = data[('gas', 'temperature_quokka')].to('K').value
+    n_H = data[('gas', 'number_density_H')].to('cm**-3').value
     e_int = data[('gas', 'internal_energy_density')].to('erg/cm**3').value
     rho = data[('gas', 'density')].to('g/cm**3').value
     x_e = electron_fraction_from_mean_molecular_weight(
@@ -903,85 +897,44 @@ def _Cplus_luminosity_model(field, data, *, high_model: str):
         hydrogen_mass_g=float(m_H.to('g').value),
         boltzmann_erg_K=float(kb.to('erg/K').value),
     )
-    n_e = x_e * n_H_sim                                                   # cm⁻³
-
-    # Step 2: two-stage C Saha + 3-state conservation (2026-06-18).
-    #   C0 → C+:  S_C1 = 2·(K·T)^1.5 · (U_Cp/U_C0)  · exp(-I_C  /kT)
-    #   C+ → C++: S_C2 = 2·(K·T)^1.5 · (U_Cpp/U_Cp) · exp(-I_C2 /kT)
-    # With n_e fixed by the Methodology's total electron fraction inferred
-    # from mean molecular weight (individual electron donors are unresolved),
-    # the two Saha equilibria decouple algebraically:
-    #   r1 = S_C1/n_e = n_C+ /n_C0
-    #   r2 = S_C2/n_e = n_C++/n_C+
-    #   C0 : C+ : C++ = 1 : r1 : r1·r2
-    # so  x_Cp = r1 / (1 + r1 + r1·r2).  Low-T r2 → 0 recovers the old
-    # 2-state x_Cp = r1/(1+r1) automatically.
-    U_Cp  = np.interp(T, _CII_T_GRID, _CII_U_CP)
-    U_C0  = np.interp(T, _CII_T_GRID, _CII_U_C0)
-    U_Cpp = np.interp(T, _CII_T_GRID, _CII_U_CPP)
-
-    saha_prefactor = 2.0 * np.power(K_SAHA_PREF * T, 1.5)
-    S_C1 = saha_prefactor * (U_Cp / U_C0) * np.exp(-_CII_T_C_K / T)
-    S_C2 = saha_prefactor * (U_Cpp / U_Cp) * np.exp(-_CII_T_C2_K / T)
-
-    r1 = S_C1 / n_e
-    r2 = S_C2 / n_e
-    x_Cp = r1 / (1.0 + r1 + r1 * r2)                                      # 3-state conserv.
-
-    # Step 3: n_C+
-    n_Cp = x_Cp * A_C_TOTAL * n_H_sim                                     # cm⁻³
-
-    # Step 4: Boltzmann LTE for upper-level population
-    r   = (_CII_G_U / _CII_G_L) * np.exp(-_CII_T_STAR / T)
-    n_u = n_Cp * r / (1.0 + r)
-
-    # Step 5: ε = n_u · A_ul · h · ν                                       [erg/s/cm³]
-    h_cgs  = float(h.in_cgs().value)
-    eps_hot = n_u * _CII_A_UL * h_cgs * _CII_NU_HZ
-
-    # ── High branch (T ≥ 1.307e4 K): all C is C+ or C++. ──────────
-    # The C+ <-> C++ Saha relation gives n_C++/n_C+ = S_C2/n_e.  Combining
-    # that with n_C=n_C+ + n_C++ gives x_C+=n_e/(n_e+S_C2).
-    x_Cp_high = n_e / (n_e + S_C2)
-    n_Cp_high = x_Cp_high * A_C_TOTAL * n_H_sim
-
-    if high_model == 'lte':
-        upper_fraction_high = r / (1.0 + r)
-    elif high_model == 'chianti':
-        # CHIANTI statistical-equilibrium level-2 population on a (T,n_H)
-        # table.  Its excitation colliders n_e and n_p were built explicitly
-        # from H+He CIE charge neutrality.  The carbon ion fraction above uses
-        # the Methodology's mu-derived n_e; carbon's own electrons are omitted
-        # from both electron budgets because A_C is small.
-        upper_fraction_high = _get_cii_upper_fraction_lookup()(T, n_H_sim)
-    else:
-        raise ValueError(f'Unknown C+ high-temperature model: {high_model!r}')
-
-    n_u_high = n_Cp_high * upper_fraction_high
-    eps_high = n_u_high * _CII_A_UL * h_cgs * _CII_NU_HZ
-
-    # The Methodology leaves intermediate-temperature C+ "to be determined";
-    # preserve Saha+LTE there.  At T>=1.307e4 both comparison fields use the
-    # same two-stage Saha fraction, but select either LTE or CHIANTI excitation.
-    # Nested np.where (not np.select — astropy's np.select helper mishandles an
-    # array `default` during yt field-dependency detection).
-    eps = np.where(high, eps_high, np.where(intermediate, eps_hot, eps_cold))
-    return yt.YTArray(eps, 'erg/s/cm**3')
+    emissivity = legacy_saha_lte_emissivity(
+        T_qk,
+        n_H,
+        x_e * n_H,
+        carbon_abundance_per_H=cfg.A_C,
+    )
+    return yt.YTArray(emissivity, 'erg/s/cm**3')
 
 
-def _Cplus_luminosity_lte(field, data):
-    """C+ result: DESPOTIC / three-stage Saha+LTE / two-stage Saha+LTE."""
-    return _Cplus_luminosity_model(field, data, high_model='lte')
+def _Cplus_luminosity_saha_cold_diagnostic(field, data):
+    """Legacy Saha+LTE diagnostic evaluated only below 3000 K.
 
-
-def _Cplus_luminosity_chianti(field, data):
-    """Comparison result with CHIANTI N_u(T,n_H) only in the high-T branch."""
-    return _Cplus_luminosity_model(field, data, high_model='chianti')
-
-
-def _Cplus_luminosity_selected(field, data):
-    """Cheap selector retaining the public ('gas', 'C+_luminosity') name."""
-    return data[('gas', f'C+_luminosity_{cfg.CPLUS_HIGH_MODEL}')]
+    This field exists only for the requested cold-gas model-comparison
+    spectrum.  It is not used by the production DESPOTIC/Cloudy hybrid.
+    """
+    T_qk = data[('gas', 'temperature_quokka')].to('K').value
+    n_H = data[('gas', 'number_density_H')].to('cm**-3').value
+    e_int = data[('gas', 'internal_energy_density')].to('erg/cm**3').value
+    rho = data[('gas', 'density')].to('g/cm**3').value
+    cold = T_qk < T_QK_TWO_REGIME_K
+    emissivity = np.zeros_like(T_qk, dtype=float)
+    if not cold.any():
+        return yt.YTArray(emissivity, 'erg/s/cm**3')
+    x_e = electron_fraction_from_mean_molecular_weight(
+        e_int[cold],
+        rho[cold],
+        T_qk[cold],
+        hydrogen_mass_g=float(m_H.to('g').value),
+        boltzmann_erg_K=float(kb.to('erg/K').value),
+    )
+    emissivity[cold] = legacy_saha_lte_emissivity(
+        T_qk[cold],
+        n_H[cold],
+        x_e * n_H[cold],
+        carbon_abundance_per_H=cfg.A_C,
+        minimum_temperature_K=0.0,
+    )
+    return yt.YTArray(emissivity, 'erg/s/cm**3')
 
 
 def _make_line_frequency_field(species: str):
@@ -1006,6 +959,7 @@ def _make_thermal_width_field(species: str):
     # sigma_v = sqrt(k_B * T / m_species)
     species_masses = {
         'CO': 28.01 * amu,
+        'CO21': 28.01 * amu,
         'C+': 12.01 * amu,
         'HCO+': 29.02 * amu,
     }
@@ -1116,11 +1070,12 @@ def add_all_fields(ds):
         ('e-', None),
         ('HI', 'H'),
     ]
-    # C+ luminosity is handled by the comparison fields below: both use the
-    # LAMDA table for cold cells and differ only in high-T excitation.
-    # Leave CO + HCO+ on the auto-generated _make_luminosity_field path.)
-    EMITTERS = ['CO']                              # HCO+ dropped 2026-06-23 (no longer analysed)
-    EMITTERS_FREQ_WIDTH = ['CO', 'C+']             # HCO+ dropped 2026-06-23; freq + thermal_width for CO + C+
+    # C+ luminosity uses its dedicated multi-regime field below; the cold
+    # branch still reads the LAMDA table.
+    # CO is the legacy table token for CO(1-0); CO21 is the fixed CO(2-1)
+    # token added without introducing a generic transition dimension.
+    EMITTERS = ['CO', 'CO21']
+    EMITTERS_FREQ_WIDTH = ['CO', 'CO21', 'C+']
     for sp_yt, sp_lamda in SPECIES:
         _, func = _make_number_density_field(species=sp_yt, lamda_token=sp_lamda)
         ds.add_field(
@@ -1141,29 +1096,37 @@ def add_all_fields(ds):
             force_override=True
         )
 
-    # Register only the selected comparison field.  yt executes dependency
-    # detection during add_field(), so registering the CHIANTI field in an LTE
-    # run would otherwise require/load its lookup unnecessarily.  Both names
-    # remain in CACHED_FIELDS; switching models later reuses the corresponding
-    # independently retained file.
-    cplus_model_fields = {
-        'lte': _Cplus_luminosity_lte,
-        'chianti': _Cplus_luminosity_chianti,
-    }
-    selected_cplus_name = f'C+_luminosity_{cfg.CPLUS_HIGH_MODEL}'
     ds.add_field(
-        name=('gas', selected_cplus_name),
-        function=cplus_model_fields[cfg.CPLUS_HIGH_MODEL],
+        name=('gas', 'C+_luminosity'),
+        function=_Cplus_luminosity,
         sampling_type="cell",
         units="erg/s/cm**3",
         force_override=True,
     )
-
-    # Existing tasks keep using this public name; the environment-controlled
-    # selector points them at one of the independently cached model fields.
     ds.add_field(
-        name=('gas', 'C+_luminosity'),
-        function=_Cplus_luminosity_selected,
+        name=('gas', 'C+_luminosity_despotic'),
+        function=_Cplus_luminosity_despotic,
+        sampling_type="cell",
+        units="erg/s/cm**3",
+        force_override=True,
+    )
+    ds.add_field(
+        name=('gas', 'C+_luminosity_cloudy_lowT_diagnostic'),
+        function=_Cplus_luminosity_cloudy_lowT_diagnostic,
+        sampling_type="cell",
+        units="erg/s/cm**3",
+        force_override=True,
+    )
+    ds.add_field(
+        name=('gas', 'C+_luminosity_saha'),
+        function=_Cplus_luminosity_saha,
+        sampling_type="cell",
+        units="erg/s/cm**3",
+        force_override=True,
+    )
+    ds.add_field(
+        name=('gas', 'C+_luminosity_saha_cold_diagnostic'),
+        function=_Cplus_luminosity_saha_cold_diagnostic,
         sampling_type="cell",
         units="erg/s/cm**3",
         force_override=True,
@@ -1201,11 +1164,20 @@ def add_all_fields(ds):
     ds.add_field(name=('gas', 'H_alpha_luminosity'),
                  function=_Halpha_luminosity, sampling_type="cell",
                  units="erg/s/cm**3", force_override=True)
+    ds.add_field(name=('gas', 'H_alpha_luminosity_cloudy_low'),
+                 function=_Halpha_luminosity_cloudy_low, sampling_type="cell",
+                 units="erg/s/cm**3", force_override=True)
+    ds.add_field(name=('gas', 'H_alpha_luminosity_cloudy_high'),
+                 function=_Halpha_luminosity_cloudy_high, sampling_type="cell",
+                 units="erg/s/cm**3", force_override=True)
     ds.add_field(name=('gas', 'H_alpha_freq'),
                  function=_H_alpha_freq, sampling_type="cell",
                  units="Hz", force_override=True)
     ds.add_field(name=('gas', 'H_alpha_thermal_width'),
                  function=_H_atom_thermal_width, sampling_type="cell",
+                 units="cm/s", force_override=True)
+    ds.add_field(name=('gas', 'H_alpha_thermal_width_quokka'),
+                 function=_H_atom_thermal_width_quokka, sampling_type="cell",
                  units="cm/s", force_override=True)
 
     ds.add_field(name=('gas', 'HI_luminosity_despotic'),

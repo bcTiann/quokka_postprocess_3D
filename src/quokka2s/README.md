@@ -1,7 +1,7 @@
 # quokka2s
 
 Post-processing pipeline for QUOKKA R-MHD simulation snapshots — produces
-synthetic line emission (CO, [C II] 158 μm, Hα, H I 21 cm), temperature
+synthetic line emission (CO J=1–0/J=2–1, [C II] 158 μm, Hα, H I 21 cm), temperature
 diagnostics, σ–Σ_SFR overlays, and multi-phase ISM analyses on top of a
 pre-built DESPOTIC chemistry / cooling table.
 
@@ -12,7 +12,7 @@ pre-built DESPOTIC chemistry / cooling table.
 ```bash
 # 1. Optionally override the default dataset/table paths.
 export YT_DATASET=/path/to/plt263168
-export DESPOTIC_TABLE=/path/to/despotic_table.npz
+export DESPOTIC_TABLE=/path/to/despotic_table_co10_co21_clean.npz
 
 # 2. Run the whole pipeline.
 python -m quokka2s.pipeline.tasks.run_pipeline
@@ -67,8 +67,8 @@ subsequent runs:
 <dataset_path>/intermediates/<dataset_name>/fields/
     field_gas_temperature_despotic.h5
     field_gas_CO_luminosity.h5
-    field_gas_Cplus_luminosity_lte.h5
-    field_gas_Cplus_luminosity_chianti.h5
+    field_gas_CO21_luminosity.h5
+    field_gas_Cplus_luminosity.h5
     field_gas_H_alpha_luminosity.h5
     field_gas_HI_luminosity_two_regime.h5
     field_gas_HI_luminosity_despotic.h5
@@ -143,6 +143,12 @@ to GOW, escape geometry to LVG, and runs
 ```bash
 # Build a table (slow — hours).
 python -m quokka2s.tables.build_table
+python scripts/fill_table_convex_hull_only.py \
+  output_tables_3D_GOW_LVG/despotic_table_co10_co21.npz \
+  output_tables_3D_GOW_LVG/despotic_table_co10_co21_clean.npz
+
+# Or add CO(2-1) to the existing raw/clean tables without rerunning chemistry.
+python -m quokka2s.tables.augment_co21 --workers -1
 
 # Stress-test DESPOTIC convergence on a sparse grid (minutes).
 python check_convergence_sparse.py --points 10
@@ -204,6 +210,7 @@ src/quokka2s/
 │       └── …
 └── tables/
     ├── build_table.py           — DESPOTIC table generation
+    ├── augment_co21.py          — fast CO(2–1) augmentation of an existing table
     ├── view_table.py            — heatmaps of (n_H, N_H) at several dV/dr
     ├── lookup.py                — runtime trilinear interpolation
     └── …

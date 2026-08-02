@@ -5,7 +5,7 @@ Table is now 3D (nH, NH, dVdr) — T is an output, not an input axis. We slice
 along dVdr and plot (nH, NH) heatmaps of tg_final, abundances, and lumPerH.
 
 By default plots a few evenly-spaced dVdr slices to keep the output count
-manageable. Pass --all to dump every dVdr index (35 slices × 10 fields = 350
+manageable. Pass --all to dump every dVdr index (35 slices × 11 fields = 385
 PNGs)."""
 from pathlib import Path
 import os
@@ -17,7 +17,11 @@ from . import load_table
 from .plotting import plot_table_overview
 
 
-DEFAULT_TABLE = Path(__file__).resolve().parents[3] / "output_tables_3D_GOW_LVG" / "despotic_table.npz"
+DEFAULT_TABLE = (
+    Path(__file__).resolve().parents[3]
+    / "output_tables_3D_GOW_LVG"
+    / "despotic_table_co10_co21_clean.npz"
+)
 
 
 TOKENS = [
@@ -28,6 +32,7 @@ TOKENS = [
     "species:HCO+:abundance",
     "species:e-:abundance",
     "species:CO:lumPerH",
+    "species:CO21:lumPerH",
     "species:C+:lumPerH",
     "species:C:lumPerH",
     "species:HCO+:lumPerH",

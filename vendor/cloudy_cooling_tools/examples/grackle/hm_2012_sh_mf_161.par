@@ -1,0 +1,89 @@
+###########################################################
+################ Santa Cruz Galaxy Project ################
+###########################################################
+
+###########################################################
+##################### Run parameters ######################
+
+# path to Cloudy executable
+cloudyExe               = /Users/tianbaochen/cloudy/c17.02/source/cloudy.exe
+
+# don't save raw output from Cloudy
+saveCloudyOutputFiles   = 1
+
+# exit if Cloudy crashes
+exitOnCrash             = 1
+
+# give this run a name
+outputFilePrefix        = hm_2012_sh_mf_161
+
+# output directory
+outputDir               = /Users/tianbaochen/quokka_postprocess_3D/work/cloudy_cooling_tools_history/examples/grackle/hm_2012_sh_mf_161_output
+
+
+# index of first run
+runStartIndex           = 1
+
+# this is not a test
+test                    = 0
+
+# select a run mode
+cloudyRunMode           = 1 # cooling map mode
+
+# Current Run Mode Options
+# 0: Bare Mode - just run Cloudy with no data processing
+# 1: Cooling Map Mode - create maps of heating and cooling vs. Te
+
+############################################################
+################# Cooling Map Parameters ###################
+
+# minimum temperature
+coolingMapTmin = 1e1
+
+# maximum temperature
+coolingMapTmax = 1e9
+
+# number of steps (log space)
+coolingMapTpoints = 161
+
+# linear temperature step size
+#coolingMapdT (currently redundant)
+
+# log temperature step size
+#coolingMapdLogT (currently redundant)
+
+# scale factor for cooling/heating
+# 1: n_H^2
+# 2: n_H * n_e
+coolingScaleFactor = 1
+
+coolingMapUseJeansLength = 1
+
+############################################################
+############ Commands to be executed every time ############
+
+# command stop zone 1
+
+command iterate to convergence
+
+# this command requires a temperature argument in Cloudy
+# here no, because we will run it in a loop
+# cLoop will take care of that
+# command coronal equilibrium
+
+command set WeakHeatCool -20
+
+# turn off H2 molecule
+command no H2 molecule
+
+command no charge transfer
+
+command metals 0
+file metal_free.dat
+
+#######################################################
+############# Commands to be looped over ##############
+
+loop [hden] 0
+
+loop [init "HM12_UVB/z_*.out"] 0.0000e+00
