@@ -162,7 +162,7 @@ def _payload(raw: np.ndarray) -> dict[str, np.ndarray]:
 
 
 def _common_metadata(
-    parameter_file: Path,
+    parameter_template: Path,
     *,
     charge_transfer_enabled: bool,
     cosmic_ray_rate_s: float,
@@ -200,8 +200,8 @@ def _common_metadata(
         "grains_added": np.asarray(False),
         "normalization": np.asarray("local deepest-zone emissivity / n_H^2"),
         "failed_node_policy": np.asarray("unavailable; no numerical fill"),
-        "parameter_file": np.asarray(str(parameter_file.resolve())),
-        "parameter_sha256": np.asarray(_sha256(parameter_file)),
+        "parameter_template": np.asarray(parameter_template.name),
+        "parameter_template_sha256": np.asarray(_sha256(parameter_template)),
     }
 
 
@@ -209,24 +209,36 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--stem",
-        default="hm2012_native_plus_filtered_ism_defaultabund_sixline",
+        default=(
+            "hm2012_native_plus_filtered_ism_cmb_cr_mol_ct_"
+            "defaultabund_sixline"
+        ),
     )
+    root = Path(__file__).resolve().parents[1]
+    parser.add_argument(
+        "--runtime-grackle-dir",
+        type=Path,
+        default=root / "runtime/cloudy_sixline/examples/grackle",
+    )
+    parser.add_argument("--output-dir", type=Path, default=root / "data")
     parser.add_argument("--charge-transfer-enabled", action="store_true")
     parser.add_argument("--cosmic-ray-rate-s", type=float, default=0.0)
     parser.add_argument("--cmb-redshift", type=float, default=None)
     parser.add_argument("--molecular-network-enabled", action="store_true")
     args = parser.parse_args()
-    root = Path(__file__).resolve().parents[1]
-    examples = root / "work/cloudy_cooling_tools_history/examples/grackle"
-    params = root / "vendor/cloudy_cooling_tools/examples/grackle"
-    data_dir = root / "data"
+    examples = args.runtime_grackle_dir.resolve()
+    templates = root / "vendor/cloudy_cooling_tools/examples/grackle"
+    data_dir = args.output_dir.resolve()
     stem = args.stem
     log_t = np.linspace(np.log10(T_MIN_K), np.log10(T_MAX_K), N_T)
 
     column_input = examples / f"{stem}_column_10x10x21_output"
     jeans_input = examples / f"{stem}_jeans_10x21_output"
-    column_par = params / f"{stem}_column_10x10x21.par"
-    jeans_par = params / f"{stem}_jeans_10x21.par"
+    column_template = templates / f"{stem}_column_10x10x21.par.in"
+    jeans_template = templates / f"{stem}_jeans_10x21.par.in"
+    for template in (column_template, jeans_template):
+        if not template.is_file():
+            raise FileNotFoundError(template)
     log_nh, log_column, column_raw = _load_column(column_input, log_t)
     jeans_log_nh, jeans_raw = _load_jeans(jeans_input, log_t)
     # CIAOLoop's interval syntax and explicit-value syntax can print the same
@@ -249,7 +261,7 @@ def main() -> None:
         log_T=log_t,
         **_payload(column_raw),
         **_common_metadata(
-            column_par,
+            column_template,
             charge_transfer_enabled=args.charge_transfer_enabled,
             cosmic_ray_rate_s=args.cosmic_ray_rate_s,
             cmb_redshift=args.cmb_redshift,
@@ -265,7 +277,7 @@ def main() -> None:
         log_T=log_t,
         **_payload(jeans_raw),
         **_common_metadata(
-            jeans_par,
+            jeans_template,
             charge_transfer_enabled=args.charge_transfer_enabled,
             cosmic_ray_rate_s=args.cosmic_ray_rate_s,
             cmb_redshift=args.cmb_redshift,

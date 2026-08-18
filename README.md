@@ -85,6 +85,30 @@ Verify the install:
 python -c "import quokka2s, yt; print('yt', yt.__version__); print('quokka2s', quokka2s.__file__)"
 ```
 
+### Rebuild the current six-line Cloudy tables
+
+The portable Cloudy workflow is independent of the QUOKKA snapshot pipeline.
+It requires a separately compiled Cloudy 17.02 executable. From a fresh clone:
+
+```bash
+export CLOUDY_EXE=/path/to/cloudy/c17.02/source/cloudy.exe
+
+# Fast one-point validation first
+python scripts/build_cloudy_sixline_tables.py \
+  --cloudy-exe "$CLOUDY_EXE" --smoke-only
+
+# Full column-density and Jeans-length tables
+python scripts/build_cloudy_sixline_tables.py \
+  --cloudy-exe "$CLOUDY_EXE" --workers 11 --force
+```
+
+The command uses the tracked `vendor/cloudy_cooling_tools/CIAOLoop_lines` and
+portable `.par.in` templates. Generated runtime files go to
+`runtime/cloudy_sixline/`; final NPZ tables go to `data/`. See
+[`CLOUDY_HM12_FILTERED_ISM_WORKFLOW.md`](CLOUDY_HM12_FILTERED_ISM_WORKFLOW.md)
+for the radiation field, physical settings, axes, failure policy, and exact
+artifact chain.
+
 ## 3. Build the runtime Cloudy [C II] table
 
 The Cloudy 17.02 HM2012 runs are converted once into the compact runtime table.

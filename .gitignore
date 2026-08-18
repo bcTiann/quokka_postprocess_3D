@@ -18,6 +18,7 @@ examples/
 !vendor/cloudy_cooling_tools/examples/
 !vendor/cloudy_cooling_tools/examples/grackle/
 !vendor/cloudy_cooling_tools/examples/grackle/*.par
+!vendor/cloudy_cooling_tools/examples/grackle/*.par.in
 LAMDA/             
 plt*/
 output*/
@@ -59,3 +60,7 @@ docs/
 # Generated Cloudy/CHIANTI lookup tables and failure manifests.  These are
 # rebuilt by the checked-in scripts and are not source files.
 /data/
+
+# Portable Cloudy reproduction workspace.  It contains rendered parameter
+# files, the generated incident SED, raw CIAOLoop maps, and logs.
+/runtime/
