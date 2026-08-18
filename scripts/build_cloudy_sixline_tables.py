@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Reproduce the portable six-line Cloudy tables from a fresh clone.
+"""Build the six-line Cloudy lookup tables.
 
 The only machine-specific input is a Cloudy 17.02 executable.  All generated
 SEDs, rendered CIAOLoop parameter files, raw maps, and logs are written under
@@ -223,7 +223,7 @@ def main() -> None:
     missing = [path for path in products if not path.is_file()]
     if missing:
         raise FileNotFoundError(f"expected products were not created: {missing}")
-    print("\nReproduction completed:")
+    print("\nCloudy table build completed:")
     for path in products:
         print(f"  {path}")
 

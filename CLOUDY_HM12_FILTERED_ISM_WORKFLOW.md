@@ -1,4 +1,4 @@
-# Reproducing the Cloudy six-line tables
+# Building the Cloudy six-line tables
 
 This document describes the portable workflow used to build the current
 Cloudy lookup tables. A fresh clone does not need the author's directory
@@ -35,7 +35,7 @@ renders a portable CIAOLoop parameter file, and evaluates all six lines at
 one `(n_H,N_H,T)` point:
 
 ```bash
-python scripts/reproduce_cloudy_sixline_tables.py \
+python scripts/build_cloudy_sixline_tables.py \
   --cloudy-exe "$CLOUDY_EXE" \
   --smoke-only
 ```
@@ -43,7 +43,7 @@ python scripts/reproduce_cloudy_sixline_tables.py \
 If the smoke test succeeds, build both production tables:
 
 ```bash
-python scripts/reproduce_cloudy_sixline_tables.py \
+python scripts/build_cloudy_sixline_tables.py \
   --cloudy-exe "$CLOUDY_EXE" \
   --workers 11 \
   --force
@@ -146,7 +146,7 @@ Cloudy is stopped at each explicitly tabulated `N_H`.
 
 ## 5. What the entry script does
 
-`scripts/reproduce_cloudy_sixline_tables.py` performs these steps in order:
+`scripts/build_cloudy_sixline_tables.py` performs these steps in order:
 
 1. validates the supplied Cloudy executable and vendored CIAOLoop driver;
 2. calls `scripts/build_hm12_filtered_ism_sed.py`;

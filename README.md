@@ -94,11 +94,11 @@ It requires a separately compiled Cloudy 17.02 executable. From a fresh clone:
 export CLOUDY_EXE=/path/to/cloudy/c17.02/source/cloudy.exe
 
 # Fast one-point validation first
-python scripts/reproduce_cloudy_sixline_tables.py \
+python scripts/build_cloudy_sixline_tables.py \
   --cloudy-exe "$CLOUDY_EXE" --smoke-only
 
 # Full column-density and Jeans-length tables
-python scripts/reproduce_cloudy_sixline_tables.py \
+python scripts/build_cloudy_sixline_tables.py \
   --cloudy-exe "$CLOUDY_EXE" --workers 11 --force
 ```
 
