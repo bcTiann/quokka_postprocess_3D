@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -172,22 +173,25 @@ def plot_paper_spectrum(
 
 def main() -> None:
     project_root = Path(__file__).resolve().parents[1]
-    grackle = project_root / "work/cloudy_cooling_tools_history/examples/grackle"
+    runtime_grackle = project_root / "runtime/cloudy_sixline/examples/grackle"
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--cloudy-exe",
         type=Path,
-        default=Path("/Users/tianbaochen/cloudy/c17.02/source/cloudy.exe"),
+        default=Path(os.environ["CLOUDY_EXE"]) if "CLOUDY_EXE" in os.environ else None,
+        help="Cloudy 17.02 executable (or set CLOUDY_EXE)",
     )
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=grackle / "HM12_NATIVE_ISM_NH21",
+        default=runtime_grackle / "HM12_NATIVE_ISM_NH21",
     )
     parser.add_argument("--foreground-log-nh", type=float, default=21.0)
     parser.add_argument("--leak", type=float, default=0.0)
     parser.add_argument("--include-cmb", action="store_true")
     args = parser.parse_args()
+    if args.cloudy_exe is None:
+        parser.error("--cloudy-exe is required unless CLOUDY_EXE is set")
     cloudy_exe = args.cloudy_exe.resolve()
     output_dir = args.output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -264,10 +268,9 @@ def main() -> None:
 
     sed_path = output_dir / f"z_{Z0_TOKEN}.sed"
     write_sed(sed_path, energy, combined, include_cmb=args.include_cmb)
-    relative_dir = output_dir.relative_to(grackle)
     init_path = output_dir / f"z_{Z0_TOKEN}.out"
     init_path.write_text(
-        f'table SED "{relative_dir}/{sed_path.name}"\n{fnu_command}\n'
+        f'table SED "{output_dir.name}/{sed_path.name}"\n{fnu_command}\n'
     )
 
     roundtrip_path = run_cloudy(
