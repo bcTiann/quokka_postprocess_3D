@@ -26,6 +26,7 @@ from .cplus_high_model_comparison import (
 from .cplus_low_cloudy_comparison import Build_CplusLowCloudyComparison
 from .cplus_projection_comparison import Build_CplusProjectionComparison
 from .halpha_cloudy_comparison import Build_HalphaCloudyComparison
+from .hi_cloudy_comparison import Build_HICloudyComparison
 from .phase_hist import Build_PhaseHist, Build_PhaseHistNHRho
 from .multi_field_slices import Build_MultiFieldSlices
 
@@ -45,6 +46,7 @@ from .cplus_high_model_comparison import Plot_CplusHighModelComparison
 from .cplus_low_cloudy_comparison import Plot_CplusLowCloudyComparison
 from .cplus_projection_comparison import Plot_CplusProjectionComparison
 from .halpha_cloudy_comparison import Plot_HalphaCloudyComparison
+from .hi_cloudy_comparison import Plot_HICloudyComparison
 from .cplus_cloudy_combined_plot import Plot_CplusCloudyCombinedComparison
 
 # ── Toggle-able plotting utilities (legacy lifecycle; not in the default run) ──
@@ -67,6 +69,7 @@ __all__ = [
     "Build_CplusLowCloudyComparison",
     "Build_CplusProjectionComparison",
     "Build_HalphaCloudyComparison",
+    "Build_HICloudyComparison",
     "Build_PhaseHist",
     "Build_PhaseHistNHRho",
     "Build_MultiFieldSlices",
@@ -84,6 +87,7 @@ __all__ = [
     "Plot_CplusLowCloudyComparison",
     "Plot_CplusProjectionComparison",
     "Plot_HalphaCloudyComparison",
+    "Plot_HICloudyComparison",
     "Plot_CplusCloudyCombinedComparison",
     # toggle-able utilities
     "TemperatureSlicesTask",

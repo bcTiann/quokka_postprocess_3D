@@ -43,6 +43,7 @@ from . import (
     Build_CplusLowCloudyComparison,
     Build_CplusProjectionComparison,
     Build_HalphaCloudyComparison,
+    Build_HICloudyComparison,
     Build_PhaseHist,
     Build_PhaseHistNHRho,
     Build_MultiFieldSlices,
@@ -60,6 +61,7 @@ from . import (
     Plot_CplusLowCloudyComparison,
     Plot_CplusProjectionComparison,
     Plot_HalphaCloudyComparison,
+    Plot_HICloudyComparison,
     Plot_CplusCloudyCombinedComparison,
     # toggle-able plotting utilities (commented registrations below)
     TemperatureSlicesTask,
@@ -116,6 +118,7 @@ def build_pipeline(force: bool = False) -> Pipeline:
     pipeline.register_task(Build_CplusLowCloudyComparison(pipeline_config))
     pipeline.register_task(Build_CplusProjectionComparison(pipeline_config))
     pipeline.register_task(Build_HalphaCloudyComparison(pipeline_config))
+    pipeline.register_task(Build_HICloudyComparison(pipeline_config))
     # weight_field, T_field, tag  (display symbol lives in Plot_PhaseCombined._SYMBOL)
     # Use uniform 0.2-dex bins in every phase histogram.
     phase_bin_dex = 0.2
@@ -172,6 +175,7 @@ def build_pipeline(force: bool = False) -> Pipeline:
     pipeline.register_task(Plot_CplusLowCloudyComparison(pipeline_config))
     pipeline.register_task(Plot_CplusProjectionComparison(pipeline_config))
     pipeline.register_task(Plot_HalphaCloudyComparison(pipeline_config))
+    pipeline.register_task(Plot_HICloudyComparison(pipeline_config))
     pipeline.register_task(Plot_CplusCloudyCombinedComparison(pipeline_config))
     pipeline.register_task(Plot_PhaseSpectrumOverlay(pipeline_config))                # R = ∞ (no LSF)
 

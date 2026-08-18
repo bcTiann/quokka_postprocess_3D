@@ -10,10 +10,14 @@ from yt.units.yt_array import YTArray, YTQuantity
 # numpy channel accumulator hands its result back to the unit-aware pipeline.
 DSIGMA_DNU_CGS_UNIT = "erg/s/Hz/cm**2"
 
-# Canonical stored/output unit for spectra whose horizontal axis is velocity.
-# ``Lsun`` is resolved by yt's unit registry; no solar-luminosity value is
-# hardcoded here.
-DSIGMA_DV_UNIT = "Lsun/pc**2/(km/s)"
+# Canonical stored/output units for spectra whose horizontal axis is velocity.
+# Keep the surface-brightness and velocity factors separate so plot labels can
+# retain the observational form erg s^-1 cm^-2 (km s^-1)^-1.  yt validates and
+# converts both factors; no conversion constant or final unit label is typed by
+# hand.
+SURFACE_BRIGHTNESS_UNIT = "erg/s/cm**2"
+SPECTRAL_VELOCITY_UNIT = "km/s"
+DSIGMA_DV_UNIT = f"{SURFACE_BRIGHTNESS_UNIT}/({SPECTRAL_VELOCITY_UNIT})"
 
 # The numerical spectrum kernel needs c as a bare cgs float.  Derive it from
 # yt's physical constant so the unit conversion is checked before units are
@@ -29,8 +33,7 @@ def convert_dsigma_dnu_to_dsigma_dv(
 
     ``v`` is measured in km/s, so the Jacobian is
     ``|dnu/dv| = nu_0 / c`` with ``c`` explicitly converted to km/s.  The final
-    ``.to(DSIGMA_DV_UNIT)`` both applies yt's Lsun/pc conversion and rejects any
-    dimensional inconsistency.
+    ``.to(DSIGMA_DV_UNIT)`` rejects any dimensional inconsistency.
     """
     if hasattr(dsigma_dnu_values, "units"):
         dsigma_dnu = dsigma_dnu_values.to(DSIGMA_DNU_CGS_UNIT)
@@ -49,5 +52,16 @@ def unit_latex(unit: str | bytes) -> str:
 
 
 def dsigma_dv_ylabel(unit: str | bytes = DSIGMA_DV_UNIT) -> str:
-    """Axis label containing only yt's automatic LaTeX unit."""
-    return rf"$\left[{unit_latex(unit)}\right]$"
+    """Axis label containing only unit factors rendered and validated by yt."""
+    # Validate the complete spectrum unit even though yt algebraically cancels
+    # the two seconds.  Rendering the two validated factors separately keeps
+    # the conventional observational notation used in Huang et al. (2025).
+    YTQuantity(1.0, str(unit))
+    energy = unit_latex("erg")
+    time = unit_latex("s")
+    length = unit_latex("cm")
+    velocity = unit_latex(SPECTRAL_VELOCITY_UNIT)
+    return (
+        rf"$\left[{energy}\,{time}^{{-1}}\,{length}^{{-2}}\,"
+        rf"\left({velocity}\right)^{{-1}}\right]$"
+    )

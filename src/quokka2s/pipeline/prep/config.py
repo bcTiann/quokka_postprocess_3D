@@ -67,6 +67,13 @@ CLOUDY_HALPHA_HIGH_TABLE_PATH = os.environ.get(
     "CLOUDY_HALPHA_HIGH_TABLE",
     str(_PROJECT_ROOT / "data" / "cloudy_halpha_hm2012_z0_highT_sparse.npz"),
 )
+# HM2012 z=0 Cloudy 17.02 H I 21-cm diagnostic table.  One simulation-used
+# failed Cloudy node is explicitly interpolated along log-temperature; the
+# other failed node remains unavailable because this snapshot never touches it.
+CLOUDY_HI21_TABLE_PATH = os.environ.get(
+    "CLOUDY_HI21_TABLE",
+    str(_PROJECT_ROOT / "data" / "cloudy_hi21_hm2012_z0_5x5.npz"),
+)
 _DATASET_BASENAME = os.path.basename(YT_DATASET_PATH)
 # Output root for all figures + task_intermediates.  On a cluster point this at
 # a writable mount (e.g. $SCRATCH) via QUOKKA_OUTPUT_ROOT.

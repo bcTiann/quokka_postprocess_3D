@@ -1,0 +1,33 @@
+#########################################################################
+## Jeans: native HM2012 + filtered Black/ISM + CR + charge transfer ####
+#########################################################################
+cloudyExe = /Users/tianbaochen/cloudy/c17.02/source/cloudy.exe
+saveCloudyOutputFiles = 0
+exitOnCrash = 0
+outputFilePrefix = hm2012_native_plus_filtered_ism_cr_ct_defaultabund_sixline_jeans_10x21
+outputDir = /Users/tianbaochen/quokka_postprocess_3D/work/cloudy_cooling_tools_history/examples/grackle/hm2012_native_plus_filtered_ism_cr_ct_defaultabund_sixline_jeans_10x21_output
+runStartIndex = 1
+test = 0
+cloudyRunMode = 4
+lineMapLine = C  2 157.636m
+lineMapLine = H  1 6562.81A
+lineMapLine = H  1 21.1207c
+lineMapLine = C  3 977.020A
+lineMapLine = C  3 1906.68A
+lineMapLine = C  3 1908.73A
+coolingMapTmin = 3.6
+coolingMapTmax = 1e9
+coolingMapTpoints = 21
+coolingScaleFactor = 1
+coolingMapUseJeansLength = 1
+coolingMapMaximumJeansLength = 3.086e20
+command iterate to convergence
+command stop temperature off
+command set WeakHeatCool -20
+command cosmic rays rate -16.698970
+# Keep molecular chemistry disabled. Charge transfer remains enabled because
+# no "no charge transfer" command is issued.
+command no H2 molecule
+command table SED "HM12_NATIVE_ISM_NH21/z_0.0000e+00.sed"
+command f(nu) = -22.0006176315 at 1 Ryd
+loop [hden] -4.71428571428571 -3.52380952380952 -2.33333333333333 -1.14285714285714 0.0476190476190476 1.23809523809524 2.42857142857143 3.61904761904762 4.80952380952381 6

@@ -1,0 +1,34 @@
+#########################################################################
+## Six-line column: Cloudy-native HM2012 + filtered Black/ISM ###########
+#########################################################################
+cloudyExe = /Users/tianbaochen/cloudy/c17.02/source/cloudy.exe
+saveCloudyOutputFiles = 0
+exitOnCrash = 0
+outputFilePrefix = hm2012_native_plus_filtered_ism_defaultabund_sixline_column_10x10x21
+outputDir = /Users/tianbaochen/quokka_postprocess_3D/work/cloudy_cooling_tools_history/examples/grackle/hm2012_native_plus_filtered_ism_defaultabund_sixline_column_10x10x21_output
+runStartIndex = 1
+test = 0
+cloudyRunMode = 4
+lineMapLine = C  2 157.636m
+lineMapLine = H  1 6562.81A
+lineMapLine = H  1 21.1207c
+lineMapLine = C  3 977.020A
+lineMapLine = C  3 1906.68A
+lineMapLine = C  3 1908.73A
+coolingMapTmin = 3.6
+coolingMapTmax = 1e9
+coolingMapTpoints = 21
+coolingScaleFactor = 1
+coolingMapUseJeansLength = 0
+command iterate to convergence
+command stop temperature off
+command set WeakHeatCool -20
+command no H2 molecule
+command no charge transfer
+command table SED "HM12_NATIVE_ISM_NH21/z_0.0000e+00.sed"
+command f(nu) = -22.0006176315 at 1 Ryd
+# 10 logarithmic hydrogen-density points from log10(nH)=-4.714... to 6
+loop [hden] (-4.71428571428571;6;1.19047619047619)
+
+# 10 hydrogen-column points from log10(NH)=15 to 24
+loop [stop column density] (15;24;1)

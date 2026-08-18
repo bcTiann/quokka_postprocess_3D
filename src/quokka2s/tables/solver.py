@@ -130,6 +130,7 @@ def solve_gow_lvg_point(
     col_idx: int | None = None,
     dvdr_idx: int | None = None,
     Tg_init: float = 100.0,
+    sigma_nt_cms: float = 2.0e5,
     attempt_log: list[AttemptRecord] | None = None,
 ) -> tuple[
     Mapping[str, LineLumResult],
@@ -141,7 +142,14 @@ def solve_gow_lvg_point(
     Mapping[str, float],
     bool,
 ]:
-    """Solve one ``(nH, N_H, dVdr)`` point with GOW and LVG thermal balance."""
+    """Solve one ``(nH, N_H, dVdr)`` point with GOW and LVG thermal balance.
+
+    ``sigma_nt_cms`` defaults to the canonical table value of 2 km/s.  It is
+    exposed so diagnostics can measure DESPOTIC's non-LVG uses of sigmaNT
+    without changing production behavior.
+    """
+    if sigma_nt_cms < 0.0:
+        raise ValueError("sigma_nt_cms must be non-negative")
     _configure_despotic_home()
     from despotic import cloud
     from despotic.chemistry import GOW
@@ -162,7 +170,7 @@ def solve_gow_lvg_point(
         cell.Tg = float(Tg_init)
         cell.dVdr = float(dvdr_val)
 
-        cell.sigmaNT = 2.0e5
+        cell.sigmaNT = float(sigma_nt_cms)
         cell.comp.xoH2 = 0.1
         cell.comp.xpH2 = 0.4
         cell.comp.xHe = 0.1

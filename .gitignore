@@ -55,3 +55,7 @@ docs/
 # Local Cloudy checkouts and generated runs.  The small reproducibility
 # snapshot that belongs in Git lives under vendor/cloudy_cooling_tools/.
 /work/
+
+# Generated Cloudy/CHIANTI lookup tables and failure manifests.  These are
+# rebuilt by the checked-in scripts and are not source files.
+/data/

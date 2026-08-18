@@ -17,6 +17,8 @@ from quokka2s.pipeline.cache import (
 )
 from quokka2s.pipeline.spectrum_units import (
     DSIGMA_DV_UNIT,
+    SPECTRAL_VELOCITY_UNIT,
+    SURFACE_BRIGHTNESS_UNIT,
     convert_dsigma_dnu_to_dsigma_dv,
     dsigma_dv_ylabel,
     unit_latex,
@@ -35,8 +37,11 @@ class IntegratedSpectrumTests(unittest.TestCase):
         np.testing.assert_allclose(at_2nu, 2.0 * at_nu, rtol=1.0e-15)
 
     def test_spectrum_axis_label_uses_yt_latex_unit(self):
-        latex_unit = unit_latex(DSIGMA_DV_UNIT)
-        self.assertIn(latex_unit, dsigma_dv_ylabel(DSIGMA_DV_UNIT))
+        label = dsigma_dv_ylabel(DSIGMA_DV_UNIT)
+        self.assertIn(unit_latex("erg"), label)
+        self.assertIn(unit_latex("s"), label)
+        self.assertIn(unit_latex("cm"), label)
+        self.assertIn(unit_latex(SPECTRAL_VELOCITY_UNIT), label)
 
     def test_task_cache_restores_spectrum_units(self):
         spectrum = convert_dsigma_dnu_to_dsigma_dv(np.ones(2), 1.0e9)

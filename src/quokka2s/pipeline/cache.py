@@ -61,7 +61,10 @@ import numpy as np
 #      canonical DESPOTIC/Saha+LTE luminosity field.
 # v18: add the independently cached CO(2-1) DESPOTIC luminosity field.
 # v19: replace the C+ Saha/LTE branch with the HM2012 Cloudy emissivity table.
-CACHE_SCHEMA_VERSION = 19
+# v20: use Huang et al. (2025) Eq. (1) for the effective case-B Halpha
+#      recombination coefficient and store spectra in cgs surface-brightness
+#      per velocity units.
+CACHE_SCHEMA_VERSION = 20
 
 
 # ── Fields worth caching to disk ─────────────────────────────────────────────
@@ -100,6 +103,7 @@ def compute_cache_key(
     despotic_table_path: str | Path,
     downsample_factor: int,
     column_extension_lateral_kpc: float = 0.0,
+    schema_version: int | None = None,
 ) -> str:
     """sha1 of (snapshot + table + downsample + L_ext + schema version).
 
@@ -125,6 +129,9 @@ def compute_cache_key(
         from .prep.physics_fields import DVDR_FLOOR as _dvdr_floor
     except Exception:
         _dvdr_floor = 1e-18
+    effective_schema = (
+        CACHE_SCHEMA_VERSION if schema_version is None else int(schema_version)
+    )
     h = hashlib.sha1()
     for component in (
         str(Path(dataset_path).resolve()),
@@ -137,7 +144,7 @@ def compute_cache_key(
         f'L_ext_kpc={float(column_extension_lateral_kpc):g}',
         f'colden_mean={_colden_mean}',
         f'dvdr_floor={float(_dvdr_floor):g}',
-        f'schema={CACHE_SCHEMA_VERSION}',
+        f'schema={effective_schema}',
     ):
         h.update(component.encode())
         h.update(b'\x00')
