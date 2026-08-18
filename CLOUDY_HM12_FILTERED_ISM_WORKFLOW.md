@@ -28,7 +28,7 @@ export CLOUDY_EXE=/path/to/cloudy/c17.02/source/cloudy.exe
 test -x "$CLOUDY_EXE"
 ```
 
-## 2. One-command reproduction
+## 2. Quick start
 
 First run the one-point smoke test. It builds the incident radiation field,
 renders a portable CIAOLoop parameter file, and evaluates all six lines at
@@ -72,7 +72,146 @@ runtime/cloudy_sixline/
 Both `runtime/` and `data/` are ignored by Git because they are generated
 products, not source files.
 
-## 3. Physical model
+## 3. Call structure and division of responsibility
+
+The workflow has four layers. Cloudy is called in two different places for
+two different purposes; CIAOLoop is involved only in the line-grid stage.
+
+```mermaid
+flowchart TD
+    A["build_cloudy_sixline_tables.py<br/>top-level driver"]
+    B["build_hm12_filtered_ism_sed.py<br/>construct incident SED"]
+    C["Cloudy 17.02<br/>continuum-only exports"]
+    D["custom HM12 + filtered ISM SED"]
+    E["render tracked .par.in templates<br/>into runtime .par files"]
+    F["CIAOLoop_lines<br/>expand density, column, and temperature grids"]
+    G["Cloudy 17.02<br/>one physical model per grid point"]
+    H["CIAOLoop .dat maps<br/>log10(local emissivity / n_H^2)"]
+    I["build_hm12_filtered_ism_sixline_bundles.py"]
+    J["column and Jeans NPZ tables<br/>plus failure manifest"]
+
+    A --> B --> C --> D
+    A --> E --> F
+    D --> F
+    F --> G --> H --> I --> J
+```
+
+### 3.1 Top-level builder
+
+`scripts/build_cloudy_sixline_tables.py` is the user-facing command. It does
+not calculate atomic populations itself. It validates paths, creates the
+runtime directory, calls the SED builder, renders the parameter templates,
+runs CIAOLoop, and finally calls the NPZ bundle builder.
+
+### 3.2 Incident-radiation builder calls Cloudy directly
+
+`scripts/build_hm12_filtered_ism_sed.py` calls Cloudy directly, without
+CIAOLoop, for four small continuum-only calculations:
+
+1. export `table HM12 redshift 0`;
+2. export unfiltered `table ISM` for diagnostics;
+3. export `table ISM` after `extinguish column=21 leak=0`;
+4. ask Cloudy to read and re-export the combined custom SED as a round-trip
+   verification.
+
+The dummy gas commands used for these exports (`hden -10`, fixed
+$10^4\,$K, `stop zone 1`) only allow Cloudy to complete the continuum export.
+They are not the gas conditions used in the line tables.
+
+### 3.3 CIAOLoop constructs the line-emissivity grid
+
+After the SED exists, the top-level builder invokes the vendored
+`CIAOLoop_lines`. CIAOLoop reads a rendered `.par` file and expands its loop
+commands.
+
+For the column table, each Cloudy model receives one density and one stopping
+column:
+
+```text
+hden <log10 n_H>
+stop column density <log10 N_H>
+```
+
+There are $10\times10=100$ such maps. Within each map, CIAOLoop runs Cloudy
+once at each of the 21 fixed temperatures, for 2100 column-table Cloudy
+models.
+
+For the Jeans table, each map receives one density. At every temperature,
+CIAOLoop calculates
+
+$$
+L_J=\pi\left(\frac{\gamma k_B}{Gm_H}\right)^{1/2}
+\left(\frac{T}{\rho}\right)^{1/2},
+$$
+
+using $X_H=0.76$ and $\mu=1$, caps it at 100 pc, and adds
+
+```text
+radius 1e30 <L_J in cm> linear
+```
+
+to impose that slab thickness. The Jeans grid therefore contains
+$10\times21=210$ Cloudy models.
+
+For one column-grid point, the effective Cloudy input has the following
+structure (the numerical loop values change from point to point):
+
+```text
+iterate to convergence
+stop temperature off
+set WeakHeatCool -20
+cosmic rays rate -16.698970
+
+table SED "HM12_NATIVE_ISM_NH21/z_0.0000e+00.sed"
+f(nu) = -22.0006176315 at 1 Ryd
+CMB redshift 0
+
+hden <log10 n_H>
+stop column density <log10 N_H>
+constant temperature <T in K> K linear
+
+save last lines, emissivity "<temporary line file>"
+C  2 157.636m
+H  1 6562.81A
+H  1 21.1207c
+C  3 977.020A
+C  3 1906.68A
+C  3 1908.73A
+end of lines
+punch last physical conditions file = "<temporary conditions file>"
+```
+
+The temperature is imposed rather than solved from thermal equilibrium.
+At fixed $(n_H,N_H,T)$ or $(n_H,T,L_J)$, Cloudy solves the ionization,
+chemistry, level populations, attenuation through the slab, and line
+emissivities while iterating the state to convergence.
+
+### 3.4 What CIAOLoop extracts from Cloudy
+
+Cloudy divides the slab into zones. The `save last lines, emissivity` output
+contains a local volume emissivity for every zone, in
+$\mathrm{erg\,s^{-1}\,cm^{-3}}$. The modified `CIAOLoop_lines` parser reads
+the final row, so the table value represents the local emissivity in the
+deepest (last) zone, not the luminosity integrated through the full slab.
+
+CIAOLoop also reads the hydrogen density from the last physical-conditions
+row and stores
+
+$$
+\log_{10}\left(\frac{\epsilon_{\rm line,last}}{n_{H,\rm last}^2}\right),
+$$
+
+with units of $\mathrm{erg\,s^{-1}\,cm^3}$. This produces one row per
+temperature in each CIAOLoop `.dat` map.
+
+### 3.5 Bundle builder
+
+`scripts/build_hm12_filtered_ism_sixline_bundles.py` does not call Cloudy. It
+parses the completed `.dat` maps, verifies their axes and ordering, converts
+the logarithmic coefficients to linear values, preserves failures, attaches
+metadata, and writes the two NPZ tables and JSON failure manifest.
+
+## 4. Physical model
 
 The radiation incident on the illuminated face of each Cloudy calculation is
 
@@ -115,7 +254,7 @@ Molecular chemistry and charge transfer are enabled by retaining Cloudy's
 defaults: the production inputs do not issue `no H2 molecule` or
 `no charge transfer`.
 
-## 4. Lines and table axes
+## 5. Lines and table axes
 
 All six lines are calculated in each Cloudy solution:
 
@@ -144,21 +283,7 @@ For the Jeans table, CIAOLoop computes the attenuation length from the local
 density and fixed temperature and caps it at 100 pc. For the column table,
 Cloudy is stopped at each explicitly tabulated `N_H`.
 
-## 5. What the entry script does
-
-`scripts/build_cloudy_sixline_tables.py` performs these steps in order:
-
-1. validates the supplied Cloudy executable and vendored CIAOLoop driver;
-2. calls `scripts/build_hm12_filtered_ism_sed.py`;
-3. exports native HM12 and the unfiltered and filtered Black/ISM continua;
-4. adds native HM12 and filtered ISM in linear
-   `nu * 4 pi * J_nu` units;
-5. writes and round-trip checks the custom Cloudy SED;
-6. renders machine-specific `.par` files from the tracked `.par.in` templates;
-7. runs the one-point smoke test;
-8. runs the 100-map column grid and the 10-map Jeans grid;
-9. calls `scripts/build_hm12_filtered_ism_sixline_bundles.py` to create the
-   compact NPZ tables and failure manifest.
+## 6. Source files and runtime templates
 
 The tracked templates are:
 
@@ -171,13 +296,13 @@ vendor/cloudy_cooling_tools/examples/grackle/hm2012_native_plus_filtered_ism_cmb
 Only two values are substituted into the templates:
 
 ```text
-@CLOUDY_EXE@   absolute path supplied by the reproducer
+@CLOUDY_EXE@   absolute path supplied by the builder
 @OUTPUT_DIR@   generated runtime output directory
 ```
 
-The physical commands and grid axes are not rewritten by the reproducer.
+The physical commands and grid axes are not rewritten by the builder.
 
-## 6. Incident SED construction
+## 7. Incident SED construction
 
 The builder exports the two adopted non-CMB components with Cloudy 17.02
 `save incident continuum`. On Cloudy's common energy grid it computes
@@ -211,7 +336,7 @@ The builder then asks Cloudy to export the custom SED again. This round-trip
 comparison verifies that Cloudy reads the written spectrum with the intended
 shape and absolute scale.
 
-## 7. Failure handling and validation
+## 8. Failure handling and validation
 
 A CIAOLoop value of `-99` means that Cloudy returned zero emissivity and is
 converted to an exact physical zero. A missing or crashed grid row remains
@@ -226,7 +351,7 @@ Jeans table   23 failed grid nodes
 ```
 
 The failure manifest records every failed coordinate. These counts are a
-reference, not a reason to overwrite a different result: a reproducer should
+reference, not a reason to overwrite a different result: a user should
 inspect the generated JSON and investigate if the failure pattern changes.
 
 The table files also store:
@@ -236,7 +361,7 @@ The table files also store:
 - portable parameter-template name and SHA-256 hash;
 - raw logarithmic emissivity, linear emissivity, zero mask, and failure mask.
 
-## 8. Simulation sampling is a separate validation step
+## 9. Simulation sampling is a separate validation step
 
 Generating the tables does not require a QUOKKA snapshot or a DESPOTIC table.
 Those inputs are needed only to determine whether a particular simulation
