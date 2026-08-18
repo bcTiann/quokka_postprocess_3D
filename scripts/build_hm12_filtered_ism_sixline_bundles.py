@@ -162,7 +162,7 @@ def _payload(raw: np.ndarray) -> dict[str, np.ndarray]:
 
 
 def _common_metadata(
-    parameter_template: Path,
+    parameter_file: Path,
     *,
     charge_transfer_enabled: bool,
     cosmic_ray_rate_s: float,
@@ -176,7 +176,7 @@ def _common_metadata(
     if cmb_redshift is not None:
         radiation_field += f" + CMB redshift {cmb_redshift:g}"
     return {
-        "schema_version": np.asarray(1, dtype=np.int32),
+        "schema_version": np.asarray(2, dtype=np.int32),
         "line_keys": np.asarray([item[0] for item in LINES]),
         "line_labels": np.asarray([item[1] for item in LINES]),
         "cloudy_version": np.asarray("17.02"),
@@ -200,8 +200,8 @@ def _common_metadata(
         "grains_added": np.asarray(False),
         "normalization": np.asarray("local deepest-zone emissivity / n_H^2"),
         "failed_node_policy": np.asarray("unavailable; no numerical fill"),
-        "parameter_template": np.asarray(parameter_template.name),
-        "parameter_template_sha256": np.asarray(_sha256(parameter_template)),
+        "parameter_file": np.asarray(parameter_file.name),
+        "parameter_file_sha256": np.asarray(_sha256(parameter_file)),
     }
 
 
@@ -227,18 +227,17 @@ def main() -> None:
     parser.add_argument("--molecular-network-enabled", action="store_true")
     args = parser.parse_args()
     examples = args.runtime_grackle_dir.resolve()
-    templates = root / "vendor/cloudy_cooling_tools/examples/grackle"
     data_dir = args.output_dir.resolve()
     stem = args.stem
     log_t = np.linspace(np.log10(T_MIN_K), np.log10(T_MAX_K), N_T)
 
     column_input = examples / f"{stem}_column_10x10x21_output"
     jeans_input = examples / f"{stem}_jeans_10x21_output"
-    column_template = templates / f"{stem}_column_10x10x21.par.in"
-    jeans_template = templates / f"{stem}_jeans_10x21.par.in"
-    for template in (column_template, jeans_template):
-        if not template.is_file():
-            raise FileNotFoundError(template)
+    column_parameter = examples / f"{stem}_column_10x10x21.par"
+    jeans_parameter = examples / f"{stem}_jeans_10x21.par"
+    for parameter_file in (column_parameter, jeans_parameter):
+        if not parameter_file.is_file():
+            raise FileNotFoundError(parameter_file)
     log_nh, log_column, column_raw = _load_column(column_input, log_t)
     jeans_log_nh, jeans_raw = _load_jeans(jeans_input, log_t)
     # CIAOLoop's interval syntax and explicit-value syntax can print the same
@@ -261,7 +260,7 @@ def main() -> None:
         log_T=log_t,
         **_payload(column_raw),
         **_common_metadata(
-            column_template,
+            column_parameter,
             charge_transfer_enabled=args.charge_transfer_enabled,
             cosmic_ray_rate_s=args.cosmic_ray_rate_s,
             cmb_redshift=args.cmb_redshift,
@@ -277,7 +276,7 @@ def main() -> None:
         log_T=log_t,
         **_payload(jeans_raw),
         **_common_metadata(
-            jeans_template,
+            jeans_parameter,
             charge_transfer_enabled=args.charge_transfer_enabled,
             cosmic_ray_rate_s=args.cosmic_ray_rate_s,
             cmb_redshift=args.cmb_redshift,

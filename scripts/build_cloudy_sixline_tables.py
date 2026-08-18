@@ -2,7 +2,7 @@
 """Build the six-line Cloudy lookup tables.
 
 The only machine-specific input is a Cloudy 17.02 executable.  All generated
-SEDs, rendered CIAOLoop parameter files, raw maps, and logs are written under
+SEDs, CIAOLoop parameter files, raw maps, and logs are written under
 ``runtime/cloudy_sixline`` by default.  Final compact tables are written under
 ``data``; both directories are ignored by Git.
 """
@@ -19,6 +19,14 @@ from pathlib import Path
 
 STEM = "hm2012_native_plus_filtered_ism_cmb_cr_mol_ct_defaultabund_sixline"
 GEOMETRIES = ("column_10x10x21", "jeans_10x21")
+LINES = (
+    "C  2 157.636m",
+    "H  1 6562.81A",
+    "H  1 21.1207c",
+    "C  3 977.020A",
+    "C  3 1906.68A",
+    "C  3 1908.73A",
+)
 
 
 def _require_path(path: Path, description: str) -> Path:
@@ -36,25 +44,70 @@ def _ensure_no_whitespace(path: Path, description: str) -> None:
         )
 
 
-def _render_parameter_file(
-    template: Path,
+def _write_parameter_file(
     destination: Path,
     *,
+    kind: str,
     cloudy_exe: Path,
     output_dir: Path,
 ) -> None:
-    text = template.read_text()
-    replacements = {
-        "@CLOUDY_EXE@": str(cloudy_exe),
-        "@OUTPUT_DIR@": str(output_dir),
-    }
-    for token, value in replacements.items():
-        if token not in text:
-            raise ValueError(f"missing template token {token}: {template}")
-        text = text.replace(token, value)
-    if "@CLOUDY_EXE@" in text or "@OUTPUT_DIR@" in text:
-        raise ValueError(f"unresolved template token: {template}")
-    destination.write_text(text)
+    if kind not in {"smoke", *GEOMETRIES}:
+        raise ValueError(f"unknown CIAOLoop parameter kind: {kind}")
+
+    smoke = kind == "smoke"
+    jeans = kind == "jeans_10x21"
+    title = {
+        "smoke": "Smoke",
+        "column_10x10x21": "Column",
+        "jeans_10x21": "Jeans",
+    }[kind]
+    lines = [
+        "#########################################################################",
+        f"## {title}: native HM2012 + filtered ISM + CMB + CR + molecules + CT",
+        "#########################################################################",
+        f"cloudyExe = {cloudy_exe}",
+        f"saveCloudyOutputFiles = {1 if smoke else 0}",
+        f"exitOnCrash = {1 if smoke else 0}",
+        f"outputFilePrefix = {STEM}_{kind}",
+        f"outputDir = {output_dir}",
+        "runStartIndex = 1",
+        "test = 0",
+        "cloudyRunMode = 4",
+        *(f"lineMapLine = {line}" for line in LINES),
+        f"coolingMapTmin = {'1e4' if smoke else '3.6'}",
+        f"coolingMapTmax = {'1e4' if smoke else '1e9'}",
+        f"coolingMapTpoints = {1 if smoke else 21}",
+        "coolingScaleFactor = 1",
+        f"coolingMapUseJeansLength = {1 if jeans else 0}",
+    ]
+    if jeans:
+        lines.append("coolingMapMaximumJeansLength = 3.086e20")
+    lines.extend([
+        "command iterate to convergence",
+        "command stop temperature off",
+        "command set WeakHeatCool -20",
+        "command cosmic rays rate -16.698970",
+        "# Molecular chemistry and charge transfer remain at their Cloudy defaults",
+        "# (enabled). No grains or turbulence are added in this controlled comparison.",
+        'command table SED "HM12_NATIVE_ISM_NH21/z_0.0000e+00.sed"',
+        "command f(nu) = -22.0006176315 at 1 Ryd",
+        "command CMB redshift 0",
+    ])
+    if smoke:
+        lines.extend(["loop [hden] 0", "loop [stop column density] 20"])
+    elif jeans:
+        lines.append(
+            "loop [hden] -4.71428571428571 -3.52380952380952 "
+            "-2.33333333333333 -1.14285714285714 0.0476190476190476 "
+            "1.23809523809524 2.42857142857143 3.61904761904762 "
+            "4.80952380952381 6"
+        )
+    else:
+        lines.extend([
+            "loop [hden] (-4.71428571428571;6;1.19047619047619)",
+            "loop [stop column density] (15;24;1)",
+        ])
+    destination.write_text("\n".join(lines) + "\n")
 
 
 def _run_logged(command: list[str], *, cwd: Path, log_path: Path) -> None:
@@ -124,7 +177,6 @@ def main() -> None:
     cialoop = _require_path(
         root / "vendor/cloudy_cooling_tools/CIAOLoop_lines", "CIAOLoop_lines"
     )
-    template_dir = root / "vendor/cloudy_cooling_tools/examples/grackle"
     runtime_dir = args.runtime_dir.expanduser().resolve()
     runtime_grackle = runtime_dir / "examples/grackle"
     output_dir = args.output_dir.expanduser().resolve()
@@ -166,14 +218,12 @@ def main() -> None:
     names = ["smoke"] if args.smoke_only else ["smoke", *GEOMETRIES]
     rendered: dict[str, Path] = {}
     for suffix in names:
-        template = template_dir / f"{STEM}_{suffix}.par.in"
-        _require_path(template, "CIAOLoop parameter template")
         run_output = runtime_grackle / f"{STEM}_{suffix}_output"
         _remove_or_refuse(run_output, force=args.force)
         rendered_path = runtime_grackle / f"{STEM}_{suffix}.par"
-        _render_parameter_file(
-            template,
+        _write_parameter_file(
             rendered_path,
+            kind=suffix,
             cloudy_exe=cloudy_exe,
             output_dir=run_output,
         )

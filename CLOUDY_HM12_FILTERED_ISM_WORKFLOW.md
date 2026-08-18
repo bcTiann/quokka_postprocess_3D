@@ -31,7 +31,7 @@ test -x "$CLOUDY_EXE"
 ## 2. Quick start
 
 First run the one-point smoke test. It builds the incident radiation field,
-renders a portable CIAOLoop parameter file, and evaluates all six lines at
+writes a portable CIAOLoop parameter file, and evaluates all six lines at
 one `(n_H,N_H,T)` point:
 
 ```bash
@@ -62,7 +62,7 @@ data/cloudy_hm2012_native_plus_filtered_ism_cmb_cr_mol_ct_defaultabund_sixline_j
 data/cloudy_hm2012_native_plus_filtered_ism_cmb_cr_mol_ct_defaultabund_sixline_failure_nodes.json
 ```
 
-Generated SEDs, rendered parameter files, raw CIAOLoop maps, and logs are
+Generated SEDs, CIAOLoop parameter files, raw CIAOLoop maps, and logs are
 kept under:
 
 ```text
@@ -83,7 +83,7 @@ flowchart TD
     B["build_hm12_filtered_ism_sed.py<br/>construct incident SED"]
     C["Cloudy 17.02<br/>continuum-only exports"]
     D["custom HM12 + filtered ISM SED"]
-    E["render tracked .par.in templates<br/>into runtime .par files"]
+    E["write runtime CIAOLoop .par files<br/>from the fixed configuration"]
     F["CIAOLoop_lines<br/>expand density, column, and temperature grids"]
     G["Cloudy 17.02<br/>one physical model per grid point"]
     H["CIAOLoop .dat maps<br/>log10(local emissivity / n_H^2)"]
@@ -100,7 +100,7 @@ flowchart TD
 
 `scripts/build_cloudy_sixline_tables.py` is the user-facing command. It does
 not calculate atomic populations itself. It validates paths, creates the
-runtime directory, calls the SED builder, renders the parameter templates,
+runtime directory, calls the SED builder, writes the CIAOLoop parameter files,
 runs CIAOLoop, and finally calls the NPZ bundle builder.
 
 ### 3.2 Incident-radiation builder calls Cloudy directly
@@ -283,24 +283,24 @@ For the Jeans table, CIAOLoop computes the attenuation length from the local
 density and fixed temperature and caps it at 100 pc. For the column table,
 Cloudy is stopped at each explicitly tabulated `N_H`.
 
-## 6. Source files and runtime templates
+## 6. CIAOLoop parameter files
 
-The tracked templates are:
-
-```text
-vendor/cloudy_cooling_tools/examples/grackle/hm2012_native_plus_filtered_ism_cmb_cr_mol_ct_defaultabund_sixline_smoke.par.in
-vendor/cloudy_cooling_tools/examples/grackle/hm2012_native_plus_filtered_ism_cmb_cr_mol_ct_defaultabund_sixline_column_10x10x21.par.in
-vendor/cloudy_cooling_tools/examples/grackle/hm2012_native_plus_filtered_ism_cmb_cr_mol_ct_defaultabund_sixline_jeans_10x21.par.in
-```
-
-Only two values are substituted into the templates:
+There is no separate `.par.in` template layer. The fixed line list, radiation
+commands, physical settings, and grid axes are defined in
+`scripts/build_cloudy_sixline_tables.py`. At runtime that script combines the
+fixed configuration with the two paths that are only known on the current
+machine:
 
 ```text
-@CLOUDY_EXE@   absolute path supplied by the builder
-@OUTPUT_DIR@   generated runtime output directory
+cloudyExe   Cloudy executable supplied with --cloudy-exe
+outputDir   generated output directory under runtime/cloudy_sixline
 ```
 
-The physical commands and grid axes are not rewritten by the builder.
+It writes three actual CIAOLoop input files under
+`runtime/cloudy_sixline/examples/grackle/`: one smoke test, one column-density
+grid, and one Jeans-length grid. These generated `.par` files are the exact
+files read by `CIAOLoop_lines`; the final NPZ metadata records their filenames
+and SHA256 hashes.
 
 ## 7. Incident SED construction
 

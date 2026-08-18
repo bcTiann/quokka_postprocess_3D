@@ -103,7 +103,8 @@ python scripts/build_cloudy_sixline_tables.py \
 ```
 
 The command uses the tracked `vendor/cloudy_cooling_tools/CIAOLoop_lines` and
-portable `.par.in` templates. Generated runtime files go to
+generates the required CIAOLoop `.par` files directly from the fixed scientific
+configuration in the top-level builder. Generated runtime files go to
 `runtime/cloudy_sixline/`; final NPZ tables go to `data/`. See
 [`CLOUDY_HM12_FILTERED_ISM_WORKFLOW.md`](CLOUDY_HM12_FILTERED_ISM_WORKFLOW.md)
 for the radiation field, physical settings, axes, failure policy, and exact
