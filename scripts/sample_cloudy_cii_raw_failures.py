@@ -138,13 +138,15 @@ def main() -> None:
         "all_cells": 0,
         "cloudy_branch_T_ge_3000": 0,
         "cloudy_table_sampled": 0,
-        "temperature_above_table_zero_emissivity": 0,
+        "temperature_above_table_max": 0,
         "touches_failure_node": 0,
         "nH_outside_table": 0,
         "NH_outside_table": 0,
     }
     maximum_failure_weight = 0.0
     touched_node_ids: set[int] = set()
+    touched_cells: list[dict[str, float | int]] = []
+    touched_cell_record_limit = 100
     start = time.perf_counter()
 
     with h5py.File(args.column_cache, "r") as column_file:
@@ -176,7 +178,7 @@ def main() -> None:
             counts["all_cells"] += int(temperature.size)
             counts["cloudy_branch_T_ge_3000"] += int(np.count_nonzero(cloudy_branch))
             counts["cloudy_table_sampled"] += int(np.count_nonzero(sampled))
-            counts["temperature_above_table_zero_emissivity"] += int(
+            counts["temperature_above_table_max"] += int(
                 np.count_nonzero(cloudy_branch & (temperature > args.t_max))
             )
             if not np.any(sampled):
@@ -224,6 +226,23 @@ def main() -> None:
                             touched_node_ids.update(int(value) for value in np.unique(node_ids))
             touched = failure_weight > TOUCH_EPS
             counts["touches_failure_node"] += int(np.count_nonzero(touched))
+            if np.any(touched) and len(touched_cells) < touched_cell_record_limit:
+                selected_flat = np.flatnonzero(sampled.ravel())
+                touched_selected = np.flatnonzero(touched)
+                remaining = touched_cell_record_limit - len(touched_cells)
+                for selected_index in touched_selected[:remaining]:
+                    ix, iy, local_iz = np.unravel_index(
+                        int(selected_flat[selected_index]), sampled.shape,
+                    )
+                    touched_cells.append({
+                        "i": int(ix),
+                        "j": int(iy),
+                        "k": int(iz + local_iz),
+                        "temperature_K": float(selected_temperature[selected_index]),
+                        "nH_cm-3": float(selected_nh[selected_index]),
+                        "NH_cm-2": float(selected_column[selected_index]),
+                        "failure_weight": float(failure_weight[selected_index]),
+                    })
             if failure_weight.size:
                 maximum_failure_weight = max(
                     maximum_failure_weight, float(np.max(failure_weight))
@@ -255,6 +274,10 @@ def main() -> None:
         "maximum_failure_weight": maximum_failure_weight,
         "unique_touched_failure_nodes": len(touched_nodes),
         "touched_failure_nodes": touched_nodes,
+        "touched_cell_records_are_truncated": (
+            counts["touches_failure_node"] > len(touched_cells)
+        ),
+        "touched_cells": touched_cells,
         "elapsed_minutes": (time.perf_counter() - start) / 60.0,
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)

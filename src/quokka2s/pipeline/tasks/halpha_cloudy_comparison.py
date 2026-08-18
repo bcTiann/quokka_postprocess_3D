@@ -75,7 +75,7 @@ class Build_HalphaCloudyComparison(BuildTask):
 
     def __init__(self, config):
         super().__init__(config)
-        self.spectrum_schema = 1
+        self.spectrum_schema = 2
         # Fold both Cloudy table identities into this task's L2 cache filename
         # without invalidating unrelated pipeline field caches.
         self.low_table_mtime = Path(_cfg.CLOUDY_HALPHA_LOWT_TABLE_PATH).stat().st_mtime

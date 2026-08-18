@@ -1,4 +1,4 @@
-"""Two-panel [C II] DESPOTIC/Cloudy comparison with a shared y scale."""
+"""Two-panel [C II] model comparison with a shared y scale."""
 from __future__ import annotations
 
 import matplotlib.pyplot as plt
@@ -11,11 +11,13 @@ from .cplus_high_model_comparison import CPLUS_HIGH_MODEL_LOS
 from .cplus_low_cloudy_comparison import MODELS as LOW_MODELS
 
 
-FILENAME = 'Cplus_DESPOTIC_vs_Cloudy_Tsplit_shared_ylim_Rinf.png'
+FILENAME = (
+    'Cplus_DESPOTIC_Cloudy_Saha_Tsplit_shared_ylim_zoom_both_Rinf.png'
+)
 
 
 class Plot_CplusCloudyCombinedComparison(PlotTask):
-    """Plot low/high DESPOTIC and Cloudy spectra in the same format."""
+    """Plot cold DESPOTIC/Cloudy and hot DESPOTIC/Cloudy/Saha spectra."""
 
     def _gather_inputs(self, context: PipelinePlotContext) -> dict:
         # The completed low-T result predates a change to the unrelated
@@ -37,6 +39,11 @@ class Plot_CplusCloudyCombinedComparison(PlotTask):
         high = inputs['high']
         los = CPLUS_HIGH_MODEL_LOS[0]
         high_models = (
+            {
+                'name': 'CPLUS_SAHA_TQK_GE3000',
+                'color': '#CC79A7',
+                'label': 'pipeline Saha + LTE',
+            },
             {
                 'name': 'CPLUS_DESPOTIC_TQK_GE3000',
                 'color': '#0072B2',
@@ -118,8 +125,39 @@ class Plot_CplusCloudyCombinedComparison(PlotTask):
             axis.grid(True, alpha=0.25, ls='--', lw=0.5)
             axis.legend(fontsize=9, frameon=False)
 
+            # The absolute shared scale is set by the high-temperature Saha
+            # curve.  Show DESPOTIC and Cloudy alone in both insets so their
+            # shapes and relative amplitudes remain readable without changing
+            # the scientifically useful absolute scale of the main panels.
+            zoom_curves = [
+                curve for curve in curves
+                if curve[2] in ('DESPOTIC', 'Cloudy HM2012')
+            ]
+            zoom_peak = max(
+                float(np.nanmax(np.asarray(block['dsigma_dv'], dtype=float)))
+                for block, _, _ in zoom_curves
+            )
+            inset = axis.inset_axes([0.07, 0.50, 0.50, 0.42])
+            for block, color, _ in zoom_curves:
+                inset.plot(
+                    np.asarray(block['v_axis']),
+                    np.asarray(block['dsigma_dv']),
+                    color=color,
+                    lw=1.25,
+                    drawstyle='steps-mid',
+                )
+            inset.set_xlim(-35.0, 35.0)
+            inset.set_ylim(0.0, 1.08 * zoom_peak)
+            inset.ticklabel_format(
+                style='sci', axis='y', scilimits=(0, 0), useMathText=True,
+            )
+            inset.tick_params(labelsize=7)
+            inset.grid(True, alpha=0.2, ls='--', lw=0.4)
+            inset.set_title('zoom', fontsize=8)
+
         fig.suptitle(
-            r'Comparison of the [C II] spectrum from DESPOTIC and Cloudy'
+            r'Comparison of the [C II] spectrum from DESPOTIC, Cloudy, '
+            r'and pipeline Saha'
             r', LOS y, $R=\infty$'
         )
         fig.tight_layout()

@@ -74,9 +74,11 @@ class HydrogenLineRegimeTests(unittest.TestCase):
         expected_n_Hp = np.array([1.0, 4.0, 8.0, 8.0, 10.0])
         T_use = np.array([100.0, 3000.0, 13069.0, 13070.0, 2.0e4])
         T4 = T_use / 1.0e4
-        alpha_B = 2.54e-13 * np.power(T4, -0.8163 - 0.0208 * np.log(T4))
+        alpha_eff = 1.17e-13 * np.power(
+            T4, -0.942 - 0.031 * np.log(T4),
+        )
         E_Halpha = ((h * c) / lambda_Halpha).in_cgs().value
-        expected = 0.45 * E_Halpha * alpha_B * expected_ne * expected_n_Hp
+        expected = E_Halpha * alpha_eff * expected_ne * expected_n_Hp
 
         np.testing.assert_allclose(actual, expected, rtol=1.0e-13)
 

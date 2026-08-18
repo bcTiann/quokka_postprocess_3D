@@ -30,6 +30,7 @@ CLOUDY_CII_LOOKUP_CACHE: CloudyCIILookup | None = None
 CLOUDY_CII_LOWT_LOOKUP_CACHE: CloudyCIILookup | None = None
 CLOUDY_HALPHA_LOWT_LOOKUP_CACHE: CloudyCIILookup | None = None
 CLOUDY_HALPHA_HIGH_LOOKUP_CACHE: CloudyCIILookup | None = None
+CLOUDY_HI21_LOOKUP_CACHE: CloudyCIILookup | None = None
 
 # Lower bound on |∇·v|/3 used as the LVG dVdr field. Cells with smaller
 # divergence are pinned to this floor — the table's dVdr axis bottoms
@@ -174,6 +175,18 @@ def ensure_cloudy_halpha_lookup(
             CLOUDY_HALPHA_HIGH_LOOKUP_CACHE = cache
         return cache
     raise ValueError(f"unknown Cloudy H-alpha branch: {branch!r}")
+
+
+def ensure_cloudy_hi21_lookup(path: str | None = None) -> CloudyCIILookup:
+    """Return the HM2012 H I 21-cm emissivity lookup table."""
+    global CLOUDY_HI21_LOOKUP_CACHE
+    requested = path or cfg.CLOUDY_HI21_TABLE_PATH
+    if (
+        CLOUDY_HI21_LOOKUP_CACHE is None
+        or CLOUDY_HI21_LOOKUP_CACHE.path != Path(requested)
+    ):
+        CLOUDY_HI21_LOOKUP_CACHE = CloudyCIILookup(requested)
+    return CLOUDY_HI21_LOOKUP_CACHE
 
 
 def _number_density_H(field, data):
@@ -594,10 +607,20 @@ def _make_number_density_field(species: str, lamda_token: str | None = None):
     _field.__name__ = f"_number_density_{yt_safe_name}"
     return yt_safe_name, _field
 
+def effective_halpha_recombination_coefficient(temperature_K):
+    """Huang et al. (2025) Eq. (1) case-B H-alpha coefficient [cm^3/s]."""
+    temperature = np.asarray(temperature_K, dtype=float)
+    T4 = np.maximum(temperature / 1.0e4, 1.0e-10)
+    exponent = -0.942 - 0.031 * np.log(T4)
+    return 1.17e-13 * np.power(T4, exponent)
+
+
 def _Halpha_luminosity(field, data):
     """
-    H-alpha Luminosity Density [erg / s / cm**3].  Draine (2011) Eq. 14.6:
-        ε_Hα = 0.45 · E_Hα · α_B(T) · n_e · n_H+
+    H-alpha luminosity density [erg / s / cm**3]. Huang et al. (2025)
+    Equations (1) and (5):
+        alpha_eff,Halpha = 1.17e-13 T4^[-0.942 - 0.031 ln(T4)] cm^3 s^-1
+        epsilon_Halpha = E_Halpha alpha_eff,Halpha n_e n_H+
 
     Two-regime hydrogen treatment:
       - **Low** (T_QUOKKA < 3000 K):
@@ -607,8 +630,8 @@ def _Halpha_luminosity(field, data):
             if x_e <= 1, set x_H+=x_e; otherwise set x_H+=1.
             Then n_e=x_e n_H and n_H+=x_H+ n_H.
 
-    α_B uses temperature_two_regime: T_DESPOTIC below 3000 K and T_QUOKKA
-    at and above the boundary.
+    alpha_eff,Halpha uses temperature_two_regime: T_DESPOTIC below 3000 K and
+    T_QUOKKA at and above the boundary.
     """
     # Photon energy is a constant.
     E_Halpha = ((h * c) / lambda_Halpha).in_cgs().value   # erg
@@ -640,13 +663,11 @@ def _Halpha_luminosity(field, data):
     n_e = np.where(low, n_e_cold, n_e_hot)
     n_Hp = np.where(low, n_Hp_cold, n_Hp_hot)
 
-    # α_B(T)  — Draine 2011 Eq. 14.6 hydrogenic fit, Z = 1.
-    T4 = np.maximum(T_use / 1.0e4, 1.0e-10)   # guard log(0)
-    expnt   = -0.8163 - 0.0208 * np.log(T4)
-    alpha_B = 2.54e-13 * np.power(T4, expnt)         # cm^3 / s
+    # Effective case-B H-alpha coefficient: Huang et al. (2025), Eq. (1).
+    alpha_eff_Halpha = effective_halpha_recombination_coefficient(T_use)
 
     # ε_Hα — erg / s / cm^3.
-    eps = 0.45 * E_Halpha * alpha_B * n_e * n_Hp
+    eps = E_Halpha * alpha_eff_Halpha * n_e * n_Hp
 
     # Return as a YTArray with explicit units (matches the field declaration).
     return yt.YTArray(eps, "erg/s/cm**3")
@@ -762,6 +783,20 @@ def _HI_luminosity_quokka(field, data):
     n_HI = np.where(x_e <= 1.0, (1.0 - x_e) * n_H, 0.0)
     eps = _HI_emissivity_from_number_density(n_HI)
     return yt.YTArray(eps, 'erg/s/cm**3')
+
+
+def _HI_luminosity_cloudy(field, data):
+    """Cloudy HM2012 H I 21-cm emissivity at each cell's QUOKKA state."""
+    T_qk = data[('gas', 'temperature_quokka')].to('K').value
+    emissivity = np.zeros_like(T_qk, dtype=float)
+    if isinstance(data, FieldDetector):
+        return yt.YTArray(emissivity, 'erg/s/cm**3')
+
+    n_H = data[('gas', 'number_density_H')].to('cm**-3').value
+    colDen_H = data[('gas', 'column_density_H')].to('cm**-2').value
+    lookup = ensure_cloudy_hi21_lookup()
+    emissivity[...] = lookup.emissivity(T_qk, n_H, colDen_H)
+    return yt.YTArray(emissivity, 'erg/s/cm**3')
 
 
 def _HI_luminosity(field, data):
@@ -1185,6 +1220,9 @@ def add_all_fields(ds):
                  units="erg/s/cm**3", force_override=True)
     ds.add_field(name=('gas', 'HI_luminosity_quokka'),
                  function=_HI_luminosity_quokka, sampling_type="cell",
+                 units="erg/s/cm**3", force_override=True)
+    ds.add_field(name=('gas', 'HI_luminosity_cloudy'),
+                 function=_HI_luminosity_cloudy, sampling_type="cell",
                  units="erg/s/cm**3", force_override=True)
     ds.add_field(name=('gas', 'HI_luminosity_two_regime'),
                  function=_HI_luminosity_two_regime, sampling_type="cell",
