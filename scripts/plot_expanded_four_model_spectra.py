@@ -185,7 +185,7 @@ def _build_halpha_diagnostics(args: argparse.Namespace) -> Path:
         despotic_table_path=args.despotic_table,
         downsample_factor=cfg.DOWNSAMPLE_FACTOR,
         column_extension_lateral_kpc=cfg.COLUMN_EXTENSION_LATERAL_KPC,
-        schema_version=19,
+        schema_version=20,
     )
     cache_root = cache_root_for_dataset(args.dataset)
     cache_specs = (

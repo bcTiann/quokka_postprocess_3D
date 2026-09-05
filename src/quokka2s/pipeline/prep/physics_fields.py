@@ -11,6 +11,7 @@ from yt.units import K, mp, kb, mh, planck_constant, cm, m, s, g, erg, amu, kpc
 from ...analysis import along_sight_cumulation
 from . import config as cfg
 from ...tables import load_table
+from ...tables.dvdr_domain import SIMULATION_DVDR_MIN_S
 from ...tables.lookup import TableLookup
 from ...cloudy_cii_lookup import CloudyCIILookup
 from ...saha_cii import legacy_saha_lte_emissivity
@@ -32,12 +33,11 @@ CLOUDY_HALPHA_LOWT_LOOKUP_CACHE: CloudyCIILookup | None = None
 CLOUDY_HALPHA_HIGH_LOOKUP_CACHE: CloudyCIILookup | None = None
 CLOUDY_HI21_LOOKUP_CACHE: CloudyCIILookup | None = None
 
-# Lower bound on |∇·v|/3 used as the LVG dVdr field. Cells with smaller
-# divergence are pinned to this floor — the table's dVdr axis bottoms
-# out at 1e-19, so 1e-18 keeps every cell strictly inside the
-# interpolation range. ~0.04% of plt263168 cells fall below this floor
-# (quiescent halo), measured 2026-05-09.
-DVDR_FLOOR = 1e-18
+# Positive lower bound on |∇·v|/3 used by the LVG field and the DESPOTIC
+# table.  It is the measured minimum of the full-resolution plt0655228
+# snapshot, so applying the bound does not alter any cell in that snapshot
+# while keeping log-space table lookup well defined.
+DVDR_FLOOR = SIMULATION_DVDR_MIN_S
 
 # C+ temperature boundary, applied to T_QUOKKA:
 #     T < 3000 K  -> DESPOTIC GOW/LVG table
@@ -221,39 +221,51 @@ def _column_density_H(field, data):
 
     n_H_3d = (density_3d * cfg.X_H) / m_H
 
+    direction_mode = getattr(cfg, 'COLUMN_DENSITY_DIRECTIONS', 'z')
+
     # Lateral (x, y) extension: shearing-box faces are periodic BCs, not
     # physical edges.  Add  L_ext * <n_H>(z)  to each ±x, ±y ray, with
     # <n_H>(z) the (x, y)-mean number density at the cell's own height.
     # ±z gets no extension — the box already spans the stratified disk.
     # See cfg.COLUMN_EXTENSION_LATERAL_KPC for the rationale.
     L_ext_kpc = float(cfg.COLUMN_EXTENSION_LATERAL_KPC)
-    if L_ext_kpc > 0.0:
+    if direction_mode == 'six' and L_ext_kpc > 0.0:
         L_ext_qty   = (L_ext_kpc * kpc).in_units('cm')        # unyt, cm
         n_bar_z     = n_H_3d.mean(axis=(0, 1))                # unyt, cm^-3
         N_ext_lat_3d = (L_ext_qty * n_bar_z)[None, None, :]   # unyt, cm^-2
     else:
         N_ext_lat_3d = None
 
-    # Streaming harmonic mean: H = 6 / Σ_k (1/N_k).
+    # Select the rays before aggregation.  The z-only mode intentionally
+    # excludes all lateral rays and therefore never uses L_ext.
+    if direction_mode == 'z':
+        rays = (
+            ("z", "+", dz_3d, False),
+            ("z", "-", dz_3d, False),
+        )
+    else:
+        rays = (
+            ("x", "+", dx_3d, True),
+            ("x", "-", dx_3d, True),
+            ("y", "+", dy_3d, True),
+            ("y", "-", dy_3d, True),
+            ("z", "+", dz_3d, False),
+            ("z", "-", dz_3d, False),
+        )
+
+    # Streaming harmonic mean: H = n_rays / Σ_k (1/N_k).
     # Build one directional cumulation at a time, fold 1/N_k into the
     # reciprocal accumulator, then free it. Function-internal peak: ~5 GB
     # (vs ~22 GB for the original stack-then-aggregate version at down=1).
     mean_method = getattr(cfg, 'COLUMN_DENSITY_MEAN', 'harmonic')
     accum = None
-    for axis, sign, dxyz, lateral in (
-        ("x", "+", dx_3d, True),
-        ("x", "-", dx_3d, True),
-        ("y", "+", dy_3d, True),
-        ("y", "-", dy_3d, True),
-        ("z", "+", dz_3d, False),
-        ("z", "-", dz_3d, False),
-    ):
+    for axis, sign, dxyz, lateral in rays:
         N = along_sight_cumulation(n_H_3d * dxyz, axis=axis, sign=sign)
         if lateral and N_ext_lat_3d is not None:
             N = N + N_ext_lat_3d
         # Streaming accumulator: depends on the chosen combination method.
-        #   arithmetic -> Σ N_k       (finalised as Σ/6)
-        #   harmonic   -> Σ 1/N_k     (finalised as 6/Σ)
+        #   arithmetic -> Σ N_k       (finalised as Σ/n_rays)
+        #   harmonic   -> Σ 1/N_k     (finalised as n_rays/Σ)
         #   max / min  -> running max / min of N_k       (no finalisation)
         if mean_method == 'arithmetic':
             inc = N
@@ -271,10 +283,10 @@ def _column_density_H(field, data):
         accum = inc if accum is None else accum + inc
         del inc
     if mean_method == 'arithmetic':
-        return (accum / 6.0).to('cm**-2')          # (1/6) Σ N_k
+        return (accum / len(rays)).to('cm**-2')    # (1/n_rays) Σ N_k
     if mean_method in ('max', 'min'):
-        return accum.to('cm**-2')                   # running max / min over 6 directions
-    return (6.0 / accum).to('cm**-2')               # 6 / Σ(1/N_k)
+        return accum.to('cm**-2')                   # running max / min over selected rays
+    return (len(rays) / accum).to('cm**-2')         # n_rays / Σ(1/N_k)
 
 
 def _dVdr_lvg(field, data):
@@ -626,7 +638,7 @@ def _Halpha_luminosity(field, data):
       - **Low** (T_QUOKKA < 3000 K):
             n_e, n_H+ from the DESPOTIC 3D table;  α_B at T_DESPOTIC.
       - **T_QUOKKA ≥ 3000 K**:
-            infer x_e from QUOKKA's e_int, rho, and T_two_regime;
+            infer non-negative x_e from QUOKKA's e_int, rho, and T_two_regime;
             if x_e <= 1, set x_H+=x_e; otherwise set x_H+=1.
             Then n_e=x_e n_H and n_H+=x_H+ n_H.
 
@@ -925,6 +937,15 @@ def _Cplus_luminosity_saha(field, data):
     n_H = data[('gas', 'number_density_H')].to('cm**-3').value
     e_int = data[('gas', 'internal_energy_density')].to('erg/cm**3').value
     rho = data[('gas', 'density')].to('g/cm**3').value
+    # yt evaluates every derived field once on synthetic values while it
+    # discovers dependencies.  Those values are not a physical Saha state and
+    # can contain combinations (for example n_e == 0 at very high T) that make
+    # the legacy diagnostic non-finite.  All dependencies have already been
+    # accessed above, so return a unit-correct placeholder only for that
+    # registration pass.  Real simulation data still follows the unchanged
+    # diagnostic calculation below.
+    if isinstance(data, FieldDetector):
+        return yt.YTArray(np.zeros_like(T_qk, dtype=float), 'erg/s/cm**3')
     x_e = electron_fraction_from_mean_molecular_weight(
         e_int,
         rho,
@@ -953,6 +974,11 @@ def _Cplus_luminosity_saha_cold_diagnostic(field, data):
     rho = data[('gas', 'density')].to('g/cm**3').value
     cold = T_qk < T_QK_TWO_REGIME_K
     emissivity = np.zeros_like(T_qk, dtype=float)
+    # As above, skip only yt's synthetic dependency-discovery evaluation.
+    # Accessing T_qk, n_H, e_int, and rho before this branch preserves the
+    # complete dependency graph registered by yt.
+    if isinstance(data, FieldDetector):
+        return yt.YTArray(emissivity, 'erg/s/cm**3')
     if not cold.any():
         return yt.YTArray(emissivity, 'erg/s/cm**3')
     x_e = electron_fraction_from_mean_molecular_weight(

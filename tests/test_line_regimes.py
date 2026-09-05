@@ -87,7 +87,7 @@ class LineRegimeTests(unittest.TestCase):
         )
         np.testing.assert_allclose(actual, expected_xe, rtol=1e-13, atol=1e-13)
 
-    def test_legacy_mean_molecular_weight_name_is_unclipped_alias(self):
+    def test_legacy_mean_molecular_weight_name_is_nonnegative_alias(self):
         e_int = np.array([0.1, 1.0, 10.0])
         rho = np.ones(3)
         temperature = np.ones(3)
@@ -107,15 +107,16 @@ class LineRegimeTests(unittest.TestCase):
         )
         np.testing.assert_array_equal(actual, expected)
 
-    def test_total_electron_fraction_returns_unclipped_formula_result(self):
+    def test_total_electron_fraction_applies_only_nonnegative_floor(self):
         X, Y = HYDROGEN_MASS_FRACTION, HELIUM_MASS_FRACTION
         gamma = 5.0 / 3.0
         m_h = 1.6735575e-24
         k_b = 1.380649e-16
         rho = np.full(4, 2.0e-24)
         temperature = np.array([3000.0, 8000.0, 2.0e4, 1.0e6])
-        expected_xe = np.array([-0.5, 0.4, 1.1, 2.0])
-        inverse_mu = X + Y / 4.0 + X * expected_xe
+        raw_xe = np.array([-0.5, 0.4, 1.1, 2.0])
+        expected_xe = np.maximum(raw_xe, 0.0)
+        inverse_mu = X + Y / 4.0 + X * raw_xe
         e_int = inverse_mu * rho * k_b * temperature / ((gamma - 1.0) * m_h)
 
         actual = electron_fraction_from_mean_molecular_weight(

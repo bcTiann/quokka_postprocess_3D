@@ -1,4 +1,4 @@
-"""Build the canonical 35^3 GOW/LVG DESPOTIC lookup table.
+"""Build the canonical snapshot-covering GOW/LVG DESPOTIC lookup table.
 
 This is the only production table-building entry point.  Chemistry, escape
 geometry, grid ranges, and species are intentionally fixed so a command cannot
@@ -14,17 +14,17 @@ import numpy as np
 
 from .builder import GOW_LVG_SPECIES, build_gow_lvg_table
 from .io import save_table
-from .models import LogGrid
+from .dvdr_domain import extended_dvdr_values
+from .models import ExplicitGrid, LogGrid
 
 
 N_H_RANGE = (1e-4, 1e6)
 COL_DEN_RANGE = (1e15, 1e24)
-DVDR_RANGE = (1e-19, 1e-12)
 GRID_POINTS = 35
 DEFAULT_OUTPUT = (
     Path(__file__).resolve().parents[3]
     / "output_tables_3D_GOW_LVG"
-    / "despotic_table_co10_co21.npz"
+    / "despotic_table_co10_co21_dvdr_fullrange.npz"
 )
 
 
@@ -66,7 +66,8 @@ def _write_readme(path: Path, elapsed: float, table) -> Path:
         "evolveTemp      : iterateDust\n"
         f"grid            : nH {N_H_RANGE[0]:.0e}..{N_H_RANGE[1]:.0e}, "
         f"NH {COL_DEN_RANGE[0]:.0e}..{COL_DEN_RANGE[1]:.0e}, "
-        f"dVdr {DVDR_RANGE[0]:.0e}..{DVDR_RANGE[1]:.0e}, {GRID_POINTS}^3\n"
+        f"dVdr {table.dVdr_values[0]:.6e}..{table.dVdr_values[-1]:.6e}, "
+        f"shape {table.tg_final.shape}\n"
         f"species         : {species}\n"
         f"failed cells    : {failed} / {table.tg_final.size}\n"
         f"non-finite Tg   : {nan_t} / {table.tg_final.size}\n"
@@ -86,13 +87,14 @@ def main(argv: list[str] | None = None) -> None:
 
     nH_grid = LogGrid(*N_H_RANGE, num_points=GRID_POINTS)
     col_grid = LogGrid(*COL_DEN_RANGE, num_points=GRID_POINTS)
-    dVdr_grid = LogGrid(*DVDR_RANGE, num_points=GRID_POINTS)
+    dVdr_values = extended_dvdr_values()
+    dVdr_grid = ExplicitGrid(tuple(dVdr_values))
     species = ", ".join(s.name + ("(em)" if s.is_emitter else "") for s in GOW_LVG_SPECIES)
 
     print("[build_table] network = GOW")
     print("[build_table] geometry = LVG")
     print(f"[build_table] species = {species}")
-    print(f"[build_table] grid = {GRID_POINTS}^3")
+    print(f"[build_table] grid = {GRID_POINTS} x {GRID_POINTS} x {len(dVdr_values)}")
     print(f"[build_table] output = {output}")
 
     started = time.time()

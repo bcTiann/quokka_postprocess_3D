@@ -40,7 +40,11 @@ YT_DATASET_PATH = os.environ.get(
 # temporary alternate table is intentionally needed.
 DESPOTIC_TABLE_PATH = os.environ.get(
     "DESPOTIC_TABLE",
-    str(_PROJECT_ROOT / "output_tables_3D_GOW_LVG" / "despotic_table_co10_co21_clean.npz"),
+    str(
+        _PROJECT_ROOT
+        / "output_tables_3D_GOW_LVG"
+        / "despotic_table_co10_co21_dvdr_fullrange_clean.npz"
+    ),
 )
 # HM2012 z=0 shielded Cloudy 17.02 [C II] production table. It stores
 # epsilon_CII/n_H^2 on (n_H, N_H, T_QUOKKA). Unused failed Cloudy nodes remain
@@ -117,14 +121,25 @@ if _lext_override is not None:
 _RUN_TAG = os.environ.get('RUN_TAG', '')
 _RUN_TAG_SUFFIX = f'_{_RUN_TAG}' if _RUN_TAG else ''
 
-# How the 6 directional columns N_k are combined into column_density_H:
-#   'harmonic'   -> 6 / Σ(1/N_k)   (min-dominated: effective shielding = thinnest direction)
-#   'arithmetic' -> (1/6) Σ N_k    (plain mean of all 6 directions)
+# How the selected directional columns N_k are combined into column_density_H:
+#   'harmonic'   -> n_rays / Σ(1/N_k)   (min-dominated)
+#   'arithmetic' -> (1/n_rays) Σ N_k
 #   'max'        -> max_k N_k      (most-shielded / thickest direction)
 #   'min'        -> min_k N_k      (least-shielded / thinnest direction)
 # Folded into the cache key (cache.py) so each method keeps separate caches.
 # Override via env: `COLDEN_MEAN=arithmetic python -m quokka2s.pipeline.tasks.run_pipeline`
 COLUMN_DENSITY_MEAN = os.environ.get('COLDEN_MEAN', 'harmonic')
+
+# Which directional rays enter column_density_H:
+#   'z'   -> +/-z only (the default; no lateral extension)
+#   'six' -> +/-x, +/-y, +/-z (legacy mode; lateral rays may use L_ext)
+# Override via env: `COLDEN_DIRECTIONS=six ...`
+COLUMN_DENSITY_DIRECTIONS = os.environ.get('COLDEN_DIRECTIONS', 'z').lower()
+if COLUMN_DENSITY_DIRECTIONS not in ('six', 'z'):
+    raise ValueError(
+        "COLDEN_DIRECTIONS must be 'six' or 'z', got "
+        f"{COLUMN_DENSITY_DIRECTIONS!r}"
+    )
 
 # OUTPUT_DIR is derived after COLUMN_EXTENSION_LATERAL_KPC so the directory
 # name encodes the L_ext value — different L_ext runs land in sibling dirs

@@ -75,8 +75,13 @@ def electron_fraction_from_mean_molecular_weight(
     The baseline particles in this inversion are H and He nuclei.  The adopted
     X/Y/Z composition remains normalized to one, but the metal-nucleus term is
     deliberately omitted to match QUOKKA's working EOS relation.  Every free
-    electron adds one particle regardless of which element supplied it. Return
-    the direct algebraic result without clipping ``x_e``.
+    electron adds one particle regardless of which element supplied it.
+
+    Numerical/EOS inconsistencies can make the direct algebraic result slightly
+    negative.  Since an electron number density cannot be negative, impose only
+    the physical lower bound ``x_e >= 0``.  Do not impose an upper bound:
+    ``x_e > 1`` is retained because helium and metals can contribute additional
+    electrons per hydrogen nucleus.
     """
     e_int = np.asarray(internal_energy_density_erg_cm3, dtype=np.float64)
     rho = np.asarray(density_g_cm3, dtype=np.float64)
@@ -91,8 +96,8 @@ def electron_fraction_from_mean_molecular_weight(
     if Y < 0.0:
         raise ValueError('Y must be non-negative')
 
-    x_e = (inverse_mu - X - Y / 4.0) / X
-    return x_e
+    x_e_raw = (inverse_mu - X - Y / 4.0) / X
+    return np.maximum(x_e_raw, 0.0)
 
 
 def hydrogen_ionization_fraction_from_mean_molecular_weight(
@@ -109,7 +114,7 @@ def hydrogen_ionization_fraction_from_mean_molecular_weight(
     """Backward-compatible name for the mean-molecular-weight inversion.
 
     New code should use :func:`electron_fraction_from_mean_molecular_weight`.
-    This alias returns the same unclipped algebraic result.
+    This alias returns the same non-negative total electron fraction.
     """
     return electron_fraction_from_mean_molecular_weight(
         internal_energy_density_erg_cm3,

@@ -32,9 +32,14 @@ SLICE_AXIS = 'x'
 AX_IDX = {'x': 0, 'y': 1, 'z': 2}[SLICE_AXIS]
 
 # (field, label, cmap, fixed_log_vmin, fixed_log_vmax)  None=percentile range
+_NH_DIRECTION_LABEL = (
+    r'$+z/-z$' if getattr(cfg, 'COLUMN_DENSITY_DIRECTIONS', 'z') == 'z'
+    else rf'6-dir+$L_{{\rm ext}}$'
+)
+
 PANELS = [
     (('gas', 'number_density_H'),    r'$\log_{10}n_{\rm H}$ [cm$^{-3}$]',              'inferno', None, None),
-    (('gas', 'column_density_H'),    r'$\log_{10}N_{\rm H}$ (6-dir+$L_{\rm ext}$) [cm$^{-2}$]', 'cividis', None, None),
+    (('gas', 'column_density_H'),    rf'$\log_{{10}}N_{{\rm H}}$ ({_NH_DIRECTION_LABEL}) [cm$^{{-2}}$]', 'cividis', None, None),
     (('gas', 'dVdr_lvg'),            r'$\log_{10}|\nabla\!\cdot v|/3$ [s$^{-1}$]',     'plasma',  None, None),
     (('gas', 'temperature_quokka'),  r'$\log_{10}T_{\rm QUOKKA}$ [K]',                 'turbo',   2.0, 8.0),
     (('gas', 'temperature_despotic'),r'$\log_{10}T_{\rm DESPOTIC}$ [K]',               'turbo',   2.0, 8.0),

@@ -64,7 +64,9 @@ import numpy as np
 # v20: use Huang et al. (2025) Eq. (1) for the effective case-B Halpha
 #      recombination coefficient and store spectra in cgs surface-brightness
 #      per velocity units.
-CACHE_SCHEMA_VERSION = 20
+# v21: impose the physical lower bound x_e >= 0 on every mean-molecular-weight
+#      electron-fraction inversion; retain x_e > 1 without an upper cap.
+CACHE_SCHEMA_VERSION = 21
 
 
 # ── Fields worth caching to disk ─────────────────────────────────────────────
@@ -120,9 +122,11 @@ def compute_cache_key(
     try:
         from .prep import config as _cfg
         _colden_mean = getattr(_cfg, 'COLUMN_DENSITY_MEAN', 'harmonic')
+        _colden_directions = getattr(_cfg, 'COLUMN_DENSITY_DIRECTIONS', 'z')
         _cloudy_cii_table = getattr(_cfg, 'CLOUDY_CII_TABLE_PATH', '')
     except Exception:
         _colden_mean = 'harmonic'
+        _colden_directions = 'z'
         _cloudy_cii_table = ''
     # DVDR_FLOOR is defined in physics_fields rather than config; import lazily.
     try:
@@ -143,6 +147,7 @@ def compute_cache_key(
         f'downsample={int(downsample_factor)}',
         f'L_ext_kpc={float(column_extension_lateral_kpc):g}',
         f'colden_mean={_colden_mean}',
+        f'colden_directions={_colden_directions}',
         f'dvdr_floor={float(_dvdr_floor):g}',
         f'schema={effective_schema}',
     ):

@@ -27,6 +27,25 @@ class LogGrid:
 
 
 @dataclass(frozen=True)
+class ExplicitGrid:
+    """A positive, strictly increasing grid with caller-supplied nodes."""
+
+    values: tuple[float, ...]
+
+    def __post_init__(self) -> None:
+        array = np.asarray(self.values, dtype=float)
+        if array.ndim != 1 or array.size < 1:
+            raise ValueError("ExplicitGrid requires at least one 1D value")
+        if np.any(~np.isfinite(array)) or np.any(array <= 0.0):
+            raise ValueError("ExplicitGrid values must be finite and positive")
+        if np.any(np.diff(array) <= 0.0):
+            raise ValueError("ExplicitGrid values must be strictly increasing")
+
+    def sample(self) -> np.ndarray:
+        return np.asarray(self.values, dtype=float)
+
+
+@dataclass(frozen=True)
 class LineLumResult:
     freq: float
     intIntensity: float

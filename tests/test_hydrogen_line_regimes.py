@@ -39,7 +39,9 @@ class HydrogenLineRegimeTests(unittest.TestCase):
         T_qk = np.array([2999.0, 3000.0, 13069.0, 13070.0, 2.0e4])
         T_use = np.array([100.0, 3000.0, 13069.0, 13070.0, 2.0e4])
         rho = np.full(5, 2.0e-24)
-        self.expected_xe = np.array([0.2, 0.4, 0.8, 0.8, 1.1])
+        # The 3000 K cell deliberately has a negative raw inversion.  The
+        # shared x_e helper must floor it at zero without capping x_e > 1.
+        self.expected_xe = np.array([0.2, -0.2, 0.8, 0.8, 1.1])
 
         X, Y = HYDROGEN_MASS_FRACTION, HELIUM_MASS_FRACTION
         inverse_mu = X + Y / 4.0 + X * self.expected_xe
@@ -70,8 +72,8 @@ class HydrogenLineRegimeTests(unittest.TestCase):
 
         # Cold cell keeps DESPOTIC values. Every cell at or above 3000 K uses
         # x_H+=min(x_e,1); 13070 K is deliberately not a hydrogen boundary.
-        expected_ne = np.array([0.1, 4.0, 8.0, 8.0, 11.0])
-        expected_n_Hp = np.array([1.0, 4.0, 8.0, 8.0, 10.0])
+        expected_ne = np.array([0.1, 0.0, 8.0, 8.0, 11.0])
+        expected_n_Hp = np.array([1.0, 0.0, 8.0, 8.0, 10.0])
         T_use = np.array([100.0, 3000.0, 13069.0, 13070.0, 2.0e4])
         T4 = T_use / 1.0e4
         alpha_eff = 1.17e-13 * np.power(
@@ -96,7 +98,7 @@ class HydrogenLineRegimeTests(unittest.TestCase):
         )
 
         # x_e=1.1 gives x_H+=1 and n_HI=0 instead of a negative density.
-        expected_n_HI = np.array([8.0, 6.0, 2.0, 2.0, 0.0])
+        expected_n_HI = np.array([8.0, 10.0, 2.0, 2.0, 0.0])
         coefficient = 0.75 * A_HI_21 * float(h.in_cgs().value) * NU_HI_21
         expected = coefficient * expected_n_HI
 
@@ -106,7 +108,7 @@ class HydrogenLineRegimeTests(unittest.TestCase):
         actual = _HI_luminosity_two_regime(None, self.data).to_value(
             'erg/s/cm**3'
         )
-        expected_n_HI = np.array([7.0, 6.0, 2.0, 2.0, 0.0])
+        expected_n_HI = np.array([7.0, 10.0, 2.0, 2.0, 0.0])
         coefficient = 0.75 * A_HI_21 * float(h.in_cgs().value) * NU_HI_21
         np.testing.assert_allclose(actual, coefficient * expected_n_HI)
 

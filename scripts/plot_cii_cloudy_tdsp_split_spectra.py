@@ -154,7 +154,7 @@ def _open_validated_cache(
         despotic_table_path=despotic_table,
         downsample_factor=cfg.DOWNSAMPLE_FACTOR,
         column_extension_lateral_kpc=cfg.COLUMN_EXTENSION_LATERAL_KPC,
-        schema_version=19,
+        schema_version=20,
     )
     legacy_safe = (
         field in {COLUMN_FIELD, TDSP_FIELD}

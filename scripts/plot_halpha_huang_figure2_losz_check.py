@@ -82,7 +82,7 @@ def _open_caches(
     )
     legacy = compute_cache_key(
         dataset, despotic_table, cfg.DOWNSAMPLE_FACTOR,
-        cfg.COLUMN_EXTENSION_LATERAL_KPC, schema_version=19,
+        cfg.COLUMN_EXTENSION_LATERAL_KPC, schema_version=20,
     )
     handles = {}
     paths = {}

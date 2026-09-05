@@ -4,19 +4,23 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from functools import partial
-from typing import Sequence
+from typing import Protocol, Sequence
 
 import numpy as np
 from joblib import Parallel, delayed
 from tqdm import tqdm
 from tqdm_joblib import tqdm_joblib
 
-from .models import AttemptRecord, DespoticTable, LineLumResult, LogGrid, SpeciesLineGrid, SpeciesRecord
+from .models import AttemptRecord, DespoticTable, LineLumResult, SpeciesLineGrid, SpeciesRecord
 from .solver import CO21_TABLE_TOKEN, LINE_RESULT_FIELDS, solve_gow_lvg_point
 
 
 LOGGER = logging.getLogger(__name__)
 DEFAULT_LINE_RESULT = LineLumResult(*([float("nan")] * len(LINE_RESULT_FIELDS)))
+
+
+class GridSpec(Protocol):
+    def sample(self) -> np.ndarray: ...
 
 
 @dataclass(frozen=True)
@@ -39,9 +43,9 @@ GOW_LVG_SPECIES: tuple[SpeciesSpec, ...] = (
 
 
 def build_gow_lvg_table(
-    nH_grid: LogGrid,
-    col_grid: LogGrid,
-    dVdr_grid: LogGrid,
+    nH_grid: GridSpec,
+    col_grid: GridSpec,
+    dVdr_grid: GridSpec,
     *,
     species_specs: Sequence[SpeciesSpec] = GOW_LVG_SPECIES,
     show_progress: bool = True,

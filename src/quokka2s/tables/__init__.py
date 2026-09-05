@@ -3,10 +3,10 @@
 from .builder import GOW_LVG_SPECIES, SpeciesSpec, build_gow_lvg_table
 from .io import load_table, save_table
 from .lookup import TableLookup
-from .models import AttemptRecord, DespoticTable, LineLumResult, LogGrid, SpeciesLineGrid, SpeciesRecord
+from .models import AttemptRecord, DespoticTable, ExplicitGrid, LineLumResult, LogGrid, SpeciesLineGrid, SpeciesRecord
 
 __all__ = [
-    "LogGrid", "LineLumResult", "SpeciesLineGrid", "SpeciesRecord",
+    "LogGrid", "ExplicitGrid", "LineLumResult", "SpeciesLineGrid", "SpeciesRecord",
     "AttemptRecord", "DespoticTable", "SpeciesSpec", "GOW_LVG_SPECIES",
     "TableLookup", "build_gow_lvg_table", "save_table", "load_table",
 ]

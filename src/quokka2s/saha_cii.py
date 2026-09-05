@@ -165,7 +165,7 @@ def legacy_saha_lte_emissivity(
             warnings.warn(
                 'legacy Saha diagnostic retained '
                 f'{int(negative.sum())} finite negative emissivities caused by '
-                'the original unclipped electron-density inversion',
+                'a negative electron-density input',
                 RuntimeWarning,
                 stacklevel=2,
             )

@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
-"""Build raw six-line lookup bundles from completed CIAOLoop grids.
+"""Package the completed 7 x 10 x 21 CIAOLoop six-line Jeans grid.
 
-Unavailable Cloudy crash rows remain NaN and are recorded in failure masks.
-The value -99 from CIAOLoop is retained in the logarithmic array and converted
-to an exact physical zero in the linear emissivity array.  No failure is
-interpolated by this builder.
+Cloudy crash rows remain unavailable NaNs and are recorded in failure masks.
+CIAOLoop's -99 true-zero sentinel becomes an exact zero only in the linear
+coefficient array. This builder never fills or smooths a failed node.
 """
 
 from __future__ import annotations
 
-import hashlib
 import argparse
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -26,8 +25,7 @@ LINES = (
     ("ciii_1907", "C  3 1906.68A", "C_3_1906.68A"),
     ("ciii_1909", "C  3 1908.73A", "C_3_1908.73A"),
 )
-N_NH = 10
-N_COLUMN = 10
+N_DENSITY = 10
 N_T = 21
 T_MIN_K = 3.6
 T_MAX_K = 1.0e9
@@ -36,7 +34,9 @@ T_TOLERANCE_DEX = 5.1e-4
 JEANS_CAP_CM = 3.086e20
 RUN_RE = re.compile(r"_run([1-9][0-9]*)\.dat$")
 HDEN_RE = re.compile(r"^#\s*hden\s+(.+?)\s*$")
-COLUMN_RE = re.compile(r"^#\s*stop column density\s+(.+?)\s*$")
+INIT_RE = re.compile(
+    r'^#\s*init\s+"[^"]*logNH([0-9]+(?:\.[0-9]+)?)\.out"\s*$'
+)
 
 
 def _sha256(path: Path) -> str:
@@ -47,11 +47,9 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _parse(path: Path, needs_column: bool) -> tuple[
-    float, float | None, dict[float, np.ndarray | None]
-]:
+def _parse(path: Path) -> tuple[float, float, dict[float, np.ndarray | None]]:
     log_nh = None
-    log_column = None
+    log_nh_attenuation = None
     header = None
     values: dict[float, np.ndarray | None] = {}
     for line_number, raw in enumerate(path.read_text().splitlines(), start=1):
@@ -59,9 +57,9 @@ def _parse(path: Path, needs_column: bool) -> tuple[
         if match:
             log_nh = float(match.group(1))
             continue
-        match = COLUMN_RE.match(raw)
+        match = INIT_RE.match(raw)
         if match:
-            log_column = float(match.group(1))
+            log_nh_attenuation = float(match.group(1))
             continue
         if raw.startswith("#Te"):
             header = tuple(raw.split()[1:])
@@ -79,19 +77,19 @@ def _parse(path: Path, needs_column: bool) -> tuple[
         values[log_t] = (
             np.asarray(columns[1:], dtype=float) if len(columns) > 1 else None
         )
-    if log_nh is None or (needs_column and log_column is None):
-        raise ValueError(f"missing loop metadata: {path}")
+    if log_nh is None or log_nh_attenuation is None:
+        raise ValueError(f"missing hden or attenuation-init metadata: {path}")
     if header != tuple(item[2] for item in LINES):
         raise ValueError(f"unexpected line header {header!r}: {path}")
     if len(values) != N_T:
         raise ValueError(f"expected {N_T} temperatures, found {len(values)}: {path}")
-    return log_nh, log_column, values
+    return log_nh_attenuation, log_nh, values
 
 
 def _files(directory: Path, expected: int) -> dict[int, Path]:
     if list(directory.glob("*.mach")):
         raise RuntimeError(f"CIAOLoop jobs are still active: {directory}")
-    result = {}
+    result: dict[int, Path] = {}
     for path in directory.glob("*_run*.dat"):
         match = RUN_RE.search(path.name)
         if match:
@@ -108,41 +106,47 @@ def _temperature_index(value: float, axis: np.ndarray, path: Path) -> int:
     return index
 
 
-def _load_column(directory: Path, log_t: np.ndarray):
-    files = _files(directory, N_NH * N_COLUMN)
-    records = [(run, *_parse(path, True)) for run, path in sorted(files.items())]
-    log_nh = np.unique([record[1] for record in records])
-    log_column = np.unique([record[2] for record in records])
-    if (log_nh.size, log_column.size) != (N_NH, N_COLUMN):
-        raise ValueError("column axes are not 10x10")
-    raw = np.full((len(LINES), N_NH, N_COLUMN, N_T), np.nan)
-    nh_index = {float(value): i for i, value in enumerate(log_nh)}
-    column_index = {float(value): i for i, value in enumerate(log_column)}
-    for run, run_nh, run_column, values in records:
-        i = nh_index[float(run_nh)]
-        j = column_index[float(run_column)]
-        if run != i * N_COLUMN + j + 1:
-            raise ValueError(f"run ordering mismatch: {run}")
+def _load_grid(
+    directory: Path,
+    log_t: np.ndarray,
+    requested_attenuation_axis: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    expected = requested_attenuation_axis.size * N_DENSITY
+    files = _files(directory, expected)
+    records = [
+        (run, path, *_parse(path)) for run, path in sorted(files.items())
+    ]
+    attenuation_axis = np.unique([record[2] for record in records])
+    density_axis = np.unique([record[3] for record in records])
+    if not np.array_equal(attenuation_axis, requested_attenuation_axis):
+        raise ValueError(
+            f"attenuation axis {attenuation_axis} differs from requested "
+            f"{requested_attenuation_axis}"
+        )
+    if density_axis.size != N_DENSITY:
+        raise ValueError(f"expected {N_DENSITY} hden values, found {density_axis}")
+
+    raw = np.full(
+        (len(LINES), attenuation_axis.size, density_axis.size, N_T), np.nan
+    )
+    seen = np.zeros((attenuation_axis.size, density_axis.size), dtype=bool)
+    attenuation_index = {float(value): index for index, value in enumerate(attenuation_axis)}
+    density_index = {float(value): index for index, value in enumerate(density_axis)}
+    for _, path, attenuation, density, values in records:
+        i = attenuation_index[float(attenuation)]
+        j = density_index[float(density)]
+        if seen[i, j]:
+            raise ValueError(
+                f"duplicate attenuation/density pair ({attenuation}, {density})"
+            )
+        seen[i, j] = True
         for reported_t, line_values in values.items():
-            k = _temperature_index(reported_t, log_t, files[run])
+            k = _temperature_index(reported_t, log_t, path)
             if line_values is not None and np.isfinite(line_values).all():
                 raw[:, i, j, k] = line_values
-    return log_nh, log_column, raw
-
-
-def _load_jeans(directory: Path, log_t: np.ndarray):
-    files = _files(directory, N_NH)
-    records = [(run, *_parse(path, False)) for run, path in sorted(files.items())]
-    log_nh = np.asarray([record[1] for record in records])
-    if np.any(np.diff(log_nh) <= 0.0):
-        raise ValueError("Jeans density axis is not increasing")
-    raw = np.full((len(LINES), N_NH, N_T), np.nan)
-    for i, (run, _, _, values) in enumerate(records):
-        for reported_t, line_values in values.items():
-            k = _temperature_index(reported_t, log_t, files[run])
-            if line_values is not None and np.isfinite(line_values).all():
-                raw[:, i, k] = line_values
-    return log_nh, raw
+    if not seen.all():
+        raise ValueError("attenuation/density grid is incomplete")
+    return attenuation_axis, density_axis, raw
 
 
 def _payload(raw: np.ndarray) -> dict[str, np.ndarray]:
@@ -161,162 +165,107 @@ def _payload(raw: np.ndarray) -> dict[str, np.ndarray]:
     }
 
 
-def _common_metadata(
-    parameter_file: Path,
-    *,
-    charge_transfer_enabled: bool,
-    cosmic_ray_rate_s: float,
-    cmb_redshift: float | None,
-    molecular_network_enabled: bool,
-) -> dict[str, np.ndarray]:
-    radiation_field = (
-        "Cloudy table HM12 redshift 0 + table ISM filtered by "
-        "extinguish column=21 leak=0"
-    )
-    if cmb_redshift is not None:
-        radiation_field += f" + CMB redshift {cmb_redshift:g}"
-    return {
-        "schema_version": np.asarray(2, dtype=np.int32),
-        "line_keys": np.asarray([item[0] for item in LINES]),
-        "line_labels": np.asarray([item[1] for item in LINES]),
-        "cloudy_version": np.asarray("17.02"),
-        "radiation_field": np.asarray(radiation_field),
-        "cmb_included": np.asarray(cmb_redshift is not None),
-        "cmb_redshift": np.asarray(
-            np.nan if cmb_redshift is None else cmb_redshift, dtype=float
-        ),
-        "external_grackle_hm12_used": np.asarray(False),
-        "composition_label": np.asarray("Cloudy 17.02 default abundances"),
-        "no_h2_molecule_command": np.asarray(not molecular_network_enabled),
-        "molecular_network_enabled": np.asarray(molecular_network_enabled),
-        "molecular_treatment": np.asarray(
-            "Cloudy default; detailed H2 not explicitly requested"
-            if molecular_network_enabled
-            else "disabled by 'no H2 molecule'"
-        ),
-        "no_charge_transfer_command": np.asarray(not charge_transfer_enabled),
-        "charge_transfer_enabled": np.asarray(charge_transfer_enabled),
-        "cosmic_ray_h0_ionization_rate_s": np.asarray(cosmic_ray_rate_s),
-        "grains_added": np.asarray(False),
-        "normalization": np.asarray("local deepest-zone emissivity / n_H^2"),
-        "failed_node_policy": np.asarray("unavailable; no numerical fill"),
-        "parameter_file": np.asarray(parameter_file.name),
-        "parameter_file_sha256": np.asarray(_sha256(parameter_file)),
-    }
-
-
 def main() -> None:
-    parser = argparse.ArgumentParser()
+    root = Path(__file__).resolve().parents[1]
+    parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--stem",
-        default=(
-            "hm2012_native_plus_filtered_ism_cmb_cr_mol_ct_"
-            "defaultabund_sixline"
-        ),
+        default="hm2012_attgrid_ism_nh21_cmb_cr_defaultabund_sixline_jeans",
     )
-    root = Path(__file__).resolve().parents[1]
     parser.add_argument(
         "--runtime-grackle-dir",
         type=Path,
         default=root / "runtime/cloudy_sixline/examples/grackle",
     )
     parser.add_argument("--output-dir", type=Path, default=root / "data")
-    parser.add_argument("--charge-transfer-enabled", action="store_true")
-    parser.add_argument("--cosmic-ray-rate-s", type=float, default=0.0)
-    parser.add_argument("--cmb-redshift", type=float, default=None)
-    parser.add_argument("--molecular-network-enabled", action="store_true")
-    args = parser.parse_args()
-    examples = args.runtime_grackle_dir.resolve()
-    data_dir = args.output_dir.resolve()
-    stem = args.stem
-    log_t = np.linspace(np.log10(T_MIN_K), np.log10(T_MAX_K), N_T)
-
-    column_input = examples / f"{stem}_column_10x10x21_output"
-    jeans_input = examples / f"{stem}_jeans_10x21_output"
-    column_parameter = examples / f"{stem}_column_10x10x21.par"
-    jeans_parameter = examples / f"{stem}_jeans_10x21.par"
-    for parameter_file in (column_parameter, jeans_parameter):
-        if not parameter_file.is_file():
-            raise FileNotFoundError(parameter_file)
-    log_nh, log_column, column_raw = _load_column(column_input, log_t)
-    jeans_log_nh, jeans_raw = _load_jeans(jeans_input, log_t)
-    # CIAOLoop's interval syntax and explicit-value syntax can print the same
-    # grid coordinate with a few last-bit decimal differences.  Require
-    # agreement far below the precision relevant to table interpolation, then
-    # store one canonical density axis in both products.
-    if not np.allclose(log_nh, jeans_log_nh, rtol=0.0, atol=1.0e-12):
-        raise ValueError("column and Jeans density axes differ")
-    jeans_log_nh = log_nh.copy()
-
-    data_dir.mkdir(exist_ok=True)
-    column_output = data_dir / f"cloudy_{stem}_column_10x10x21.npz"
-    jeans_output = data_dir / f"cloudy_{stem}_jeans_10x21.npz"
-    np.savez_compressed(
-        column_output,
-        axis_order=np.asarray("line,log_nH,log_NH,log_T"),
-        geometry=np.asarray("explicit stop column density"),
-        log_nH=log_nh,
-        log_NH=log_column,
-        log_T=log_t,
-        **_payload(column_raw),
-        **_common_metadata(
-            column_parameter,
-            charge_transfer_enabled=args.charge_transfer_enabled,
-            cosmic_ray_rate_s=args.cosmic_ray_rate_s,
-            cmb_redshift=args.cmb_redshift,
-            molecular_network_enabled=args.molecular_network_enabled,
-        ),
+    parser.add_argument("--parameter-file", type=Path, required=True)
+    parser.add_argument(
+        "--hm12-log-nh",
+        type=float,
+        nargs="+",
+        default=(18.0, 18.5, 19.0, 19.5, 20.0, 20.5, 21.0),
     )
+    args = parser.parse_args()
+
+    examples = args.runtime_grackle_dir.expanduser().resolve()
+    output_dir = args.output_dir.expanduser().resolve()
+    parameter_file = args.parameter_file.expanduser().resolve()
+    if not parameter_file.is_file():
+        raise FileNotFoundError(parameter_file)
+    requested_attenuation = np.asarray(args.hm12_log_nh, dtype=float)
+    if requested_attenuation.ndim != 1 or np.any(np.diff(requested_attenuation) <= 0):
+        raise ValueError("HM2012 attenuation axis must be strictly increasing")
+    log_t = np.linspace(np.log10(T_MIN_K), np.log10(T_MAX_K), N_T)
+    input_directory = examples / f"{args.stem}_7x10x21_output"
+    attenuation, density, raw = _load_grid(
+        input_directory, log_t, requested_attenuation
+    )
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / f"cloudy_{args.stem}_7x10x21.npz"
     np.savez_compressed(
-        jeans_output,
-        axis_order=np.asarray("line,log_nH,log_T"),
+        output_path,
+        schema_version=np.asarray(3, dtype=np.int32),
+        axis_order=np.asarray("line,log_NH_attenuation,log_nH,log_T"),
+        line_keys=np.asarray([item[0] for item in LINES]),
+        line_labels=np.asarray([item[1] for item in LINES]),
+        cloudy_version=np.asarray("17.02"),
+        log_NH_attenuation=attenuation,
+        log_nH=density,
+        log_T=log_t,
         geometry=np.asarray("Jeans length with 100 pc maximum"),
         jeans_length_cap_cm=np.asarray(JEANS_CAP_CM),
-        log_nH=jeans_log_nh,
-        log_T=log_t,
-        **_payload(jeans_raw),
-        **_common_metadata(
-            jeans_parameter,
-            charge_transfer_enabled=args.charge_transfer_enabled,
-            cosmic_ray_rate_s=args.cosmic_ray_rate_s,
-            cmb_redshift=args.cmb_redshift,
-            molecular_network_enabled=args.molecular_network_enabled,
+        radiation_field=np.asarray(
+            "HM2012 separately quick-extinguished over log NH=18..21; "
+            "table ISM separately quick-extinguished at log NH=21; CMB z=0"
         ),
+        hm12_attenuation_method=np.asarray("extinguish column=<grid> leak=0"),
+        ism_log_NH_attenuation=np.asarray(21.0),
+        cmb_included=np.asarray(True),
+        cmb_redshift=np.asarray(0.0),
+        external_grackle_hm12_used=np.asarray(False),
+        cosmic_ray_h0_ionization_rate_s=np.asarray(2.0e-17),
+        composition_label=np.asarray("Cloudy 17.02 default abundances"),
+        molecular_treatment=np.asarray(
+            "Cloudy default simple molecular network; detailed H2 not requested"
+        ),
+        charge_transfer_enabled=np.asarray(True),
+        grains_added=np.asarray(False),
+        turbulence_added=np.asarray(False),
+        normalization=np.asarray("local deepest-zone emissivity / n_H^2"),
+        simulation_NH_policy=np.asarray(
+            "clip log10 NH to [18,21], then interpolate; no extrapolation"
+        ),
+        density_temperature_out_of_bounds_policy=np.asarray("raise"),
+        failed_node_policy=np.asarray("unavailable; no numerical fill"),
+        parameter_file=np.asarray(parameter_file.name),
+        parameter_file_sha256=np.asarray(_sha256(parameter_file)),
+        **_payload(raw),
     )
 
-    report = {"products": []}
-    for geometry, output, raw in (
-        ("column", column_output, column_raw),
-        ("jeans", jeans_output, jeans_raw),
-    ):
-        masks = ~np.isfinite(raw)
-        union = np.any(masks, axis=0)
-        report["products"].append({
-            "geometry": geometry,
-            "path": str(output.resolve()),
-            "shape": list(raw.shape),
-            "union_failure_nodes": int(np.count_nonzero(union)),
-            "line_failure_masks_identical": all(
-                np.array_equal(masks[0], masks[index])
-                for index in range(1, len(LINES))
-            ),
-            "failure_nodes": [
-                {
-                    "indices": [int(value) for value in index],
-                    "log_nH": float(log_nh[index[0]]),
-                    **(
-                        {"log_NH": float(log_column[index[1]]),
-                         "log_T": float(log_t[index[2]]),
-                         "temperature_K": float(10.0 ** log_t[index[2]])}
-                        if geometry == "column"
-                        else {"log_T": float(log_t[index[1]]),
-                              "temperature_K": float(10.0 ** log_t[index[1]])}
-                    ),
-                }
-                for index in np.argwhere(union)
-            ],
-        })
-    report_path = data_dir / f"cloudy_{stem}_failure_nodes.json"
+    masks = ~np.isfinite(raw)
+    union = np.any(masks, axis=0)
+    report = {
+        "product": str(output_path),
+        "shape": list(raw.shape),
+        "axis_order": "line,log_NH_attenuation,log_nH,log_T",
+        "union_failure_nodes": int(np.count_nonzero(union)),
+        "line_failure_masks_identical": all(
+            np.array_equal(masks[0], masks[index])
+            for index in range(1, len(LINES))
+        ),
+        "failure_nodes": [
+            {
+                "indices": [int(value) for value in index],
+                "log_NH_attenuation": float(attenuation[index[0]]),
+                "log_nH": float(density[index[1]]),
+                "log_T": float(log_t[index[2]]),
+                "temperature_K": float(10.0 ** log_t[index[2]]),
+            }
+            for index in np.argwhere(union)
+        ],
+    }
+    report_path = output_dir / f"cloudy_{args.stem}_failure_nodes.json"
     report_path.write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps(report, indent=2))
 
