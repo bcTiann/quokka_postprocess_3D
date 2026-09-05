@@ -63,7 +63,10 @@ class CloudySixLineBuildWorkflowTests(unittest.TestCase):
                     value = attenuation + density + temperature
                     lines.append(
                         f"{temperature:.8f}  "
-                        + "  ".join(f"{value + index:.8f}" for index in range(6))
+                        + "  ".join(
+                            f"{value + index:.8f}"
+                            for index in range(len(BUNDLE_LINES))
+                        )
                     )
                 path.write_text("\n".join(lines) + "\n")
 
@@ -72,7 +75,7 @@ class CloudySixLineBuildWorkflowTests(unittest.TestCase):
             )
             np.testing.assert_array_equal(attenuation, np.asarray(HM12_LOG_NH))
             np.testing.assert_allclose(density, np.sort(LOG_NH_DENSITY))
-            self.assertEqual(raw.shape, (6, 7, 10, 21))
+            self.assertEqual(raw.shape, (len(BUNDLE_LINES), 7, 10, 21))
             expected = attenuation[3] + density[4] + log_t[5]
             self.assertAlmostEqual(raw[0, 3, 4, 5], expected, places=6)
 

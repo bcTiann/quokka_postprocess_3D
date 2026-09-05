@@ -67,7 +67,16 @@ from quokka2s.tables import load_table
 from quokka2s.tables.lookup import TableLookup
 
 
-LINE_KEYS = ("cii", "halpha", "hi21", "ciii_977", "ciii_1907", "ciii_1909")
+LINE_KEYS = (
+    "cii",
+    "halpha",
+    "hi21",
+    "ciii_977",
+    "ciii_1907",
+    "ciii_1909",
+    "civ_1548",
+    "civ_1551",
+)
 CO_LINE_KEYS = ("co10", "co21")
 LINE_TITLES = {
     "cii": r"C II 158 $\mu$m",
@@ -76,13 +85,15 @@ LINE_TITLES = {
     "ciii_977": r"C III 977.020 $\AA$",
     "ciii_1907": r"C III] 1906.68 $\AA$",
     "ciii_1909": r"C III] 1908.73 $\AA$",
+    "civ_1548": r"C IV 1548.19 $\AA$",
+    "civ_1551": r"C IV 1550.78 $\AA$",
 }
 CO_LINE_TITLES = {
     "co10": "CO(1-0)",
     "co21": "CO(2-1)",
 }
 REGIME_KEYS = ("T_QUOKKA_lt_3000K", "T_QUOKKA_ge_3000K")
-NEW_KEY = "cloudy_hm2012_attenuation_grid_jeans"
+NEW_KEY = "cloudy_hm2012_attenuation_grid_eightline_jeans"
 NEW_LABEL = "Cloudy HM2012 attenuation grid + filtered Black/ISM"
 REFERENCE_LABELS = {"cii": "DESPOTIC", "halpha": "pipeline", "hi21": "pipeline"}
 
@@ -183,7 +194,7 @@ def _plot_comparison(
     plt.close(fig)
 
 
-def _plot_ciii(
+def _plot_cloudy_carbon(
     path: Path, velocity: np.ndarray, curves: np.ndarray, title: str, label: str
 ) -> None:
     fig, axes = plt.subplots(1, 2, figsize=(13.2, 4.9), sharey=True)
@@ -362,7 +373,7 @@ def _open_unkeyed_field_cache(
 
 def main() -> None:
     root = Path(__file__).resolve().parents[1]
-    stem = "cloudy_hm2012_attgrid_ism_nh21_cmb_cr_defaultabund_sixline_jeans"
+    stem = "cloudy_hm2012_attgrid_ism_nh21_cmb_cr_defaultabund_eightline_jeans"
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--cloudy-table",
@@ -418,7 +429,7 @@ def main() -> None:
     if args.recompute_dvdr and not args.recompute_tdsp:
         raise ValueError("--recompute-dvdr requires --recompute-tdsp")
     if args.output_dir is None:
-        directory = "hm2012_attenuation_grid_filtered_black_ism_sixline"
+        directory = "hm2012_attenuation_grid_filtered_black_ism_eightline"
         if args.los == "z":
             directory += "_LOSz"
         args.output_dir = Path(cfg.OUTPUT_DIR) / directory
@@ -432,11 +443,11 @@ def main() -> None:
     los_token = f"LOS{args.los}"
     spectra_path = (
         args.output_dir /
-        f"{args.filename_tag}_sixline_Tsplit_Rinf_{los_token}.npz"
+        f"{args.filename_tag}_eightline_Tsplit_Rinf_{los_token}.npz"
     )
     report_path = (
         args.output_dir /
-        f"{args.filename_tag}_sixline_Tsplit_Rinf_{los_token}.json"
+        f"{args.filename_tag}_eightline_Tsplit_Rinf_{los_token}.json"
     )
     preflight_path = (
         args.output_dir /
@@ -503,7 +514,9 @@ def main() -> None:
     boltzmann_cgs = float(kb.to_value("erg/K"))
     c_kms = float(SPEED_OF_LIGHT_CGS.to_value("cm/s")) / 1.0e5
     amu_g = 1.66053906660e-24
-    masses = np.asarray((12.01, 1.00794, 1.00794, 12.01, 12.01, 12.01)) * amu_g
+    masses = np.asarray(
+        (12.01, 1.00794, 1.00794, 12.01, 12.01, 12.01, 12.01, 12.01)
+    ) * amu_g
     co_mass = (12.01 + 15.999) * amu_g
     velocity_edges = np.linspace(
         -args.velocity_range_kms, args.velocity_range_kms, args.channels + 1
@@ -869,7 +882,7 @@ def main() -> None:
             output = args.output_dir / (
                 f"{line}_{args.filename_tag}_Tsplit_Rinf_{los_token}.png"
             )
-            _plot_ciii(
+            _plot_cloudy_carbon(
                 output, velocity, spectra[line_index],
                 f"{LINE_TITLES[line]}, LOS {args.los}, " + r"$R=\infty$",
                 args.cloudy_label,

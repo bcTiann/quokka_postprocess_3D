@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Package the completed 7 x 10 x 21 CIAOLoop six-line Jeans grid.
+"""Package the completed 7 x 10 x 21 CIAOLoop eight-line Jeans grid.
 
 Cloudy crash rows remain unavailable NaNs and are recorded in failure masks.
 CIAOLoop's -99 true-zero sentinel becomes an exact zero only in the linear
@@ -24,6 +24,8 @@ LINES = (
     ("ciii_977", "C  3 977.020A", "C_3_977.020A"),
     ("ciii_1907", "C  3 1906.68A", "C_3_1906.68A"),
     ("ciii_1909", "C  3 1908.73A", "C_3_1908.73A"),
+    ("civ_1548", "C  4 1548.19A", "C_4_1548.19A"),
+    ("civ_1551", "C  4 1550.78A", "C_4_1550.78A"),
 )
 N_DENSITY = 10
 N_T = 21
@@ -170,7 +172,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--stem",
-        default="hm2012_attgrid_ism_nh21_cmb_cr_defaultabund_sixline_jeans",
+        default="hm2012_attgrid_ism_nh21_cmb_cr_defaultabund_eightline_jeans",
     )
     parser.add_argument(
         "--runtime-grackle-dir",

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the seven-radiation-field, six-line Cloudy Jeans lookup table.
+"""Build the seven-radiation-field, eight-line Cloudy Jeans lookup table.
 
 The user-facing inputs are the Cloudy 17.02 executable and worker count. This
 orchestrator builds the seven incident SEDs, renders the CIAOLoop parameter
@@ -20,7 +20,7 @@ from pathlib import Path
 import numpy as np
 
 
-STEM = "hm2012_attgrid_ism_nh21_cmb_cr_defaultabund_sixline_jeans"
+STEM = "hm2012_attgrid_ism_nh21_cmb_cr_defaultabund_eightline_jeans"
 SED_DIRECTORY_NAME = "HM12_ATTENUATION_ISM_NH21"
 HM12_LOG_NH = (18.0, 18.5, 19.0, 19.5, 20.0, 20.5, 21.0)
 LOG_NH_DENSITY = (
@@ -42,6 +42,8 @@ LINES = (
     "C  3 977.020A",
     "C  3 1906.68A",
     "C  3 1908.73A",
+    "C  4 1548.19A",
+    "C  4 1550.78A",
 )
 
 
@@ -70,7 +72,7 @@ def _write_parameter_file(
     title = "seven-point smoke" if smoke else "7x10x21 production"
     lines = [
         "#########################################################################",
-        f"## Six-line Jeans {title}: HM2012 attenuation grid + ISM + CMB + CR",
+        f"## Eight-line Jeans {title}: HM2012 attenuation grid + ISM + CMB + CR",
         "#########################################################################",
         f"cloudyExe = {cloudy_exe}",
         f"saveCloudyOutputFiles = {1 if smoke else 0}",
@@ -81,8 +83,8 @@ def _write_parameter_file(
         "test = 0",
         "cloudyRunMode = 4",
         *(f"lineMapLine = {line}" for line in LINES),
-        f"coolingMapTmin = {'1e4' if smoke else '3.6'}",
-        f"coolingMapTmax = {'1e4' if smoke else '1e9'}",
+        f"coolingMapTmin = {'1e5' if smoke else '3.6'}",
+        f"coolingMapTmax = {'1e5' if smoke else '1e9'}",
         f"coolingMapTpoints = {1 if smoke else 21}",
         "coolingScaleFactor = 1",
         "coolingMapUseJeansLength = 1",
@@ -154,8 +156,9 @@ def _validate_smoke_output(directory: Path) -> None:
     }
     found_init: set[str] = set()
     # CIAOLoop applies a few label-specific formatting rules. Read the first
-    # file's exact six labels and require the same ordered header in all seven.
+    # file's exact eight labels and require the same ordered header in all seven.
     canonical_header = None
+    line_maxima = np.full(len(LINES), -np.inf)
     for path in files:
         lines = path.read_text().splitlines()
         found_init.update(line for line in lines if line.startswith("# init "))
@@ -172,9 +175,15 @@ def _validate_smoke_output(directory: Path) -> None:
         values = [float(value) for value in rows[0].split()]
         if not all(np.isfinite(values)):
             raise ValueError(f"non-finite smoke result: {path}")
+        line_maxima = np.maximum(line_maxima, np.asarray(values[1:]))
     if found_init != expected_init:
         raise ValueError(
             f"smoke attenuation fields differ: found={sorted(found_init)}"
+        )
+    if np.any(line_maxima[-2:] <= -90.0):
+        raise ValueError(
+            "C IV smoke lines are absent or zero at every attenuation setup: "
+            f"maxima={line_maxima[-2:].tolist()}"
         )
 
 
@@ -189,7 +198,7 @@ def main() -> None:
     )
     parser.add_argument("--workers", type=int, default=11)
     parser.add_argument(
-        "--runtime-dir", type=Path, default=root / "runtime/cloudy_sixline"
+        "--runtime-dir", type=Path, default=root / "runtime/cloudy_eightline"
     )
     parser.add_argument("--output-dir", type=Path, default=root / "data")
     parser.add_argument(
