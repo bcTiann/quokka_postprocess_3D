@@ -9,10 +9,10 @@ PANELS = (
     ('mass_T_DSP', 'DESPOTIC', 'mass'),
     ('mass_T_2R', 'mixed', 'mass'),
     ('NH_rho', None, 'NH_rho'),
-    ('co10', 'DESPOTIC', 'co10'),
-    ('cii', 'mixed', 'cii'),
     ('halpha', 'mixed', 'halpha'),
     ('hi21', 'mixed', 'hi21'),
+    ('cii', 'mixed', 'cii'),
+    ('co10', 'DESPOTIC', 'co10'),
     ('co21', 'DESPOTIC', 'co21'),
 )
 

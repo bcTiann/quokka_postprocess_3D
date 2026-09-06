@@ -228,7 +228,7 @@ Use `--output-dir` for another run and `--plot-only` to redraw an existing
 histogram bundle without recomputing the emission.
 
 The 3-by-3 layout is mass versus rho and each of T_QUOKKA, T_DESPOTIC,
-and mixed T; mass in the NH-rho plane; then CO(1-0), C II, Halpha, H I,
+and mixed T; mass in the NH-rho plane; then Halpha, H I, C II, CO(1-0),
 and CO(2-1). Mixed T uses T_DESPOTIC below T_QUOKKA=3000 K and
 T_QUOKKA otherwise. Both CO panels always use T_DESPOTIC.
 

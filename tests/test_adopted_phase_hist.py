@@ -8,7 +8,7 @@ from quokka2s.pipeline.tasks.adopted_phase_hist import (
 def test_nine_panels_and_temperature_policy():
     assert [row[0] for row in PANELS] == [
         'mass_T_QK', 'mass_T_DSP', 'mass_T_2R', 'NH_rho',
-        'co10', 'cii', 'halpha', 'hi21', 'co21',
+        'halpha', 'hi21', 'cii', 'co10', 'co21',
     ]
     temperatures = {key: temp for key, temp, _ in PANELS}
     assert temperatures['cii'] == 'mixed'
