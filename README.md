@@ -265,6 +265,14 @@ This run does not change those lookup-boundary rules.
 
 ### Historical standard-task products
 
+For the supplementary Halpha/H I comparison in both temperature regimes, run
+`python scripts/plot_hydrogen_analytic_cloudy_spectra.py`. It reuses the completed
+LOS-z spectral bundle: Cloudy in both regimes, analytic DESPOTIC-density emission
+below 3000 K, and analytic QUOKKA-mu emission above. Both models use T_DESPOTIC
+below the split and T_QUOKKA above. No emissivities are recomputed. PNG/PDF and
+provenance are written under `--output-root`; each pair shares its linear y-axis
+range, with analytic dashed lines above solid Cloudy lines in drawing order.
+
 The older standard-task C+ field uses `T_QUOKKA` as its model selector: cells below
 3000 K use the DESPOTIC GOW/LVG emissivity, while cells at or above 3000 K use
 the HM2012 shielded Cloudy table at `(T_QUOKKA, n_H, N_H)`. Temperatures above
