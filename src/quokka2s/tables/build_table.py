@@ -50,6 +50,11 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
              "use these endpoints with 35 x 35 x 53 logarithmic nodes.",
     )
     parser.add_argument(
+        "--checkpoint-dir", type=Path,
+        help="Save each completed point and resume matching completed points from "
+             "this directory; incompatible settings or corrupt results are rejected.",
+    )
+    parser.add_argument(
         "--force",
         action="store_true",
         help="overwrite an existing output table",
@@ -129,12 +134,19 @@ def main(argv: list[str] | None = None) -> None:
         print(f"[build_table] {name} range = {values[0]:.16e} .. {values[-1]:.16e}")
 
     started = time.time()
+    checkpoint_options = {}
+    if args.checkpoint_dir is not None:
+        checkpoint_options = {
+            "checkpoint_dir": args.checkpoint_dir.expanduser().resolve(),
+            "checkpoint_context": {"snapshot_domain": domain},
+        }
     table = build_gow_lvg_table(
         nH_grid,
         col_grid,
         dVdr_grid,
         show_progress=True,
         workers=args.workers,
+        **checkpoint_options,
     )
     elapsed = time.time() - started
 

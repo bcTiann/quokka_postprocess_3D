@@ -204,6 +204,7 @@ python scripts/measure_despotic_snapshot_domain.py \
 python -m quokka2s.tables.build_table \
   --snapshot-domain output/despotic_candidate/snapshot_domain.json \
   --output output/despotic_candidate/despotic_table.npz \
+  --checkpoint-dir output/despotic_candidate/checkpoints \
   --workers -1
 ```
 
@@ -212,6 +213,13 @@ pipeline's hydrogen density, full z-direction column calculation, and velocity
 gradient (with halo cells at slab boundaries). The resulting extrema set all
 three table bounds with 35 x 35 x 53 logarithmic nodes. The NPZ records the
 snapshot domain. Omitting `--snapshot-domain` retains the older fixed ranges.
+
+With `--checkpoint-dir`, each completed point (including failed points and
+their diagnostic attempts) is saved atomically. Run the same command again
+after an interruption to reuse completed points. Grid, species, snapshot
+context, solver settings, source files, and collision data must still match;
+incompatible or corrupt saved results are rejected. Worker count may change.
+Without this option, results are saved only when the entire table completes.
 
 Keep the new raw table separate until the full simulation coverage check is
 reviewed. Table-node failures alone do not determine whether the table is

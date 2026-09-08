@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from functools import partial
+from pathlib import Path
 from typing import Protocol, Sequence
 
 import numpy as np
@@ -12,6 +13,7 @@ from tqdm import tqdm
 from tqdm_joblib import tqdm_joblib
 
 from .models import AttemptRecord, DespoticTable, LineLumResult, SpeciesLineGrid, SpeciesRecord
+from .checkpoint import PointCheckpoints, source_metadata
 from .solver import CO21_TABLE_TOKEN, LINE_RESULT_FIELDS, solve_gow_lvg_point, validated_solver_metadata
 
 
@@ -50,6 +52,8 @@ def build_gow_lvg_table(
     species_specs: Sequence[SpeciesSpec] = GOW_LVG_SPECIES,
     show_progress: bool = True,
     workers: int | None = None,
+    checkpoint_dir: Path | str | None = None,
+    checkpoint_context: dict | None = None,
 ) -> DespoticTable:
     """Build a true 3-input ``(nH, N_H, dVdr)`` GOW/LVG table.
 
@@ -59,12 +63,35 @@ def build_gow_lvg_table(
 
     ``species_specs`` is exposed only so the sparse smoke test can exercise a
     cheaper subset.  The production CLI always uses :data:`GOW_LVG_SPECIES`.
+
+    ``checkpoint_dir`` optionally commits every completed point, including
+    failures, for reuse after interruption. Reuse requires identical grid,
+    species, source/data hashes, solver metadata and ``checkpoint_context``
+    (for example, the source snapshot domain). Worker count may change.
     """
     build_metadata = validated_solver_metadata()
     specs = tuple(species_specs)
     nH_vals = nH_grid.sample()
     col_vals = col_grid.sample()
     dvdr_vals = dVdr_grid.sample()
+    options = dict(specs=specs, build_metadata=build_metadata,
+                   show_progress=show_progress, workers=workers)
+    if checkpoint_dir is not None:
+        manifest = {
+            "axes": [nH_vals.tolist(), col_vals.tolist(), dvdr_vals.tolist()],
+            "species": [[spec.name, spec.is_emitter] for spec in specs],
+            "solver_metadata": build_metadata,
+            "source_metadata": source_metadata(),
+            "configuration": {"Tg_init": 100.0, "context": checkpoint_context},
+        }
+        with PointCheckpoints.open(Path(checkpoint_dir), manifest) as checkpoints:
+            return _build_sampled_table(nH_vals, col_vals, dvdr_vals,
+                                        checkpoints=checkpoints, **options)
+    return _build_sampled_table(nH_vals, col_vals, dvdr_vals, **options)
+
+
+def _build_sampled_table(nH_vals, col_vals, dvdr_vals, *, specs, build_metadata,
+                         show_progress, workers, checkpoints=None) -> DespoticTable:
     shape = (len(nH_vals), len(col_vals), len(dvdr_vals))
     num_rows, num_cols, num_dvdr = shape
 
@@ -103,19 +130,27 @@ def build_gow_lvg_table(
 
         for col_idx, col_val in enumerate(col_vals):
             for dvdr_idx, dvdr_val in enumerate(dvdr_vals):
-                result = solve_gow_lvg_point(
-                    nH_val=float(nH_vals[row_idx]),
-                    colDen_val=float(col_val),
-                    dvdr_val=float(dvdr_val),
-                    species=emitter_names,
-                    abundance_only=abundance_only,
-                    row_idx=row_idx,
-                    col_idx=col_idx,
-                    dvdr_idx=dvdr_idx,
-                    Tg_init=100.0,
-                    log_failures=True,
-                    attempt_log=attempts_row,
-                )
+                indices = (row_idx, col_idx, dvdr_idx)
+                coordinates = (float(nH_vals[row_idx]), float(col_val), float(dvdr_val))
+                saved = checkpoints.load(indices, coordinates) if checkpoints else None
+                if saved is None:
+                    point_attempts: list[AttemptRecord] = []
+                    result = solve_gow_lvg_point(
+                        nH_val=coordinates[0], colDen_val=coordinates[1], dvdr_val=coordinates[2],
+                        species=emitter_names,
+                        abundance_only=abundance_only,
+                        row_idx=row_idx,
+                        col_idx=col_idx,
+                        dvdr_idx=dvdr_idx,
+                        Tg_init=100.0,
+                        log_failures=True,
+                        attempt_log=point_attempts,
+                    )
+                    if checkpoints:
+                        checkpoints.save(indices, coordinates, result, point_attempts)
+                else:
+                    result, point_attempts = saved
+                attempts_row.extend(point_attempts)
                 line_results, chem_abunds, mu, cv, eint, tg, energy_terms, failed = result
                 failure_row[col_idx, dvdr_idx] = failed
                 if failed:
