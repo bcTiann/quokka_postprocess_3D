@@ -117,8 +117,12 @@ def build_gow_lvg_table(
                     attempt_log=attempts_row,
                 )
                 line_results, chem_abunds, mu, cv, eint, tg, energy_terms, failed = result
-                tg_row[col_idx, dvdr_idx] = tg
                 failure_row[col_idx, dvdr_idx] = failed
+                if failed:
+                    # Failed attempts remain diagnostic records, never inputs
+                    # to interpolation or the valid-node cleaning support.
+                    continue
+                tg_row[col_idx, dvdr_idx] = tg
                 mu_row[col_idx, dvdr_idx] = mu
                 cv_row[col_idx, dvdr_idx] = cv
                 eint_row[col_idx, dvdr_idx] = eint

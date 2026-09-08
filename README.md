@@ -79,9 +79,11 @@ pip install -e .                      # the quokka2s package itself
 > pinned commit of the official DESPOTIC 2.2 source because 2.2 is not published
 > on PyPI (and PyPI 2.1 predates the GOW chemistry network used here).
 > Then run `python scripts/apply_despotic_gow_patch.py` to refresh `mu`, `muH`,
-> and `qIon` whenever GOW writes a new chemical composition. Repeat this step
-> after reinstalling DESPOTIC; the script checks the source version and is safe
-> to rerun. Use `--check` to verify the patch without modifying the package.
+> and `qIon` whenever GOW writes a new chemical composition, followed by
+> `python scripts/apply_despotic_chemistry_patch.py` to check chemical integration
+> success and retry failed segments from their original state. Run both after
+> reinstalling DESPOTIC. Both scripts check the source version and are safe to
+> rerun; use `--check` to verify either patch without modifying the package.
 
 Verify the install:
 
@@ -170,18 +172,33 @@ are configurable:
 New builds use the shared He/C/O/Si abundances in
 [`abundances.py`](src/quokka2s/tables/abundances.py), derived from the adopted
 QUOKKA X/Y/Z and Cloudy reference metal pattern. They record composition and
-solver provenance in the NPZ file and require the GOW refresh patch. Existing
+solver provenance in the NPZ file and require both DESPOTIC patches above. Existing
 tables retain their previous results; their missing provenance remains unknown,
 and the extension tool rejects mixing them with newly calculated nodes.
 
-As of 2026-09-08, the shared-abundance solver has passed five representative
-point checks with monitored, strict chemical integration. A full replacement
-table has not been generated: remaining chemical-integration and CO-level
-convergence failures must be resolved before the full rebuild.
+Chemical integrations use `rtol=1e-8`, `atol=1e-12`, and `mxstep=10000` and must
+return complete, finite, successful output. A failed segment retries from the
+same initial state using local integration time. A thermal subsolve failure
+restarts the point on a fresh cloud with a 1000 K initial upper temperature
+bracket, expanded by decades until a valid sign change is found. This changes
+the numerical search while retaining the heating, cooling, and chemical model.
+
+Final checks require nonnegative species, conserved network hydrogen,
+consistent composition-derived quantities, the adopted metal/helium totals,
+converged LVG level populations, and gas/dust relative thermal
+residuals below `1e-4`. Line outputs reuse those checked populations. Failed raw
+points contain NaN physical outputs and retain diagnostic attempt records.
+
+As of 2026-09-08, 59 direct solver checks passed: five representative cells,
+27 interior grid points, and 27 points spanning the full grid boundaries.
+The maximum gas/dust relative thermal residuals were below `3.8e-5`.
+These checks are not a full replacement table; existing production tables and
+pipeline defaults have not been replaced.
 
 ```bash
 python -m pip install -e ".[tables]"
 python scripts/apply_despotic_gow_patch.py
+python scripts/apply_despotic_chemistry_patch.py
 python -m quokka2s.tables.build_table \
   --output output_tables_3D_GOW_LVG/despotic_table_co10_co21.npz \
   --workers -1 --force

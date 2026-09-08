@@ -8,6 +8,10 @@ from typing import Mapping
 import numpy as np
 
 
+class ThermalSolveError(RuntimeError):
+    """A DESPOTIC thermal solve did not produce a valid converged state."""
+
+
 @dataclass(frozen=True)
 class LogGrid:
     min_value: float
