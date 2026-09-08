@@ -119,6 +119,7 @@ def _compute_strip(
         cell.comp.xHI = float(h_abundance[dvdr_idx])
         cell.comp.xHplus = float(hp_abundance[dvdr_idx])
         cell.comp.xe = float(e_abundance[dvdr_idx])
+        # This replay is restricted to legacy tables with the original setup.
         cell.comp.xHe = 0.1
 
         # Match GOW.applyAbundances(): DESPOTIC's bulk composition does not
@@ -228,6 +229,12 @@ def augment_tables(
     clean = load_table(clean_source)
     if CO21_TABLE_TOKEN in raw.species_data or CO21_TABLE_TOKEN in clean.species_data:
         raise ValueError("source table already contains CO21")
+    if raw.build_metadata is not None or clean.build_metadata is not None:
+        raise ValueError(
+            "CO21 augmentation only supports legacy tables without build metadata. "
+            "The current quokka2s.tables.build_table already computes CO21 with "
+            "the recorded composition and solver settings; rebuild that full table."
+        )
 
     for raw_axis, clean_axis, name in (
         (raw.nH_values, clean.nH_values, "nH"),

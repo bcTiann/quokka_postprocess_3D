@@ -167,6 +167,18 @@ builder, then apply the conservative convex-hull cleaner. The production grid
 and physics are fixed; only output path, worker count, and overwrite permission
 are configurable:
 
+New builds use the shared He/C/O/Si abundances in
+[`abundances.py`](src/quokka2s/tables/abundances.py), derived from the adopted
+QUOKKA X/Y/Z and Cloudy reference metal pattern. They record composition and
+solver provenance in the NPZ file and require the GOW refresh patch. Existing
+tables retain their previous results; their missing provenance remains unknown,
+and the extension tool rejects mixing them with newly calculated nodes.
+
+As of 2026-09-08, the shared-abundance solver has passed five representative
+point checks with monitored, strict chemical integration. A full replacement
+table has not been generated: remaining chemical-integration and CO-level
+convergence failures must be resolved before the full rebuild.
+
 ```bash
 python -m pip install -e ".[tables]"
 python scripts/apply_despotic_gow_patch.py

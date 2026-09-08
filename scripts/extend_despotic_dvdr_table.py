@@ -29,7 +29,7 @@ from quokka2s.tables.models import (
     SpeciesLineGrid,
     SpeciesRecord,
 )
-from quokka2s.tables.solver import LINE_RESULT_FIELDS
+from quokka2s.tables.solver import LINE_RESULT_FIELDS, validated_solver_metadata
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -54,12 +54,28 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _require_matching_build_metadata(reference, candidate, context: str) -> None:
+    if reference is None or candidate is None:
+        raise ValueError(
+            f"{context}: build provenance is unknown; rebuild the full table with "
+            "quokka2s.tables.build_table instead of reusing legacy nodes."
+        )
+    if reference != candidate:
+        raise ValueError(
+            f"{context}: composition or solver build metadata differs; "
+            "rebuild the full table instead of mixing old and new nodes."
+        )
+
+
 def _concatenate_dvdr_tables(tables: list[DespoticTable]) -> DespoticTable:
     """Join checkpoint tables along their dV/dr axis."""
     if not tables:
         raise ValueError("at least one checkpoint table is required")
     reference = tables[0]
     for table in tables[1:]:
+        _require_matching_build_metadata(
+            reference.build_metadata, table.build_metadata, "checkpoint tables"
+        )
         if not np.array_equal(reference.nH_values, table.nH_values):
             raise ValueError("checkpoint nH axes differ")
         if not np.array_equal(reference.col_density_values, table.col_density_values):
@@ -151,6 +167,7 @@ def _concatenate_dvdr_tables(tables: list[DespoticTable]) -> DespoticTable:
         chemistry_network=reference.chemistry_network,
         escape_geometry=reference.escape_geometry,
         temperature_mode=reference.temperature_mode,
+        build_metadata=reference.build_metadata,
     )
 
 
@@ -203,6 +220,7 @@ def _remap_attempts(
 
 
 def _merge_tables(old: DespoticTable, added: DespoticTable) -> DespoticTable:
+    _require_matching_build_metadata(old.build_metadata, added.build_metadata, "table merge")
     if not np.array_equal(old.nH_values, added.nH_values):
         raise ValueError("nH axes differ")
     if not np.array_equal(old.col_density_values, added.col_density_values):
@@ -298,6 +316,7 @@ def _merge_tables(old: DespoticTable, added: DespoticTable) -> DespoticTable:
         chemistry_network=old.chemistry_network,
         escape_geometry=old.escape_geometry,
         temperature_mode=old.temperature_mode,
+        build_metadata=old.build_metadata,
     )
 
 
@@ -320,6 +339,8 @@ def main() -> None:
         )
 
     old = load_table(source)
+    build_metadata = validated_solver_metadata()
+    _require_matching_build_metadata(old.build_metadata, build_metadata, "source table")
     expected_old = legacy_dvdr_values()
     if not np.allclose(old.dVdr_values, expected_old, rtol=2.0e-14, atol=0.0):
         raise ValueError("source table does not have the expected legacy dV/dr axis")
@@ -339,6 +360,9 @@ def main() -> None:
         part_path = parts_dir / f"added_dvdr_{index:02d}.npz"
         if part_path.is_file():
             part = load_table(part_path)
+            _require_matching_build_metadata(
+                build_metadata, part.build_metadata, f"checkpoint {part_path}"
+            )
             if part.tg_final.shape != (old.nH_values.size, old.col_density_values.size, 1):
                 raise ValueError(f"invalid checkpoint shape: {part_path}")
             if not np.array_equal(part.nH_values, old.nH_values):

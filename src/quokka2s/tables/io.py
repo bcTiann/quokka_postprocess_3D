@@ -1,6 +1,7 @@
 """Versioned NPZ I/O for the canonical 3D GOW/LVG table."""
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Iterable, Mapping
 
@@ -72,6 +73,8 @@ def save_table(table: DespoticTable, path: str | Path) -> None:
     }
     if table.failure_mask is not None:
         payload["failure_mask"] = np.asarray(table.failure_mask, dtype=bool)
+    if table.build_metadata is not None:
+        payload["build_metadata_json"] = np.array(json.dumps(dict(table.build_metadata), sort_keys=True))
     for name, record in table.species_data.items():
         payload[f"{name}_abundance"] = np.asarray(record.abundance)
         if record.line is not None:
@@ -129,6 +132,10 @@ def load_table(path: str | Path) -> DespoticTable:
             if "failure_mask" in blob.files else None
         )
         attempts = _attempts_from_array(blob["attempts"]) if "attempts" in blob.files else ()
+        build_metadata = (
+            json.loads(str(np.asarray(blob["build_metadata_json"]).item()))
+            if "build_metadata_json" in blob.files else None
+        )
         return DespoticTable(
             species_data=species_data,
             tg_final=np.asarray(blob["tg_final"], dtype=float),
@@ -144,4 +151,5 @@ def load_table(path: str | Path) -> DespoticTable:
             chemistry_network=_scalar_string(blob, "chemistry_network", "GOW"),
             escape_geometry=_scalar_string(blob, "escape_geometry", "LVG"),
             temperature_mode=_scalar_string(blob, "temperature_mode", "iterateDust"),
+            build_metadata=build_metadata,
         )

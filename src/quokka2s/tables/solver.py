@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import importlib.util
+from importlib.metadata import distribution
 import io
 import logging
 import os
@@ -12,6 +14,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Mapping, Sequence
 
+from .abundances import GOW_ELEMENTAL_ABUNDANCES, abundance_metadata
 from .models import AttemptRecord, LineLumResult
 
 
@@ -20,6 +23,8 @@ LINE_RESULT_FIELDS = ("freq", "intIntensity", "intTB", "lumPerH", "tau", "tauDus
 DEFAULT_EMITTERS = ("CO", "C", "C+", "HCO+", "O")
 LVG_GEOMETRY = "LVG"
 CO21_TABLE_TOKEN = "CO21"
+DESPOTIC_REQUIRED_COMMIT = "ed18e5669adb7306f795a3d30d8919995793bc61"
+GOW_REFRESH_SOURCE_SHA256 = "0abcc94bd0a7e72d0fc1c8f826fa1aad45b5ad0f7bff41ba178a8ed20f1b1ed3"
 
 warnings.filterwarnings(
     "ignore",
@@ -29,6 +34,35 @@ warnings.filterwarnings(
 )
 
 _NAN_LINE_RESULT = LineLumResult(*([float("nan")] * len(LINE_RESULT_FIELDS)))
+
+
+def validated_solver_metadata() -> dict[str, object]:
+    """Check the reviewed GOW refresh before building and record provenance."""
+    package = distribution("despotic")
+    source = Path(package.locate_file("despotic/chemistry/GOW.py"))
+    digest = hashlib.sha256(source.read_bytes()).hexdigest()
+    if digest != GOW_REFRESH_SOURCE_SHA256:
+        raise RuntimeError(
+            "DESPOTIC table builds require the reviewed GOW composition refresh. "
+            "Run `python scripts/apply_despotic_gow_patch.py` with the table-building "
+            f"Python environment before rebuilding. Found GOW.py SHA256 {digest}."
+        )
+    return {
+        "composition": abundance_metadata(),
+        "despotic": {
+            "version": package.version,
+            "required_upstream_commit": DESPOTIC_REQUIRED_COMMIT,
+            "gow_source_sha256": digest,
+            "gow_patch": "computeDerived after applyAbundances hydrogen consistency check",
+        },
+        "numerical_settings": {
+            "chemistry_tolerance": 1e-6,
+            "chemistry_max_time_s": 1e22,
+            "max_temperature_iterations": 200,
+            "initial_gas_temperature_K": 100.0,
+            "odeint": "unchanged DESPOTIC defaults; integration status is not additionally checked",
+        },
+    }
 
 
 def _configure_despotic_home() -> None:
@@ -173,7 +207,7 @@ def solve_gow_lvg_point(
         cell.sigmaNT = float(sigma_nt_cms)
         cell.comp.xoH2 = 0.1
         cell.comp.xpH2 = 0.4
-        cell.comp.xHe = 0.1
+        cell.comp.xHe = GOW_ELEMENTAL_ABUNDANCES["xHe"]
         cell.dust.alphaGD = 3.2e-34
         cell.dust.sigma10 = 2.0e-25
         cell.dust.sigmaPE = 1.0e-21
@@ -196,6 +230,7 @@ def solve_gow_lvg_point(
         with contextlib.redirect_stdout(output):
             converged = cell.setChemEq(
                 network=GOW,
+                info=dict(GOW_ELEMENTAL_ABUNDANCES),
                 evolveTemp="iterateDust",
                 tol=1e-6,
                 maxTime=1e22,
@@ -210,7 +245,7 @@ def solve_gow_lvg_point(
         last_eint = float(cell.comp.computeEint(cell.Tg))
         last_tg = float(cell.Tg)
         last_abundances = dict(cell.chemabundances)
-        last_energy = _flatten_energy_terms(dict(cell.dEdt()))
+        last_energy = _flatten_energy_terms(dict(cell.dEdt(escapeProbGeom=LVG_GEOMETRY)))
 
         lines: dict[str, LineLumResult] = {}
         with contextlib.redirect_stdout(output):

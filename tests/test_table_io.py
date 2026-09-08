@@ -4,6 +4,7 @@ from dataclasses import replace
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 
@@ -20,10 +21,13 @@ from quokka2s.tables.augment_co21 import (
     _fill_in_hull,
     _source_invalid_mask,
     _with_co21,
+    augment_tables,
 )
+from quokka2s.tables.abundances import abundance_metadata
 from quokka2s.tables.solver import (
     _extract_line_result,
     _extract_transition_result,
+    validated_solver_metadata,
 )
 
 
@@ -62,9 +66,65 @@ class TableIOTests(unittest.TestCase):
         self.assertEqual(loaded.escape_geometry, "LVG")
         self.assertEqual(loaded.attempts[0].dvdr_idx, 1)
         self.assertEqual(loaded.attempts[0].dvdr, 1e-14)
+        self.assertIsNone(loaded.build_metadata)
         lookup = TableLookup(loaded)
         actual = lookup.temperature(10.0, 1e21, 1e-14)
         self.assertEqual(float(actual), float(source.tg_final[1, 1, 1]))
+
+    def test_build_provenance_survives_round_trip_and_co21_augmentation(self):
+        metadata = {
+            "composition": abundance_metadata(),
+            "despotic": {"gow_patch": "test recorded patch", "gow_source_sha256": "test hash"},
+        }
+        source = replace(_table(), build_metadata=metadata)
+        fields = {
+            field: source.tg_final * 21.0
+            for field in ("freq", "intIntensity", "intTB", "lumPerH", "tau", "tauDust")
+        }
+        augmented = _with_co21(source, fields)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "table.npz"
+            save_table(augmented, path)
+            loaded = load_table(path)
+        self.assertEqual(dict(loaded.build_metadata), metadata)
+        self.assertEqual(
+            loaded.build_metadata["composition"]["gow_elemental_abundances"]["xHe"],
+            0.09296180232949455,
+        )
+
+    def test_legacy_unknown_composition_is_not_assigned_on_resave(self):
+        with tempfile.TemporaryDirectory() as directory:
+            original = Path(directory) / "old.npz"
+            resaved = Path(directory) / "resaved.npz"
+            save_table(_table(), original)
+            loaded = load_table(original)
+            self.assertIsNone(loaded.build_metadata)
+            save_table(loaded, resaved)
+            with np.load(resaved, allow_pickle=True) as blob:
+                self.assertNotIn("build_metadata_json", blob.files)
+
+    def test_build_guard_rejects_unreviewed_gow_source(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "GOW.py"
+            source.write_text("# A GOW implementation without the reviewed refresh\n")
+            with patch("quokka2s.tables.solver.distribution") as package:
+                package.return_value.locate_file.return_value = source
+                with self.assertRaisesRegex(RuntimeError, "apply_despotic_gow_patch.py"):
+                    validated_solver_metadata()
+
+    def test_legacy_co21_replay_rejects_recorded_new_composition_before_work(self):
+        legacy = _table()
+        known = replace(legacy, build_metadata={"composition": abundance_metadata()})
+        for sources in ((known, known), (known, legacy), (legacy, known)):
+            with (
+                self.subTest(recorded=tuple(table.build_metadata is not None for table in sources)),
+                patch("quokka2s.tables.augment_co21.load_table", side_effect=sources),
+                patch("quokka2s.tables.augment_co21._configure_despotic_home") as initialize,
+            ):
+                with self.assertRaisesRegex(ValueError, "only supports legacy tables"):
+                    augment_tables(*(Path(name) for name in ("raw", "clean", "new", "new_clean")))
+                initialize.assert_not_called()
+        self.assertIsNone(legacy.build_metadata)
 
     def test_co21_record_round_trips_and_looks_up_independently(self):
         source = _table()
@@ -167,6 +227,7 @@ class TableIOTests(unittest.TestCase):
         self.assertIsNone(loaded.attempts[0].dvdr_idx)
         self.assertIsNone(loaded.attempts[0].dvdr)
         self.assertEqual(loaded.chemistry_network, "GOW")
+        self.assertIsNone(loaded.build_metadata)
 
 
 if __name__ == "__main__":

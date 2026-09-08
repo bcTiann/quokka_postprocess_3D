@@ -12,7 +12,7 @@ from tqdm import tqdm
 from tqdm_joblib import tqdm_joblib
 
 from .models import AttemptRecord, DespoticTable, LineLumResult, SpeciesLineGrid, SpeciesRecord
-from .solver import CO21_TABLE_TOKEN, LINE_RESULT_FIELDS, solve_gow_lvg_point
+from .solver import CO21_TABLE_TOKEN, LINE_RESULT_FIELDS, solve_gow_lvg_point, validated_solver_metadata
 
 
 LOGGER = logging.getLogger(__name__)
@@ -60,6 +60,7 @@ def build_gow_lvg_table(
     ``species_specs`` is exposed only so the sparse smoke test can exercise a
     cheaper subset.  The production CLI always uses :data:`GOW_LVG_SPECIES`.
     """
+    build_metadata = validated_solver_metadata()
     specs = tuple(species_specs)
     nH_vals = nH_grid.sample()
     col_vals = col_grid.sample()
@@ -200,4 +201,5 @@ def build_gow_lvg_table(
         failure_mask=failure_mask,
         energy_terms=energy_fields or None,
         attempts=tuple(attempts),
+        build_metadata=build_metadata,
     )

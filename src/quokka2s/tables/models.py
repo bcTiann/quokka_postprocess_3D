@@ -110,6 +110,8 @@ class DespoticTable:
     chemistry_network: str = "GOW"
     escape_geometry: str = "LVG"
     temperature_mode: str = "iterateDust"
+    # None means that the source table did not record its build provenance.
+    build_metadata: Mapping[str, object] | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "species_data", MappingProxyType(dict(self.species_data)))
@@ -125,6 +127,8 @@ class DespoticTable:
             raise ValueError("failure_mask shape must match tg_final")
         if self.energy_terms is not None:
             object.__setattr__(self, "energy_terms", MappingProxyType(dict(self.energy_terms)))
+        if self.build_metadata is not None:
+            object.__setattr__(self, "build_metadata", MappingProxyType(dict(self.build_metadata)))
 
     @property
     def species(self) -> tuple[str, ...]:
