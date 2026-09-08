@@ -78,6 +78,10 @@ pip install -e .                      # the quokka2s package itself
 > ever want to, run `python -m pip install -e ".[tables]"`. The extra installs a
 > pinned commit of the official DESPOTIC 2.2 source because 2.2 is not published
 > on PyPI (and PyPI 2.1 predates the GOW chemistry network used here).
+> Then run `python scripts/apply_despotic_gow_patch.py` to refresh `mu`, `muH`,
+> and `qIon` whenever GOW writes a new chemical composition. Repeat this step
+> after reinstalling DESPOTIC; the script checks the source version and is safe
+> to rerun. Use `--check` to verify the patch without modifying the package.
 
 Verify the install:
 
@@ -165,6 +169,7 @@ are configurable:
 
 ```bash
 python -m pip install -e ".[tables]"
+python scripts/apply_despotic_gow_patch.py
 python -m quokka2s.tables.build_table \
   --output output_tables_3D_GOW_LVG/despotic_table_co10_co21.npz \
   --workers -1 --force
