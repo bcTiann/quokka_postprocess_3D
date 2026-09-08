@@ -1,12 +1,14 @@
 """Build the canonical snapshot-covering GOW/LVG DESPOTIC lookup table.
 
-This is the only production table-building entry point.  Chemistry, escape
-geometry, grid ranges, and species are intentionally fixed so a command cannot
-silently create a physically different table under the canonical filename.
+Chemistry, escape geometry, and species are fixed. Use --snapshot-domain for
+measured all-cell input extrema; omission retains the legacy grid for older
+commands. The output records the measured domain when supplied.
 """
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
+import json
 import time
 from pathlib import Path
 
@@ -43,11 +45,33 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="joblib worker count (-1 uses all CPUs; default: -1)",
     )
     parser.add_argument(
+        "--snapshot-domain", type=Path,
+        help="All-cell extrema JSON from scripts/measure_despotic_snapshot_domain.py; "
+             "use these endpoints with 35 x 35 x 53 logarithmic nodes.",
+    )
+    parser.add_argument(
         "--force",
         action="store_true",
         help="overwrite an existing output table",
     )
     return parser.parse_args(argv)
+
+
+def _snapshot_grids(path: Path):
+    domain = json.loads(path.read_text())
+    if domain.get("selection") != "all simulation cells" or domain.get("total_cells", 0) <= 0:
+        raise ValueError("Domain must describe all simulation cells")
+    grids = []
+    for name, count in (("nH", 35), ("NH", 35), ("dVdr", 53)):
+        axis = domain["axes"][name]
+        lo, hi = float(axis["minimum"]), float(axis["maximum"])
+        if (axis["count"] != domain["total_cells"] or axis["invalid_count"] != 0
+                or not np.isfinite([lo, hi]).all() or not 0.0 < lo < hi):
+            raise ValueError(f"Invalid or incomplete snapshot bounds: {name}")
+        values = np.geomspace(lo, hi, count)
+        values[0], values[-1] = lo, hi
+        grids.append(ExplicitGrid(tuple(values)))
+    return (*grids, domain)
 
 
 def _write_readme(path: Path, elapsed: float, table) -> Path:
@@ -64,8 +88,8 @@ def _write_readme(path: Path, elapsed: float, table) -> Path:
         "network         : GOW\n"
         "escape geometry : LVG\n"
         "evolveTemp      : iterateDust\n"
-        f"grid            : nH {N_H_RANGE[0]:.0e}..{N_H_RANGE[1]:.0e}, "
-        f"NH {COL_DEN_RANGE[0]:.0e}..{COL_DEN_RANGE[1]:.0e}, "
+        f"grid            : nH {table.nH_values[0]:.12e}..{table.nH_values[-1]:.12e}, "
+        f"NH {table.col_density_values[0]:.12e}..{table.col_density_values[-1]:.12e}, "
         f"dVdr {table.dVdr_values[0]:.6e}..{table.dVdr_values[-1]:.6e}, "
         f"shape {table.tg_final.shape}\n"
         f"species         : {species}\n"
@@ -85,10 +109,14 @@ def main(argv: list[str] | None = None) -> None:
     if output.exists() and not args.force:
         raise SystemExit(f"Refusing to overwrite existing table: {output}\nPass --force to replace it.")
 
-    nH_grid = LogGrid(*N_H_RANGE, num_points=GRID_POINTS)
-    col_grid = LogGrid(*COL_DEN_RANGE, num_points=GRID_POINTS)
-    dVdr_values = extended_dvdr_values()
-    dVdr_grid = ExplicitGrid(tuple(dVdr_values))
+    domain = None
+    if args.snapshot_domain:
+        nH_grid, col_grid, dVdr_grid, domain = _snapshot_grids(args.snapshot_domain)
+    else:
+        nH_grid = LogGrid(*N_H_RANGE, num_points=GRID_POINTS)
+        col_grid = LogGrid(*COL_DEN_RANGE, num_points=GRID_POINTS)
+        dVdr_grid = ExplicitGrid(tuple(extended_dvdr_values()))
+    dVdr_values = dVdr_grid.sample()
     species = ", ".join(s.name + ("(em)" if s.is_emitter else "") for s in GOW_LVG_SPECIES)
 
     print("[build_table] network = GOW")
@@ -96,6 +124,9 @@ def main(argv: list[str] | None = None) -> None:
     print(f"[build_table] species = {species}")
     print(f"[build_table] grid = {GRID_POINTS} x {GRID_POINTS} x {len(dVdr_values)}")
     print(f"[build_table] output = {output}")
+    for name, grid in (("nH", nH_grid), ("NH", col_grid), ("dVdr", dVdr_grid)):
+        values = grid.sample()
+        print(f"[build_table] {name} range = {values[0]:.16e} .. {values[-1]:.16e}")
 
     started = time.time()
     table = build_gow_lvg_table(
@@ -106,6 +137,12 @@ def main(argv: list[str] | None = None) -> None:
         workers=args.workers,
     )
     elapsed = time.time() - started
+
+    if domain is not None:
+        metadata = dict(table.build_metadata)
+        metadata["snapshot_domain"] = domain
+        metadata["grid_sampling"] = "35 x 35 x 53 logarithmic nodes; exact snapshot endpoints"
+        table = replace(table, build_metadata=metadata)
 
     output.parent.mkdir(parents=True, exist_ok=True)
     save_table(table, output)

@@ -199,13 +199,22 @@ pipeline defaults have not been replaced.
 python -m pip install -e ".[tables]"
 python scripts/apply_despotic_gow_patch.py
 python scripts/apply_despotic_chemistry_patch.py
+python scripts/measure_despotic_snapshot_domain.py \
+  --output output_tables_3D_GOW_LVG/snapshot_domain.json
 python -m quokka2s.tables.build_table \
+  --snapshot-domain output_tables_3D_GOW_LVG/snapshot_domain.json \
   --output output_tables_3D_GOW_LVG/despotic_table_co10_co21.npz \
   --workers -1 --force
 python scripts/fill_table_convex_hull_only.py \
   output_tables_3D_GOW_LVG/despotic_table_co10_co21.npz \
   output_tables_3D_GOW_LVG/despotic_table_co10_co21_clean.npz
 ```
+
+The snapshot-domain scan evaluates every cell at full resolution using the
+pipeline's hydrogen density, full z-direction column calculation, and velocity
+gradient (with halo cells at slab boundaries). The resulting extrema set all
+three table bounds with 35 x 35 x 53 logarithmic nodes. The NPZ records the
+snapshot domain. Omitting `--snapshot-domain` retains the older fixed ranges.
 
 If the older raw and clean tables are already present, add CO(2–1) without
 repeating the expensive chemistry/thermal solve:
