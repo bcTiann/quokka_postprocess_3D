@@ -1,4 +1,4 @@
-"""Strict sampler for the seven-field, six-line Cloudy Jeans table."""
+"""Strict sampler for Cloudy tables with optional model-depth dependence."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ import numpy as np
 
 TOUCH_EPS = 1.0e-12
 EXPECTED_AXIS_ORDER = "line,log_NH_attenuation,log_nH,log_T"
+DEPTH_AXIS_ORDER = EXPECTED_AXIS_ORDER + ",log_L_model_pc"
 
 
 class CloudyFailureTouchError(RuntimeError):
@@ -36,8 +37,13 @@ class CloudySixLineDiagnostics:
 
 
 def _validate_axis(name: str, axis: np.ndarray) -> None:
-    if axis.ndim != 1 or axis.size < 2 or np.any(np.diff(axis) <= 0.0):
-        raise ValueError(f"{name} must be a strictly increasing 1D axis")
+    if (
+        axis.ndim != 1
+        or axis.size < 2
+        or not np.isfinite(axis).all()
+        or np.any(np.diff(axis) <= 0.0)
+    ):
+        raise ValueError(f"{name} must be a finite, strictly increasing 1D axis")
 
 
 def _brackets(
@@ -52,13 +58,15 @@ def _brackets(
 
 
 class CloudySixLineLookup:
-    """Trilinear lookup in attenuation column, density, and temperature.
+    """Multilinear lookup in column, density, temperature, and optional depth.
 
     The simulation column is clipped only on the attenuation axis. Density and
     temperature must lie inside the table. Positive corners are interpolated
     in log emissivity coefficient; if an exact-zero Cloudy corner contributes,
     interpolation switches to the non-negative linear coefficient. Failed
-    Cloudy nodes are never silently filled.
+    Cloudy nodes are never silently filled. Four-dimensional tables require an
+    explicit ``model_depth_pc`` query. Legacy three-dimensional Jeans tables
+    remain readable, but cannot accept a custom model depth.
     """
 
     def __init__(self, path: str | Path):
@@ -79,6 +87,16 @@ class CloudySixLineLookup:
             if missing:
                 raise ValueError(f"Cloudy table is missing fields: {missing}")
             axis_order = str(np.asarray(source["axis_order"]).item())
+            if axis_order not in (EXPECTED_AXIS_ORDER, DEPTH_AXIS_ORDER):
+                raise ValueError(f"unexpected Cloudy axis order: {axis_order!r}")
+            self.axis_order = axis_order
+            if axis_order == DEPTH_AXIS_ORDER:
+                if "log_L_model_pc" not in source.files:
+                    raise ValueError("Cloudy depth table is missing log_L_model_pc")
+                required.add("log_L_model_pc")
+                self.log_L_model_pc = np.asarray(source["log_L_model_pc"], dtype=float)
+            else:
+                self.log_L_model_pc = None
             self.line_keys = tuple(
                 str(value) for value in np.asarray(source["line_keys"]).tolist()
             )
@@ -101,8 +119,6 @@ class CloudySixLineLookup:
                 if name not in required
             }
 
-        if axis_order != EXPECTED_AXIS_ORDER:
-            raise ValueError(f"unexpected Cloudy axis order: {axis_order!r}")
         _validate_axis("log_NH_attenuation", self.log_NH_attenuation)
         _validate_axis("log_nH", self.log_nH)
         _validate_axis("log_T", self.log_T)
@@ -112,6 +128,13 @@ class CloudySixLineLookup:
             self.log_nH.size,
             self.log_T.size,
         )
+        if self.log_L_model_pc is not None:
+            _validate_axis("log_L_model_pc", self.log_L_model_pc)
+            with np.errstate(over="ignore", under="ignore"):
+                depth_bounds = np.power(10.0, self.log_L_model_pc[[0, -1]])
+            if not np.isfinite(depth_bounds).all() or np.any(depth_bounds <= 0.0):
+                raise ValueError("log_L_model_pc must define finite positive depths")
+            expected += (self.log_L_model_pc.size,)
         for name, array in (
             ("log_emissivity_per_nH2", self.log_emissivity_per_nH2),
             ("emissivity_per_nH2", self.emissivity_per_nH2),
@@ -137,31 +160,48 @@ class CloudySixLineLookup:
             float(10.0 ** self.log_NH_attenuation[-1]),
         )
 
-    def sample(
+    @property
+    def model_depth_bounds_pc(self) -> tuple[float, float] | None:
+        """Return the explicit depth domain, or None for a legacy Jeans table."""
+        if self.log_L_model_pc is None:
+            return None
+        return (
+            float(10.0**self.log_L_model_pc[0]),
+            float(10.0**self.log_L_model_pc[-1]),
+        )
+
+    def _prepare_query(
         self,
         temperature_K,
         n_H_cm3,
         column_density_H_cm2,
-    ) -> CloudySixLineSample:
-        temperature, n_h, column = np.broadcast_arrays(
+        model_depth_pc,
+    ):
+        inputs = [
             np.asarray(temperature_K, dtype=float),
             np.asarray(n_H_cm3, dtype=float),
             np.asarray(column_density_H_cm2, dtype=float),
-        )
-        if not (
-            np.isfinite(temperature).all()
-            and np.isfinite(n_h).all()
-            and np.isfinite(column).all()
-        ):
+        ]
+        if self.log_L_model_pc is not None:
+            if model_depth_pc is None:
+                raise ValueError(
+                    "model_depth_pc is required for a four-dimensional Cloudy table"
+                )
+            inputs.append(np.asarray(model_depth_pc, dtype=float))
+        elif model_depth_pc is not None:
+            raise ValueError("model_depth_pc is not supported by a legacy Jeans table")
+        inputs = np.broadcast_arrays(*inputs)
+        if not all(np.isfinite(value).all() for value in inputs):
             raise ValueError("Cloudy lookup inputs must all be finite")
-        if np.any((temperature <= 0.0) | (n_h <= 0.0) | (column <= 0.0)):
+        if any(np.any(value <= 0.0) for value in inputs):
             raise ValueError("Cloudy lookup inputs must all be positive")
 
+        temperature, n_h, column = inputs[:3]
         original_shape = temperature.shape
         log_column = np.log10(column).ravel()
         below = log_column < self.log_NH_attenuation[0]
         above = log_column > self.log_NH_attenuation[-1]
-        coordinates = (
+        coordinates = [
             np.clip(
                 log_column,
                 self.log_NH_attenuation[0],
@@ -169,7 +209,7 @@ class CloudySixLineLookup:
             ),
             np.log10(n_h).ravel(),
             np.log10(temperature).ravel(),
-        )
+        ]
         for name, axis, coordinate in (
             ("log_nH", self.log_nH, coordinates[1]),
             ("log_T", self.log_T, coordinates[2]),
@@ -181,19 +221,48 @@ class CloudySixLineLookup:
                 raise ValueError(
                     f"{name} is outside [{axis[0]:.8g}, {axis[-1]:.8g}]"
                 )
-        coordinates = (
-            coordinates[0],
-            np.clip(coordinates[1], self.log_nH[0], self.log_nH[-1]),
-            np.clip(coordinates[2], self.log_T[0], self.log_T[-1]),
-        )
+        coordinates[1] = np.clip(coordinates[1], self.log_nH[0], self.log_nH[-1])
+        coordinates[2] = np.clip(coordinates[2], self.log_T[0], self.log_T[-1])
+        axes = [self.log_NH_attenuation, self.log_nH, self.log_T]
+        if self.log_L_model_pc is not None:
+            depth = inputs[3]
+            lower, upper = self.model_depth_bounds_pc
+            # Permit only floating-point conversion roundoff (e.g. a capped
+            # 100 pc value returned as 100.00000000000001 pc), not physical
+            # extrapolation or a choice to replace a cell's model depth.
+            if np.any(depth < lower - 4.0 * np.spacing(lower)) or np.any(
+                depth > upper + 4.0 * np.spacing(upper)
+            ):
+                raise ValueError(
+                    f"model_depth_pc is outside [{lower:.8g}, {upper:.8g}]"
+                )
+            coordinates.append(
+                np.clip(
+                    np.log10(depth).ravel(),
+                    self.log_L_model_pc[0], self.log_L_model_pc[-1],
+                )
+            )
+            axes.append(self.log_L_model_pc)
         brackets = tuple(
             _brackets(axis, coordinate)
-            for axis, coordinate in zip(
-                (self.log_NH_attenuation, self.log_nH, self.log_T), coordinates
-            )
+            for axis, coordinate in zip(axes, coordinates)
+        )
+        return original_shape, below, above, brackets
+
+    def sample(
+        self,
+        temperature_K,
+        n_H_cm3,
+        column_density_H_cm2,
+        *,
+        model_depth_pc=None,
+    ) -> CloudySixLineSample:
+        """Sample coefficients; depth is mandatory for an explicit-depth table."""
+        original_shape, below, above, brackets = self._prepare_query(
+            temperature_K, n_H_cm3, column_density_H_cm2, model_depth_pc
         )
 
-        n_points = coordinates[0].size
+        n_points = below.size
         linear_sum = np.zeros((len(self.line_keys), n_points))
         log_sum = np.zeros_like(linear_sum)
         zero_support = np.zeros_like(linear_sum, dtype=bool)
@@ -247,58 +316,14 @@ class CloudySixLineLookup:
         temperature_K,
         n_H_cm3,
         column_density_H_cm2,
+        *,
+        model_depth_pc=None,
     ) -> CloudySixLineDiagnostics:
         """Return all failed-node touches without aborting at the first cell."""
-        temperature, n_h, column = np.broadcast_arrays(
-            np.asarray(temperature_K, dtype=float),
-            np.asarray(n_H_cm3, dtype=float),
-            np.asarray(column_density_H_cm2, dtype=float),
+        original_shape, below, above, brackets = self._prepare_query(
+            temperature_K, n_H_cm3, column_density_H_cm2, model_depth_pc
         )
-        if not (
-            np.isfinite(temperature).all()
-            and np.isfinite(n_h).all()
-            and np.isfinite(column).all()
-        ):
-            raise ValueError("Cloudy lookup inputs must all be finite")
-        if np.any((temperature <= 0.0) | (n_h <= 0.0) | (column <= 0.0)):
-            raise ValueError("Cloudy lookup inputs must all be positive")
-
-        original_shape = temperature.shape
-        log_column = np.log10(column).ravel()
-        below = log_column < self.log_NH_attenuation[0]
-        above = log_column > self.log_NH_attenuation[-1]
-        coordinates = (
-            np.clip(
-                log_column,
-                self.log_NH_attenuation[0],
-                self.log_NH_attenuation[-1],
-            ),
-            np.log10(n_h).ravel(),
-            np.log10(temperature).ravel(),
-        )
-        for name, axis, coordinate in (
-            ("log_nH", self.log_nH, coordinates[1]),
-            ("log_T", self.log_T, coordinates[2]),
-        ):
-            tolerance = 1.0e-12 * max(1.0, abs(axis[0]), abs(axis[-1]))
-            if np.any(coordinate < axis[0] - tolerance) or np.any(
-                coordinate > axis[-1] + tolerance
-            ):
-                raise ValueError(
-                    f"{name} is outside [{axis[0]:.8g}, {axis[-1]:.8g}]"
-                )
-        coordinates = (
-            coordinates[0],
-            np.clip(coordinates[1], self.log_nH[0], self.log_nH[-1]),
-            np.clip(coordinates[2], self.log_T[0], self.log_T[-1]),
-        )
-        brackets = tuple(
-            _brackets(axis, coordinate)
-            for axis, coordinate in zip(
-                (self.log_NH_attenuation, self.log_nH, self.log_T), coordinates
-            )
-        )
-        failure_weight = np.zeros((len(self.line_keys), coordinates[0].size))
+        failure_weight = np.zeros((len(self.line_keys), below.size))
 
         def visit(
             axis_number: int,
@@ -314,7 +339,7 @@ class CloudySixLineLookup:
             visit(axis_number + 1, indices + [lower], weight * (1.0 - fraction))
             visit(axis_number + 1, indices + [upper], weight * fraction)
 
-        visit(0, [], np.ones(coordinates[0].size))
+        visit(0, [], np.ones(below.size))
         touched = failure_weight > TOUCH_EPS
         return CloudySixLineDiagnostics(
             failure_touched=touched.reshape((len(self.line_keys), *original_shape)),

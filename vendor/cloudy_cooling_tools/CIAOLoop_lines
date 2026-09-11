@@ -92,6 +92,8 @@ my $cloudyRunMode = 0;
 
 # Save all output from Cloudy.
 my $saveCloudyOutputFiles = 1;
+# Raw wait status for retained per-state diagnostics; not a solver control.
+my $lastCloudyProcessStatus;
 
 # Save only the files necessary for table creation.
 my $saveMinimumOutputFiles = 0;
@@ -1441,6 +1443,8 @@ sub processCommands {
 sub runCloudy {
     my ($inputFile,$outputFile,@commands) = @_;
 
+    $lastCloudyProcessStatus = undef;
+
     # if this is a reprocess run, return success with no warnings
     if ($reprocess_run) {
       return (0, ());
@@ -1464,6 +1468,8 @@ sub runCloudy {
     else {
 	system("$cloudyExe < $inputFile > $outputFile");
     }
+
+    $lastCloudyProcessStatus = $?;
 
     # check for warnings or a crash
     my (@results) = &checkForCrash($outputFile);
@@ -3448,6 +3454,8 @@ sub lineMapMode {
     my $outputFile = $keyName . ".cloudyOut";
     my $lineFile = $keyName . ".lines";
     my $physicalConditionsFile = $keyName . ".physical";
+    my $radiusFile = $keyName . ".radius";
+    my $processStatusFile = $keyName . ".process";
     my $warningFile = $keyName . ".warnings";
     my $dataOutputFile = $keyName . ".dat";
 
@@ -3460,6 +3468,8 @@ sub lineMapMode {
 	unlink $outputFile if (-e $outputFile);
 	unlink $lineFile if (-e $lineFile);
         unlink $physicalConditionsFile if (-e $physicalConditionsFile);
+        unlink $radiusFile if (-e $radiusFile);
+        unlink $processStatusFile if (-e $processStatusFile);
 	unlink $warningFile if (-e $warningFile);
 	unlink $dataOutputFile if (-e $dataOutputFile);
     }
@@ -3491,6 +3501,7 @@ sub lineMapMode {
     my $tempOutputFile = $outputFile . $tempFileSuffix;
     my $tempLineFile = $lineFile . $tempFileSuffix;
     my $tempPhysicalConditionsFile = $physicalConditionsFile . $tempFileSuffix;
+    my $tempRadiusFile = $radiusFile . $tempFileSuffix;
 
     # create file header
     open (OUT, ">$dataOutputFile") or die "Can't open $dataOutputFile to write the header.\n";
@@ -3546,10 +3557,18 @@ sub lineMapMode {
         }
         push @runCommands, "end of lines\n";
         push @runCommands, "punch last physical conditions file = \"$tempPhysicalConditionsFile\"\n";
+        if ($saveCloudyOutputFiles) {
+            push @runCommands, "save last radius outer \"$tempRadiusFile\"\n";
+        }
 
 	# run Cloudy once or twice, depending on below
 	my $cloudyCrashed = 0;
 	my @warnings = ();
+
+        # An early crash must not inherit a previous temperature's saved state.
+        unless ($reprocess_run) {
+            unlink $tempLineFile, $tempPhysicalConditionsFile, $tempRadiusFile;
+        }
 
 	# run Cloudy and get warnings and crash flag
 	($cloudyCrashed,@warnings) = &runCloudy($tempInputFile,$tempOutputFile,@runCommands);
@@ -3569,6 +3588,27 @@ sub lineMapMode {
         if ($reprocess_run) {
             if (&makeTempFile($tempPhysicalConditionsFile, $separator)) {
                 $cloudyCrashed = 1;
+            }
+        }
+
+        # Preserve successful and failed attempts for per-state validation.
+        # Save commands only add diagnostics; geometry and solver controls stay unchanged.
+        if ($saveCloudyOutputFiles) {
+            unless ($reprocess_run) {
+                open (STATUS, ">>$processStatusFile") or die "Cannot append $processStatusFile\n";
+                printf STATUS "%.6e\t%d\n", $temperature,
+                    (defined($lastCloudyProcessStatus) ? $lastCloudyProcessStatus : -1);
+                close (STATUS);
+            }
+            foreach my $pair ([$inputFile, $tempInputFile, "Input"],
+                             [$outputFile, $tempOutputFile, "Output"],
+                             [$lineFile, $tempLineFile, "Line punch"],
+                             [$physicalConditionsFile, $tempPhysicalConditionsFile, "Physical conditions"],
+                             [$radiusFile, $tempRadiusFile, "Radius"]) {
+                if (-e $pair->[1]) {
+                    &pushFile($pair->[0], $pair->[1],
+                              (sprintf "## %s for T = %.3e.\n", $pair->[2], $temperature));
+                }
             }
         }
 
@@ -3608,12 +3648,6 @@ sub lineMapMode {
 				}
 			}
 
-	    # append temp file contents to larger file, if someone wants to keep this stuff
-	    if ($saveCloudyOutputFiles) {
-		&pushFile($inputFile,$tempInputFile,(sprintf "## Input for T = %.3e.\n", $temperature));
-		&pushFile($outputFile,$tempOutputFile,(sprintf "## Output for T = %.3e.\n", $temperature));
-		&pushFile($lineFile,$tempLineFile,(sprintf "## Line punch for T = %.3e.\n", $temperature));
-	    }
 
 	    # append user specified output files
 	    foreach my $userFile (@userFiles) {
@@ -3635,10 +3669,11 @@ sub lineMapMode {
     unlink $tempInputFile,
     $tempOutputFile,
     $tempLineFile,
-    $tempPhysicalConditionsFile;
+    $tempPhysicalConditionsFile,
+    $tempRadiusFile;
 
-    # delete Cloudy input/output files
-    unlink $inputFile,$outputFile;
+    # Keep requested diagnostic evidence after the map finishes.
+    unlink $inputFile,$outputFile unless ($saveCloudyOutputFiles);
 
     # delete user specified temp files
     foreach my $userFile (@userFiles) {

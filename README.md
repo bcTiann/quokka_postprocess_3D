@@ -91,7 +91,52 @@ Verify the install:
 python -c "import quokka2s, yt; print('yt', yt.__version__); print('quokka2s', quokka2s.__file__)"
 ```
 
-### Rebuild the current six-line Cloudy tables
+### Current candidate: four-dimensional Cloudy tables (37 lengths)
+
+The current candidate grid is 7 incident columns × 10 hydrogen densities ×
+21 temperatures × 37 model depths: 54,390 states, with eight lines per state.
+It uses the shared composition and Cloudy 17.02 default internal zoning.
+The local production run was stopped at the user's request; the full table
+has not been completed or adopted.
+
+Clone the working branch with:
+
+```bash
+git clone --branch codex/cloudy-emission-backup https://github.com/bcTiann/quokka_postprocess_3D.git
+cd quokka_postprocess_3D
+python -m pip install -e .
+```
+
+Cloudy 17.02 (including its data directory) must be installed separately on
+the target machine; the macOS executable cannot be used on Setonix.
+Perl is also required. Generated SEDs, tables, and simulation snapshots are
+not tracked in Git. To regenerate the incident fields and then build the
+candidate, use the following inside an allocated compute job, replacing
+the executable path and worker count with the actual allocation:
+
+```bash
+export CLOUDY_EXE=/absolute/path/to/cloudy/c17.02/source/cloudy.exe
+export CLOUDY_WORKERS=6
+python scripts/build_hm12_filtered_ism_sed.py \
+  --cloudy-exe "$CLOUDY_EXE" \
+  --output-dir runtime/cloudy_depth/HM12_ATTENUATION_ISM_NH21
+python scripts/build_cloudy_model_depth_tables.py \
+  --cloudy-exe "$CLOUDY_EXE" \
+  --sed-dir runtime/cloudy_depth/HM12_ATTENUATION_ISM_NH21 \
+  --output-dir output/cloudy_depth_37 \
+  --workers "$CLOUDY_WORKERS" --depth-points 37 --run
+```
+
+Use `--prepare-only` instead of `--run` to inspect the table inputs without
+launching the table build. Use a fresh output directory for a new run;
+interrupted directories are not a portable restart mechanism. Completion
+of the builder is not a convergence check. The separate
+`validate_cloudy_model_depth_maps.py`, `build_cloudy_model_depth_bundle.py`,
+and `check_cloudy_model_depth_coverage.py` scripts provide validation,
+packing, and snapshot coverage checks (see their `--help`). Coverage requires
+the separately transferred snapshot and accepted DESPOTIC checkpoint.
+
+### Previous six-line Cloudy table workflow
 
 The portable Cloudy workflow is independent of the QUOKKA snapshot pipeline.
 It requires a separately compiled Cloudy 17.02 executable. From a fresh clone:
