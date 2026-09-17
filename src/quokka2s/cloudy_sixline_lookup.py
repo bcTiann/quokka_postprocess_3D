@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from pathlib import Path
 
 import numpy as np
+from .tables.abundances import reject_superseded_composition
 
 
 TOUCH_EPS = 1.0e-12
@@ -69,9 +71,15 @@ class CloudySixLineLookup:
     remain readable, but cannot accept a custom model depth.
     """
 
-    def __init__(self, path: str | Path):
+    def __init__(self, path: str | Path, *, allow_superseded_composition: bool = False):
         self.path = Path(path)
         with np.load(self.path, allow_pickle=False) as source:
+            if not allow_superseded_composition:
+                if "composition_label" in source.files:
+                    reject_superseded_composition(str(source["composition_label"].item()))
+                if "provenance_json" in source.files:
+                    provenance = json.loads(str(source["provenance_json"].item()))
+                    reject_superseded_composition(provenance.get("abundance", {}).get("setup"))
             required = {
                 "axis_order",
                 "line_keys",

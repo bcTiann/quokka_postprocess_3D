@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prepare or explicitly run shared-composition, fixed-depth Cloudy maps.
+"""Prepare or explicitly run default-abundance, fixed-depth Cloudy maps.
 
 Preparation never launches Cloudy. Execution requires --run, uses CIAOLoop's
 existing -np worker mechanism, and retains raw outputs for later per-state
@@ -34,7 +34,7 @@ from scripts.build_cloudy_model_depth_bundle import (
 )
 from scripts.cloudy_model_depth_common import LOG_DEPTH_PC, LOG_T, PC_IN_CM, common_commands, sha256
 
-STEM = "hm2012_attgrid_ism_nh21_cmb_cr_sharedabund_eightline_fixeddepth"
+STEM = "hm2012_attgrid_ism_nh21_cmb_cr_defaultabund_eightline_fixeddepth"
 MANIFEST_NAME = "build_manifest.json"
 
 

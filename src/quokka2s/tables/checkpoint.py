@@ -160,6 +160,12 @@ class PointCheckpoints:
         row, col, dvdr = indices
         return self.directory / f"row-{row:05d}" / f"point-{col:05d}-{dvdr:05d}.json"
 
+    def prepare_rows(self, count: int) -> None:
+        """Durably create shared row directories before dispatching workers."""
+        for row in range(count):
+            self._path((row, 0, 0)).parent.mkdir(exist_ok=True)
+        _sync_directory(self.directory)
+
     def load(self, indices, coordinates):
         path = self._path(indices)
         if not path.exists():
@@ -187,7 +193,8 @@ class PointCheckpoints:
     def save(self, indices, coordinates, result, attempts) -> None:
         path = self._path(indices)
         if not path.parent.exists():
-            path.parent.mkdir()
+            # Also support direct point writers without prepare_rows().
+            path.parent.mkdir(exist_ok=True)
             _sync_directory(self.directory)
         if path.exists():
             raise RuntimeError(f"Refusing to overwrite completed checkpoint: {path}")

@@ -1,8 +1,8 @@
 """Convert paired simulation states into explicit-depth Cloudy queries.
 
 This opt-in interface does not choose emission branches or adopt a table.
-DESPOTIC T and mu must come from the same accepted table query. The caller
-supplies QUOKKA internal (not total) energy density and a separately
+DESPOTIC supplies the cold-gas temperature. The Jeans estimate fixes mu=1;
+legacy energy and mu arguments remain accepted. The caller supplies a separately
 authorized exclusion mask; invalid cells are never excluded automatically.
 """
 from __future__ import annotations
@@ -66,10 +66,10 @@ def prepare_cloudy_cell_queries(
     boltzmann_erg_K: float, gravitational_cm3_g_s2: float,
     parsec_cm: float, authorized_excluded=None,
 ) -> CloudyCellQueries:
-    """Use shared X, actual rho, paired T/mu, and the agreed 100 pc cap.
+    """Use the simulation density conversion, actual rho, mu=1 and a 100 pc cap.
 
     ``authorized_excluded`` is an explicit boolean array supplied by the
-    snapshot-specific policy. Only cold cells with unavailable DESPOTIC T/mu
+    snapshot-specific policy. Only cold cells with unavailable DESPOTIC temperature
     may be excluded here. The caller must verify the approved snapshot and
     cell IDs before constructing that mask. Other invalid states raise.
     QUOKKA temperature, density and foreground column must always be valid,
@@ -93,9 +93,9 @@ def prepare_cloudy_cell_queries(
         if mask.dtype != np.bool_:
             raise ValueError("authorized_excluded must be explicitly boolean")
         excluded = np.broadcast_to(mask, rho.shape).copy()
-    paired_valid = np.isfinite(td) & (td > 0) & np.isfinite(mud) & (mud > 0)
+    paired_valid = np.isfinite(td) & (td > 0)
     if np.any(excluded & ((tq >= 3000) | paired_valid)):
-        raise ValueError("Authorized exclusions must be cold cells with unavailable DESPOTIC T/mu")
+        raise ValueError("Authorized exclusions must be cold cells with unavailable DESPOTIC temperature")
     state = derive_model_depth(
         rho, tq, u, td, mud, hydrogen_mass_g=hydrogen_mass_g,
         boltzmann_erg_K=boltzmann_erg_K, gravitational_cm3_g_s2=gravitational_cm3_g_s2,

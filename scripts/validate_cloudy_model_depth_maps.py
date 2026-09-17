@@ -128,7 +128,7 @@ def _input_issues(text: str, *, column: float, density: float, log_t: float, dep
                 or not np.isclose(float(temperature[0][2]), expected_t, rtol=1e-12, atol=5.1e-7)):
             raise ValueError("input constant temperature differs from manifest")
         abundance = [parts for parts in tokens if parts[0].lower() in ("abundances", "element", "metals")]
-        if len(abundance) != 3 or abundance[0] != ["abundances", "default.abn"]:
+        if abundance != [["abundances", "default.abn"]]:
             raise ValueError("input includes conflicting abundance commands or ordering")
         line_start = [i for i, row in enumerate(rows) if row.startswith("save last lines")]
         if len(line_start) != 1:

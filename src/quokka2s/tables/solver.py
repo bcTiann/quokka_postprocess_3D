@@ -357,7 +357,6 @@ def _solve_gow_lvg_point_once(
         with contextlib.redirect_stdout(output):
             converged = cell.setChemEq(
                 network=GOW,
-                info=dict(GOW_ELEMENTAL_ABUNDANCES),
                 evolveTemp="iterateDust",
                 tol=1e-6,
                 maxTime=1e22,

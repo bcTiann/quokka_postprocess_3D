@@ -1,4 +1,4 @@
-"""Inputs and direct-output checks for the shared-composition depth tables."""
+"""Inputs and direct-output checks for default-abundance depth tables."""
 
 from __future__ import annotations
 
@@ -8,7 +8,6 @@ from pathlib import Path
 
 import numpy as np
 
-from quokka2s.tables.abundances import GOW_ELEMENTAL_ABUNDANCES, METAL_REFERENCE_SCALE
 from scripts.build_cloudy_sixline_tables import LINES, SED_DIRECTORY_NAME
 
 PC_IN_CM = 3.0856775809623245e18  # Same yt conversion as the snapshot depth scan.
@@ -26,11 +25,7 @@ def sha256(path: Path) -> str:
 
 
 def composition_commands() -> list[str]:
-    return [
-        'abundances "default.abn"',
-        f'element helium abundance {GOW_ELEMENTAL_ABUNDANCES["xHe"]:.17g} linear',
-        f'metals {METAL_REFERENCE_SCALE:.17g} linear',
-    ]
+    return ['abundances "default.abn"']
 
 
 def common_commands() -> list[str]:
@@ -45,7 +40,7 @@ def direct_input(root: str, *, log_nH: float, log_T: float,
     # Match CIAOLoop's actual six-digit temperature serialization.
     temperature = float(f'{10.0 ** log_T:.6e}')
     return '\n'.join([
-        'title shared composition fixed model depth', *common_commands(),
+        'title default abundances fixed model depth', *common_commands(),
         f'hden {log_nH:.17g}',
         f'init "{SED_DIRECTORY_NAME}/logNH{log_NH:g}.out"',
         f'radius 1e30 {PC_IN_CM * 10.0 ** log_L_pc:.17g} linear',
@@ -62,8 +57,6 @@ def reference_log_abundances(default_abn: Path) -> dict[str, float]:
     if len(rows) != 30:
         raise ValueError('Expected the complete H--Zn default abundance pattern')
     values = np.array([float(row[1]) for row in rows])
-    values[1] = GOW_ELEMENTAL_ABUNDANCES['xHe']
-    values[2:] *= METAL_REFERENCE_SCALE
     return dict(zip(ELEMENT_SYMBOLS, np.log10(values).tolist()))
 
 
@@ -107,7 +100,7 @@ def inspect_direct_output(root: Path, *, log_nH: float, log_T: float,
     else:
         abundance_error = max(abs(composition[k] - value) for k, value in expected_abundances.items())
         if abundance_error > 5.1e-5:
-            issues.append('reported abundance differs from shared composition')
+            issues.append('reported abundance differs from Cloudy defaults')
     result = dict(valid=False, issues=issues, stop_reasons=stops, notices=notices,
                   final_summary=summaries[-1] if summaries else None,
                   local_convergence_failures=[int(v) for v in failure_counts[-1]] if failure_counts else [0,0,0,0],

@@ -91,7 +91,29 @@ Verify the install:
 python -c "import quokka2s, yt; print('yt', yt.__version__); print('quokka2s', quokka2s.__file__)"
 ```
 
-### Current candidate: four-dimensional Cloudy tables (37 lengths)
+### Current settings (2026-09-18)
+
+Jeans length uses fixed `mu=1` in both temperature regimes, the actual cell
+mass density, and the existing 100 pc cap. Temperature selection remains
+DESPOTIC below `T_QUOKKA=3000 K` and QUOKKA otherwise. The legacy simulation
+conversion from mass density to `nH` is unchanged; it does not specify either
+table's composition.
+
+Cloudy uses unscaled C17.02 `default.abn`, including He/H=0.1. DESPOTIC uses
+GOW defaults: He/H=0.1, C/H=1.6e-4, O/H=3.2e-4, Si/H=1.7e-6.
+DESPOTIC's chemical-state refresh and checked-integration fixes still apply;
+its thermodynamic mean molecular weight is not fixed to one.
+
+The previously generated XYZ-corrected tables and their coverage/derived
+products are historical and need rebuilding/revalidation for this setup.
+Readers reject that recorded composition by default. For historical inspection
+only, `load_table` and `CloudySixLineLookup` accept
+`allow_superseded_composition=True`; this does not relabel or update the data.
+Tables lacking composition provenance remain unknown. New build checkpoints
+and manifests use a distinct composition identifier and cannot resume the old
+XYZ-corrected builds. No table recomputation is triggered by changing the code.
+
+### Historical 37-depth Cloudy build
 
 The current candidate grid is 7 incident columns × 10 hydrogen densities ×
 21 temperatures × 37 model depths: 54,390 states, with eight lines per state.
@@ -214,9 +236,9 @@ builder, then apply the conservative convex-hull cleaner. The production grid
 and physics are fixed; only output path, worker count, and overwrite permission
 are configurable:
 
-New builds use the shared He/C/O/Si abundances in
-[`abundances.py`](src/quokka2s/tables/abundances.py), derived from the adopted
-QUOKKA X/Y/Z and Cloudy reference metal pattern. They record composition and
+New builds use the native GOW He/C/O/Si abundances recorded in
+[`abundances.py`](src/quokka2s/tables/abundances.py), independently of Cloudy.
+They record composition and
 solver provenance in the NPZ file and require both DESPOTIC patches above. Existing
 tables retain their previous results; their missing provenance remains unknown,
 and the extension tool rejects mixing them with newly calculated nodes.
@@ -265,6 +287,18 @@ after an interruption to reuse completed points. Grid, species, snapshot
 context, solver settings, source files, and collision data must still match;
 incompatible or corrupt saved results are rejected. Worker count may change.
 Without this option, results are saved only when the entire table completes.
+
+DESPOTIC builds use a persistent process pool that takes one grid point per
+task, instead of assigning an entire density layer to one worker. Finished
+points are assembled immediately by grid index, with diagnostics kept in
+canonical grid order. Progress counts completed points, including resumed
+points. Native-library thread limits are set to one in parallel workers;
+`--workers 1` executes directly in the calling process. On a cluster, pass
+the worker count appropriate to the CPUs allocated to this single-node job.
+The scheduling change preserves solver parameters and per-point checkpoints.
+Because checkpoint manifests include source hashes, builds made with the old
+scheduler need a separate checkpoint directory; incompatible manifests remain
+rejected.
 
 Keep the new raw table separate until the full simulation coverage check is
 reviewed. Table-node failures alone do not determine whether the table is

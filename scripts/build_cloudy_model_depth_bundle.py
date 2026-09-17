@@ -90,7 +90,7 @@ def _validate_parameter_file(path: Path, axes: dict, pc_in_cm: float) -> dict:
             if template and template[0].lower() == "radius":
                 radius_loops.append((template, values))
             elif template and template[0].lower() in ("abundances", "element", "metals", "grains"):
-                raise ValueError("composition-changing loops are incompatible with the shared composition")
+                raise ValueError("composition-changing loops are incompatible with the current default composition")
             continue
         if "=" in line:
             name, value = line.split("=", 1)
@@ -106,30 +106,10 @@ def _validate_parameter_file(path: Path, axes: dict, pc_in_cm: float) -> dict:
     ]:
         raise ValueError("parameter file lineMapLine definitions do not match the eight lines")
 
-    abundance = abundance_metadata()
-    relevant = [(i, tokens) for i, tokens in enumerate(commands)
+    relevant = [tokens for tokens in commands
                 if tokens and tokens[0].lower() in ("abundances", "element", "metals")]
-    if len(relevant) != 3:
-        raise ValueError("parameter file requires exactly default.abn, helium, and metals commands")
-    default = [(i, tokens) for i, tokens in relevant if tokens[0].lower() == "abundances"]
-    helium = [(i, tokens) for i, tokens in relevant if tokens[0].lower() == "element"]
-    metals = [(i, tokens) for i, tokens in relevant if tokens[0].lower() == "metals"]
-    if len(default) != 1 or default[0][1] != ["abundances", "default.abn"]:
-        raise ValueError('parameter file must explicitly use abundances "default.abn"')
-    expected_helium = abundance["gow_elemental_abundances"]["xHe"]
-    for records, expected_prefix, expected_value, label in (
-        (helium, ["element", "helium", "abundance"], expected_helium, "helium"),
-        (metals, ["metals"], abundance["metal_reference_scale"], "metals"),
-    ):
-        if len(records) != 1:
-            raise ValueError(f"parameter file requires one {label} command")
-        index, tokens = records[0]
-        if (len(tokens) != len(expected_prefix) + 2
-                or [token.lower() for token in tokens[:-2]] != expected_prefix
-                or tokens[-1].lower() != "linear"
-                or not np.isclose(float(tokens[-2]), expected_value, rtol=1e-13, atol=0)
-                or index < default[0][0]):
-            raise ValueError(f"parameter file {label} command differs from shared composition")
+    if relevant != [["abundances", "default.abn"]]:
+        raise ValueError('parameter file requires exactly default.abn with no helium or metals overrides')
 
     if len(radius_loops) != 1:
         raise ValueError("parameter file requires exactly one fixed-depth radius loop")
@@ -149,7 +129,7 @@ def _validate_parameter_file(path: Path, axes: dict, pc_in_cm: float) -> dict:
                         lowered[:2] in (["stop", "column"], ["stop", "thickness"])):
             raise ValueError(f"conflicting geometry/composition command: {' '.join(tokens)}")
     return {"parameter_settings_checked": True, "internal_jeans_length_enabled": False,
-            "shared_abundance_commands_checked": True, "fixed_depth_loop_checked": True}
+            "default_abundance_commands_checked": True, "fixed_depth_loop_checked": True}
 
 
 def _parse_map(path: Path, pc_in_cm: float) -> tuple[dict, dict[float, np.ndarray | None]]:
@@ -218,7 +198,7 @@ def pack_table(manifest_path: Path, output_path: Path) -> dict:
     if manifest.get("status") != "completed":
         raise ValueError("manifest status must be completed before packaging")
     if manifest.get("abundance") != abundance_metadata():
-        raise ValueError("manifest abundance differs from the shared composition")
+        raise ValueError("manifest abundance differs from the current default composition")
     pc_in_cm = float(manifest["pc_in_cm"])
     if not np.isfinite(pc_in_cm) or pc_in_cm <= 0:
         raise ValueError("manifest pc_in_cm must be finite and positive")

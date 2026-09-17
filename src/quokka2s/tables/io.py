@@ -8,6 +8,7 @@ from typing import Iterable, Mapping
 import numpy as np
 
 from .models import AttemptRecord, DespoticTable, SpeciesLineGrid, SpeciesRecord
+from .abundances import reject_superseded_composition
 
 
 TABLE_VERSION = 5
@@ -99,8 +100,8 @@ def _scalar_string(blob, name: str, default: str) -> str:
     return str(np.asarray(blob[name]).item()) if name in blob.files else default
 
 
-def load_table(path: str | Path) -> DespoticTable:
-    """Load current version 5 or the existing version-4 GOW/LVG table."""
+def load_table(path: str | Path, *, allow_superseded_composition: bool = False) -> DespoticTable:
+    """Load a GOW/LVG table; old XYZ tables require an explicit historical opt-in."""
     with np.load(Path(path), allow_pickle=True) as blob:
         version = int(np.asarray(blob["version"]).flat[0])
         if version not in SUPPORTED_TABLE_VERSIONS:
@@ -136,6 +137,8 @@ def load_table(path: str | Path) -> DespoticTable:
             json.loads(str(np.asarray(blob["build_metadata_json"]).item()))
             if "build_metadata_json" in blob.files else None
         )
+        if not allow_superseded_composition and build_metadata:
+            reject_superseded_composition(build_metadata.get("composition", {}).get("setup"))
         return DespoticTable(
             species_data=species_data,
             tg_final=np.asarray(blob["tg_final"], dtype=float),

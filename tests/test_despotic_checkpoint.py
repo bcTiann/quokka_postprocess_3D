@@ -1,8 +1,11 @@
 """Tiny mocked builds: resume completed successes/failures without solving again."""
 from dataclasses import replace
+from functools import partial
 import json
 import multiprocessing
+import os
 from pathlib import Path
+import time
 from unittest.mock import patch
 
 import numpy as np
@@ -43,7 +46,7 @@ def _build(directory=None, *, solver=_point, grids=GRIDS, context=CONTEXT,
            metadata=METADATA, source="mock-source-v1", workers=1):
     with (patch.object(builder, "validated_solver_metadata", return_value=metadata),
           patch.object(builder, "source_metadata", return_value={"mock": source}),
-          patch.object(builder, "solve_gow_lvg_point", side_effect=solver)):
+          patch.object(builder, "solve_gow_lvg_point", new=solver)):
         return builder.build_gow_lvg_table(
             *grids, species_specs=SPECS, workers=workers, show_progress=False,
             checkpoint_dir=directory, checkpoint_context=context,
@@ -81,6 +84,47 @@ def _assert_npz_equal(first, second, tmp_path):
 
 def _unexpected(**kwargs):
     raise AssertionError("completed or incompatible points must not be solved")
+
+
+def _variable_point(**kwargs):
+    result = list(_point(**kwargs))
+    if kwargs["col_idx"] > 0:
+        # Arrival order must not change energy-term names in the saved NPZ.
+        result[6] = dict(reversed(list(result[6].items())))
+    if kwargs["col_idx"] > 1:
+        result[6]["later_rate"] = 7.0
+    return tuple(result)
+
+
+def _parallel_point(root, **kwargs):
+    root = Path(root)
+    indices = tuple(kwargs[k] for k in ("row_idx", "col_idx", "dvdr_idx"))
+    assert (root / "checkpoints" / "row-00000").is_dir()
+    assert os.environ["OPENBLAS_NUM_THREADS"] == "1"
+    assert os.environ["OMP_NUM_THREADS"] == "1"
+    (root / ("worker-" + "-".join(map(str, indices)))).write_text(str(os.getpid()))
+    if indices == (0, 0, 0):
+        # Hold the first point until another worker has handled later points
+        # of the SAME density row. Row-level scheduling would deadlock here.
+        deadline = time.monotonic() + 10
+        while not (root / "release").exists():
+            if time.monotonic() > deadline:
+                raise RuntimeError("points in one density row were not scheduled independently")
+            time.sleep(0.01)
+    elif indices == (0, 5, 1):
+        (root / "release").touch()
+    return _variable_point(**kwargs)
+
+
+def _delayed_point(**kwargs):
+    time.sleep(0.05)
+    return _variable_point(**kwargs)
+
+
+def _only_missing(completed, **kwargs):
+    indices = tuple(kwargs[k] for k in ("row_idx", "col_idx", "dvdr_idx"))
+    assert indices not in completed, "a committed point was recomputed"
+    return _variable_point(**kwargs)
 
 
 class CheckpointTests(unittest.TestCase):
@@ -160,6 +204,43 @@ class CheckpointTests(unittest.TestCase):
         original = _build(self.directory)
         replay = _build(self.directory, workers=2, solver=_unexpected)
         _assert_npz_equal(original, replay, self.root)
+
+    def test_one_row_uses_multiple_persistent_processes_and_canonical_output(self):
+        grids = (ExplicitGrid((1.0,)), ExplicitGrid(tuple(range(10, 16))),
+                 ExplicitGrid((0.1, 0.2)))
+        with patch.dict(os.environ, {"OPENBLAS_NUM_THREADS": "8", "OMP_NUM_THREADS": "8"}):
+            parallel = _build(self.directory, grids=grids, workers=2,
+                              solver=partial(_parallel_point, self.root))
+        serial = _build(grids=grids, solver=_variable_point)
+        _assert_npz_equal(serial, parallel, self.root)
+        pids = [p.read_text() for p in self.root.glob("worker-*")]
+        self.assertEqual(len(pids), 12)
+        self.assertEqual(len(set(pids)), 2)
+        self.assertNotIn(str(os.getpid()), pids)
+        self.assertEqual(len(list(self.directory.glob("row-*/point-*.json"))), 12)
+        self.assertEqual(list(parallel.energy_terms), ["z_rate", "a_rate", "later_rate"])
+        replay = _build(self.directory, grids=grids, workers=3, solver=_unexpected)
+        _assert_npz_equal(serial, replay, self.root)
+
+    def test_parallel_consumer_interruption_stops_workers_and_resumes(self):
+        grids = (ExplicitGrid((1.0,)), ExplicitGrid(tuple(range(10, 30))),
+                 ExplicitGrid((0.1,)))
+        # Interrupt result consumption while other points remain in flight.
+        with patch.object(builder, "tqdm") as progress:
+            progress.return_value.__enter__.return_value.update.side_effect = [None, RuntimeError("interrupted")]
+            with self.assertWarns(UserWarning):
+                with self.assertRaisesRegex(RuntimeError, "interrupted"):
+                    _build(self.directory, grids=grids, workers=2, solver=_delayed_point)
+        files = list(self.directory.glob("row-*/point-*.json"))
+        self.assertGreaterEqual(len(files), 2)
+        self.assertLess(len(files), 20)
+        time.sleep(0.15)
+        self.assertEqual(set(files), set(self.directory.glob("row-*/point-*.json")))
+        completed = {(int(p.parent.name.split("-")[1]),
+                      *map(int, p.stem.split("-")[1:])) for p in files}
+        resumed = _build(self.directory, grids=grids, workers=3,
+                         solver=partial(_only_missing, completed))
+        _assert_npz_equal(resumed, _build(grids=grids, solver=_variable_point), self.root)
 
 
 if __name__ == "__main__":

@@ -2,9 +2,9 @@
 
 This pure NumPy calculation does not select a table, interpolate DESPOTIC,
 alter cell data, or decide whether a candidate table may be adopted.  The
-caller supplies paired DESPOTIC temperature and mean molecular weight from
-the same lookup, and QUOKKA internal energy density after subtracting kinetic
-energy from total energy.
+caller supplies the DESPOTIC temperature for cold gas. Jeans length uses
+mu=1 in both branches; legacy energy and DESPOTIC-mu arguments remain accepted
+for caller compatibility but do not affect the result.
 """
 
 from __future__ import annotations
@@ -21,8 +21,8 @@ class ModelDepthResult:
     ``cold_mask`` selects finite, positive QUOKKA temperatures below 3000 K;
     it is a regime label, not a validity check on the remaining cell inputs.
     ``valid`` indicates that every returned physical quantity is finite and
-    positive.  Mean molecular weight is dimensionless, in units of the
-    supplied hydrogen mass.
+    positive. Mean molecular weight records the Jeans assumption (one),
+    not the gas thermodynamic mean molecular weight.
     """
 
     temperature_K: np.ndarray
@@ -53,10 +53,9 @@ def derive_model_depth(
     Supplying constants explicitly lets the caller use the same cgs values
     as the simulation pipeline without importing yt or DESPOTIC here.
 
-    For ``T_QUOKKA < 3000 K``, use the paired DESPOTIC temperature and mu.
-    Otherwise use QUOKKA temperature and infer
-
-        mu = rho * k_B * T_QUOKKA / ((gamma - 1) * m_H * u).
+    For ``T_QUOKKA < 3000 K``, use the DESPOTIC temperature.
+    Otherwise use QUOKKA temperature. In both cases mu is fixed to 1.
+    The energy density and DESPOTIC mu arguments are ignored physically.
 
     In both regimes the density is the actual supplied cell density, and
 
@@ -106,23 +105,19 @@ def derive_model_depth(
     density_valid = positive_finite(rho)
     cold_valid = (
         cold & density_valid
-        & positive_finite(T_despotic) & positive_finite(mu_despotic)
+        & positive_finite(T_despotic)
     )
-    hot_valid = hot & density_valid & positive_finite(u)
+    hot_valid = hot & density_valid
 
     temperature = np.full(rho.shape, np.nan)
     mu = np.full(rho.shape, np.nan)
     jeans_length = np.full(rho.shape, np.nan)
     model_depth = np.full(rho.shape, np.nan)
     temperature[cold_valid] = T_despotic[cold_valid]
-    mu[cold_valid] = mu_despotic[cold_valid]
     temperature[hot_valid] = T_quokka[hot_valid]
     with np.errstate(over="ignore", under="ignore", divide="ignore", invalid="ignore"):
-        mu[hot_valid] = (
-            rho[hot_valid] * boltzmann_erg_K * T_quokka[hot_valid]
-            / ((gamma - 1.0) * hydrogen_mass_g * u[hot_valid])
-        )
-        state_valid = (cold_valid | hot_valid) & positive_finite(mu)
+        state_valid = cold_valid | hot_valid
+        mu[state_valid] = 1.0
         jeans_length[state_valid] = np.pi * np.sqrt(
             gamma * boltzmann_erg_K * temperature[state_valid]
             / (

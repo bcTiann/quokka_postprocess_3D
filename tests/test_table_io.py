@@ -23,7 +23,7 @@ from quokka2s.tables.augment_co21 import (
     _with_co21,
     augment_tables,
 )
-from quokka2s.tables.abundances import abundance_metadata
+from quokka2s.tables.abundances import abundance_metadata, SUPERSEDED_ABUNDANCE_SETUP
 from quokka2s.tables.solver import (
     _extract_line_result,
     _extract_transition_result,
@@ -71,6 +71,18 @@ class TableIOTests(unittest.TestCase):
         actual = lookup.temperature(10.0, 1e21, 1e-14)
         self.assertEqual(float(actual), float(source.tg_final[1, 1, 1]))
 
+    def test_superseded_composition_requires_historical_opt_in(self):
+        source = replace(_table(), build_metadata={
+            "composition": {"setup": SUPERSEDED_ABUNDANCE_SETUP}})
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "old.npz"
+            save_table(source, path)
+            with self.assertRaisesRegex(ValueError, "superseded XYZ"):
+                load_table(path)
+            old = load_table(path, allow_superseded_composition=True)
+            self.assertEqual(old.build_metadata["composition"]["setup"],
+                             SUPERSEDED_ABUNDANCE_SETUP)
+
     def test_build_provenance_survives_round_trip_and_co21_augmentation(self):
         metadata = {
             "composition": abundance_metadata(),
@@ -89,7 +101,7 @@ class TableIOTests(unittest.TestCase):
         self.assertEqual(dict(loaded.build_metadata), metadata)
         self.assertEqual(
             loaded.build_metadata["composition"]["gow_elemental_abundances"]["xHe"],
-            0.09296180232949455,
+            0.1,
         )
 
     def test_legacy_unknown_composition_is_not_assigned_on_resave(self):

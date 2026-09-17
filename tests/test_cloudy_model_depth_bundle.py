@@ -25,8 +25,6 @@ class CloudyModelDepthBundleTests(unittest.TestCase):
             "cloudyRunMode = 4", "coolingScaleFactor = 1", "coolingMapUseJeansLength = 0",
             *(f"lineMapLine = {item[1]}" for item in LINES),
             'command abundances "default.abn"',
-            f'command element helium abundance {composition["gow_elemental_abundances"]["xHe"]:.17g} linear',
-            f'command metals {composition["metal_reference_scale"]:.17g} linear',
             "loop [radius 1e30 * linear] " + " ".join(f"{self.pc * 10**value:.17g}" for value in self.axes["log_L_model_pc"]),
         ]) + "\n")
         self.manifest = {
@@ -176,8 +174,8 @@ class CloudyModelDepthBundleTests(unittest.TestCase):
             self.pack()
 
     def test_wrong_abundance_command_rejected(self):
-        self.parameter.write_text(self.parameter.read_text().replace("command metals 1.5242485583008916 linear", "command metals 1 linear"))
-        with self.assertRaisesRegex(ValueError, "metals command differs"):
+        self.parameter.write_text(self.parameter.read_text() + "command metals -3 log\n")
+        with self.assertRaisesRegex(ValueError, "no helium or metals overrides"):
             self.pack()
 
     def test_later_abundance_reset_rejected(self):
@@ -186,7 +184,7 @@ class CloudyModelDepthBundleTests(unittest.TestCase):
             self.pack()
 
     def test_manifest_abundance_mismatch_rejected(self):
-        self.manifest["abundance"]["mass_fractions"]["Z"] = 0.01
+        self.manifest["abundance"]["metal_reference_scale"] = 0.001
         with self.assertRaisesRegex(ValueError, "manifest abundance differs"):
             self.pack()
 

@@ -24,7 +24,7 @@ def internal_energy(rho, temperature, mu):
 
 
 class ModelDepthTests(unittest.TestCase):
-    def test_boundary_uses_paired_despotic_below_3000_and_quokka_at_3000(self):
+    def test_boundary_uses_despotic_temperature_below_3000_and_quokka_at_3000(self):
         rho = 1.0e-20
         T_quokka = np.array([2999.0, 3000.0])
         u = internal_energy(rho, T_quokka, 0.62)
@@ -34,18 +34,18 @@ class ModelDepthTests(unittest.TestCase):
         np.testing.assert_array_equal(result.cold_mask, [True, False])
         np.testing.assert_array_equal(result.valid, [True, True])
         np.testing.assert_allclose(result.temperature_K, [40.0, 3000.0])
-        np.testing.assert_allclose(result.mean_molecular_weight, [2.3, 0.62])
+        np.testing.assert_allclose(result.mean_molecular_weight, [1., 1.])
 
-    def test_quokka_mu_inverts_energy_relation_without_clipping(self):
+    def test_hot_jeans_length_uses_fixed_mu_independent_of_internal_energy(self):
         rho = np.array([1e-20, 3e-22, 2e-24])
         T = np.array([3000.0, 2e4, 1e6])
         mu = np.array([0.1, 0.61, 3.0])
         u = internal_energy(rho, T, mu)
         result = derive_model_depth(rho, T, u, np.nan, np.nan, **CONSTANTS)
-        np.testing.assert_allclose(result.mean_molecular_weight, mu, rtol=1e-14)
+        np.testing.assert_allclose(result.mean_molecular_weight, 1.0, rtol=1e-14)
         expected_length = np.pi * np.sqrt(
-            GAMMA * (GAMMA - 1.0) * u
-            / (CONSTANTS["gravitational_cm3_g_s2"] * rho**2)
+            GAMMA * CONSTANTS["boltzmann_erg_K"] * T
+            / (CONSTANTS["gravitational_cm3_g_s2"] * CONSTANTS["hydrogen_mass_g"] * rho)
         )
         np.testing.assert_allclose(result.jeans_length_cm, expected_length, rtol=1e-14)
 
@@ -59,19 +59,23 @@ class ModelDepthTests(unittest.TestCase):
 
     def test_invalid_relevant_inputs_stay_nan(self):
         result = derive_model_depth(
-            [0.0, np.nan, 1e-20, 1e-20, 1e-20, 1e-20, 1e-20, 1e-20],
-            [100.0, 3000.0, 100.0, 100.0, 3000.0, 3000.0, 100.0, 100.0],
-            [np.nan, 1e-9, np.nan, np.nan, 0.0, np.inf, np.nan, np.nan],
-            [40.0, np.nan, 0.0, 40.0, np.nan, np.nan, np.inf, 40.0],
-            [2.3, np.nan, 2.3, -1.0, np.nan, np.nan, 2.3, np.nan],
-            **CONSTANTS,
+            [0.0, np.nan, 1e-20, 1e-20], [100., 3000., 100., 100.],
+            np.nan, [40., np.nan, 0., np.inf], np.nan, **CONSTANTS,
         )
         self.assertFalse(result.valid.any())
-        for values in (
-            result.temperature_K, result.mean_molecular_weight,
-            result.jeans_length_cm, result.model_depth_cm,
-        ):
+        for values in (result.temperature_K, result.mean_molecular_weight,
+                       result.jeans_length_cm, result.model_depth_cm):
             self.assertTrue(np.isnan(values).all())
+
+    def test_energy_and_despotic_mu_do_not_control_validity_or_length(self):
+        result = derive_model_depth(
+            1e-20, [100., 100., 3000., 3000.], [np.nan, -1., 0., np.inf],
+            40., [np.nan, -1., 0., np.inf], **CONSTANTS,
+        )
+        self.assertTrue(result.valid.all())
+        np.testing.assert_array_equal(result.mean_molecular_weight, 1.)
+        self.assertEqual(result.jeans_length_cm[0], result.jeans_length_cm[1])
+        self.assertEqual(result.jeans_length_cm[2], result.jeans_length_cm[3])
 
     def test_invalid_quokka_temperature_never_selects_regime(self):
         result = derive_model_depth(
@@ -88,7 +92,7 @@ class ModelDepthTests(unittest.TestCase):
         expected_length = np.pi * np.sqrt(
             GAMMA * CONSTANTS["boltzmann_erg_K"] * 40.0
             / (
-                CONSTANTS["gravitational_cm3_g_s2"] * 2.3
+                CONSTANTS["gravitational_cm3_g_s2"] * 1.0
                 * CONSTANTS["hydrogen_mass_g"] * rho
             )
         )

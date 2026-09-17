@@ -3,14 +3,12 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from functools import partial
 from pathlib import Path
 from typing import Protocol, Sequence
 
 import numpy as np
-from joblib import Parallel, delayed
+from joblib import Parallel, delayed, parallel_config
 from tqdm import tqdm
-from tqdm_joblib import tqdm_joblib
 
 from .models import AttemptRecord, DespoticTable, LineLumResult, SpeciesLineGrid, SpeciesRecord
 from .checkpoint import PointCheckpoints, source_metadata
@@ -59,7 +57,9 @@ def build_gow_lvg_table(
 
     Each grid cell independently solves GOW chemistry and dust/gas thermal
     equilibrium.  Emitters are present during the equilibrium solve, so LVG
-    line cooling contributes to the converged temperature.
+    line cooling contributes to the converged temperature. A persistent process
+    pool schedules individual points with one inner native-library thread per
+    worker, and completed results are assembled by their grid indices.
 
     ``species_specs`` is exposed only so the sparse smoke test can exercise a
     cheaper subset.  The production CLI always uses :data:`GOW_LVG_SPECIES`.
@@ -90,10 +90,29 @@ def build_gow_lvg_table(
     return _build_sampled_table(nH_vals, col_vals, dvdr_vals, **options)
 
 
+def _solve_point(indices, coordinates, emitter_names, abundance_only, checkpoints, solver):
+    """Solve or restore one independent point in a persistent worker process."""
+    saved = checkpoints.load(indices, coordinates) if checkpoints else None
+    if saved is not None:
+        result, attempts = saved
+    else:
+        attempts: list[AttemptRecord] = []
+        row, col, dvdr = indices
+        result = solver(
+            nH_val=coordinates[0], colDen_val=coordinates[1], dvdr_val=coordinates[2],
+            species=emitter_names, abundance_only=abundance_only,
+            row_idx=row, col_idx=col, dvdr_idx=dvdr, Tg_init=100.0,
+            log_failures=True, attempt_log=attempts,
+        )
+        if checkpoints:
+            checkpoints.save(indices, coordinates, result, attempts)
+    return indices, result, attempts
+
+
 def _build_sampled_table(nH_vals, col_vals, dvdr_vals, *, specs, build_metadata,
                          show_progress, workers, checkpoints=None) -> DespoticTable:
     shape = (len(nH_vals), len(col_vals), len(dvdr_vals))
-    num_rows, num_cols, num_dvdr = shape
+    num_rows = shape[0]
 
     tg_table = np.full(shape, np.nan)
     failure_mask = np.zeros(shape, dtype=bool)
@@ -113,91 +132,66 @@ def _build_sampled_table(nH_vals, col_vals, dvdr_vals, *, specs, build_metadata,
         for name in line_output_names
     }
 
-    def _solve_row(row_idx: int):
-        row_shape = (num_cols, num_dvdr)
-        tg_row = np.full(row_shape, np.nan)
-        failure_row = np.zeros(row_shape, dtype=bool)
-        mu_row = np.full(row_shape, np.nan)
-        cv_row = np.full(row_shape, np.nan)
-        eint_row = np.full(row_shape, np.nan)
-        line_rows = {
-            name: {field: np.full(row_shape, np.nan) for field in LINE_RESULT_FIELDS}
-            for name in line_output_names
-        }
-        abundance_rows = {spec.name: np.full(row_shape, np.nan) for spec in specs}
-        energy_rows: dict[str, np.ndarray] = {}
-        attempts_row: list[AttemptRecord] = []
+    if checkpoints:
+        # All points in a row can now save concurrently. Prepare directories
+        # before dispatch so no worker races to create the same row directory.
+        checkpoints.prepare_rows(num_rows)
 
-        for col_idx, col_val in enumerate(col_vals):
-            for dvdr_idx, dvdr_val in enumerate(dvdr_vals):
-                indices = (row_idx, col_idx, dvdr_idx)
-                coordinates = (float(nH_vals[row_idx]), float(col_val), float(dvdr_val))
-                saved = checkpoints.load(indices, coordinates) if checkpoints else None
-                if saved is None:
-                    point_attempts: list[AttemptRecord] = []
-                    result = solve_gow_lvg_point(
-                        nH_val=coordinates[0], colDen_val=coordinates[1], dvdr_val=coordinates[2],
-                        species=emitter_names,
-                        abundance_only=abundance_only,
-                        row_idx=row_idx,
-                        col_idx=col_idx,
-                        dvdr_idx=dvdr_idx,
-                        Tg_init=100.0,
-                        log_failures=True,
-                        attempt_log=point_attempts,
-                    )
-                    if checkpoints:
-                        checkpoints.save(indices, coordinates, result, point_attempts)
-                else:
-                    result, point_attempts = saved
-                attempts_row.extend(point_attempts)
+    def tasks():
+        for indices in np.ndindex(shape):
+            row, col, dvdr = indices
+            coordinates = (float(nH_vals[row]), float(col_vals[col]), float(dvdr_vals[dvdr]))
+            yield delayed(_solve_point)(
+                indices, coordinates, emitter_names, abundance_only, checkpoints,
+                solve_gow_lvg_point,
+            )
+
+    # Preserve canonical diagnostic order despite out-of-order completion.
+    attempts_by_point = {}
+    energy_order = {}
+    with (
+        parallel_config(backend="loky", inner_max_num_threads=1),
+        Parallel(n_jobs=-1 if workers is None else workers, batch_size=1,
+                 pre_dispatch="2*n_jobs", return_as="generator_unordered") as pool,
+        tqdm(total=int(np.prod(shape)), desc="DESPOTIC points", unit="point",
+             disable=not show_progress) as progress,
+    ):
+        results = pool(tasks())
+        try:
+            for indices, result, point_attempts in results:
+                attempts_by_point[indices] = point_attempts
                 line_results, chem_abunds, mu, cv, eint, tg, energy_terms, failed = result
-                failure_row[col_idx, dvdr_idx] = failed
+                failure_mask[indices] = failed
+                progress.update(1)
                 if failed:
                     # Failed attempts remain diagnostic records, never inputs
                     # to interpolation or the valid-node cleaning support.
                     continue
-                tg_row[col_idx, dvdr_idx] = tg
-                mu_row[col_idx, dvdr_idx] = mu
-                cv_row[col_idx, dvdr_idx] = cv
-                eint_row[col_idx, dvdr_idx] = eint
-
+                tg_table[indices] = tg
+                mu_grid[indices] = mu
+                cv_grid[indices] = cv
+                eint_grid[indices] = eint
                 for spec in specs:
-                    abundance_rows[spec.name][col_idx, dvdr_idx] = chem_abunds.get(spec.name, np.nan)
+                    abundance_map[spec.name][indices] = chem_abunds.get(spec.name, np.nan)
                 for name in line_output_names:
                     line = line_results.get(name, DEFAULT_LINE_RESULT)
                     for field in LINE_RESULT_FIELDS:
-                        line_rows[name][field][col_idx, dvdr_idx] = getattr(line, field)
-                for term, value in energy_terms.items():
-                    energy_rows.setdefault(term, np.full(row_shape, np.nan))[col_idx, dvdr_idx] = value
+                        line_buffers[name][field][indices] = getattr(line, field)
+                for position, (term, value) in enumerate(energy_terms.items()):
+                    if term not in energy_fields:
+                        energy_fields[term] = np.full(shape, np.nan)
+                    energy_fields[term][indices] = value
+                    order = (indices, position)
+                    energy_order[term] = min(energy_order.get(term, order), order)
+        finally:
+            # Also cancel outstanding work before releasing the checkpoint
+            # lock if consumption fails or the user interrupts the build.
+            results.close()
 
-        return row_idx, tg_row, failure_row, line_rows, abundance_rows, energy_rows, mu_row, cv_row, eint_row, attempts_row
-
-    if workers is None:
-        workers = -1
-    solve_row = partial(_solve_row)
-    tasks = range(num_rows)
-    if show_progress:
-        with tqdm_joblib(tqdm(total=num_rows, desc="DESPOTIC rows", unit="row")):
-            results = Parallel(n_jobs=workers)(delayed(solve_row)(idx) for idx in tasks)
-    else:
-        results = Parallel(n_jobs=workers)(delayed(solve_row)(idx) for idx in tasks)
-
-    attempts: list[AttemptRecord] = []
-    for row_idx, tg_row, failure_row, line_rows, abundance_rows, energy_rows, mu_row, cv_row, eint_row, attempts_row in results:
-        tg_table[row_idx] = tg_row
-        failure_mask[row_idx] = failure_row
-        mu_grid[row_idx] = mu_row
-        cv_grid[row_idx] = cv_row
-        eint_grid[row_idx] = eint_row
-        attempts.extend(attempts_row)
-        for name, values in abundance_rows.items():
-            abundance_map[name][row_idx] = values
-        for name, fields in line_rows.items():
-            for field, values in fields.items():
-                line_buffers[name][field][row_idx] = values
-        for term, values in energy_rows.items():
-            energy_fields.setdefault(term, np.full(shape, np.nan))[row_idx] = values
+    attempts = [attempt for indices in sorted(attempts_by_point)
+                for attempt in attempts_by_point[indices]]
+    energy_fields = {term: energy_fields[term]
+                     for term in sorted(energy_fields, key=energy_order.__getitem__)}
 
     failed_cells = int(np.count_nonzero(failure_mask))
     if failed_cells:

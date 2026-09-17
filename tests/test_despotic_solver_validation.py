@@ -55,6 +55,8 @@ class _Cloud:
         )
 
     def setChemEq(self, **kwargs):
+        if kwargs.get("info") is not None:
+            raise AssertionError("GOW elemental defaults must not be overridden")
         self.Tg = 50.0
         return self.converged
 

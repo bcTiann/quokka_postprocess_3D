@@ -1,5 +1,6 @@
 """Cell thermodynamics through real four-dimensional coefficient sampling."""
 import tempfile
+import json
 import unittest
 from pathlib import Path
 
@@ -7,7 +8,7 @@ import numpy as np
 
 from quokka2s.cloudy_cell_queries import prepare_cloudy_cell_queries
 from quokka2s.cloudy_sixline_lookup import CloudyFailureTouchError, CloudySixLineLookup, DEPTH_AXIS_ORDER
-from quokka2s.tables.abundances import QUOKKA_MASS_FRACTIONS
+from quokka2s.tables.abundances import QUOKKA_MASS_FRACTIONS, SUPERSEDED_ABUNDANCE_SETUP
 
 CONSTANTS = dict(hydrogen_mass_g=1.6735575e-24, boltzmann_erg_K=1.380649e-16,
                  gravitational_cm3_g_s2=6.67430e-8, parsec_cm=3.0856775814913673e18)
@@ -37,6 +38,18 @@ class CloudyCellQueryTests(unittest.TestCase):
         np.savez(self.path, **self.payload)
         return CloudySixLineLookup(self.path)
 
+    def test_superseded_composition_requires_historical_opt_in(self):
+        for metadata in (
+            {"composition_label": SUPERSEDED_ABUNDANCE_SETUP},
+            {"provenance_json": json.dumps({"abundance": {"setup": SUPERSEDED_ABUNDANCE_SETUP}})},
+        ):
+            with self.subTest(metadata=metadata):
+                np.savez(self.path, **self.payload, **metadata)
+                with self.assertRaisesRegex(ValueError, 'superseded XYZ'):
+                    CloudySixLineLookup(self.path)
+                old = CloudySixLineLookup(self.path, allow_superseded_composition=True)
+                self.assertEqual(old.line_keys, ('test_line',))
+
     def prepare(self, *, excluded=None, td=None, mu=None):
         n_h = np.array([1e4, 2e4, 1.])
         rho = n_h * CONSTANTS['hydrogen_mass_g']/X
@@ -54,7 +67,7 @@ class CloudyCellQueryTests(unittest.TestCase):
         queries = self.prepare()
         np.testing.assert_allclose(queries.n_H_cm3, [1e4, 2e4, 1.])
         np.testing.assert_allclose(queries.state.temperature_K, [40., 90., 3000.])
-        np.testing.assert_allclose(queries.state.mean_molecular_weight, [2.3, 1.3, .62])
+        np.testing.assert_allclose(queries.state.mean_molecular_weight, [1., 1., 1.])
         self.assertLess(queries.model_depth_pc[0], 100.)
         self.assertEqual(queries.model_depth_pc[-1], 100.)
         result = queries.sample(self.lookup())
@@ -122,9 +135,11 @@ class CloudyCellQueryTests(unittest.TestCase):
         column[:] = 1e19
         np.testing.assert_array_equal(queries.column_density_H_cm2, [1e17, 1e22])
 
-    def test_invalid_hot_energy_is_not_replaced_by_despotic(self):
-        with self.assertRaisesRegex(ValueError, 'Unexpected invalid'):
-            prepare_cloudy_cell_queries(1e-20, 1e20, 1e4, -1., 40., 2.3, **CONSTANTS)
+    def test_hot_depth_does_not_require_internal_energy(self):
+        queries = prepare_cloudy_cell_queries(
+            1e-20, 1e20, 1e4, -1., 40., np.nan, **CONSTANTS)
+        self.assertTrue(queries.state.valid)
+        self.assertEqual(float(queries.state.mean_molecular_weight), 1.)
 
 
 if __name__ == '__main__':
