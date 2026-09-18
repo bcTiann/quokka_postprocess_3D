@@ -50,7 +50,7 @@ class CloudyCellQueryTests(unittest.TestCase):
                 old = CloudySixLineLookup(self.path, allow_superseded_composition=True)
                 self.assertEqual(old.line_keys, ('test_line',))
 
-    def prepare(self, *, excluded=None, td=None, mu=None):
+    def prepare(self, *, excluded=None, td=None, mu=None, allow_hot=False):
         n_h = np.array([1e4, 2e4, 1.])
         rho = n_h * CONSTANTS['hydrogen_mass_g']/X
         tq = np.array([100., 2999., 3000.])
@@ -60,7 +60,8 @@ class CloudyCellQueryTests(unittest.TestCase):
             rho, [1e17, 1e20, 1e22], tq, u,
             [40., 90., np.nan] if td is None else td,
             [2.3, 1.3, np.nan] if mu is None else mu,
-            authorized_excluded=excluded, **CONSTANTS,
+            authorized_excluded=excluded,
+            allow_hot_missing_despotic_exclusions=allow_hot, **CONSTANTS,
         )
 
     def test_paired_state_and_density_through_real_lookup(self):
@@ -104,6 +105,31 @@ class CloudyCellQueryTests(unittest.TestCase):
         self.payload['log_emissivity_per_nH2'][:] = np.nan
         with self.assertRaises(CloudyFailureTouchError):
             self.prepare().sample(self.lookup())
+
+    def test_hot_missing_despotic_exclusion_requires_explicit_opt_in(self):
+        mask = [False, False, True]
+        with self.assertRaisesRegex(ValueError, 'must be cold'):
+            self.prepare(excluded=mask)
+        queries = self.prepare(excluded=mask, allow_hot=True)
+        np.testing.assert_array_equal(queries.excluded, mask)
+        self.assertTrue(queries.state.valid[-1])  # Hot Jeans state uses QUOKKA T.
+        result = queries.sample(self.lookup())
+        self.assertTrue(np.isnan(result.emissivity_erg_s_cm3[:, -1]).all())
+        self.assertTrue(np.isfinite(result.emissivity_erg_s_cm3[:, :2]).all())
+        # A missing hot temperature alone never adds an exclusion.
+        self.assertFalse(self.prepare(allow_hot=True).excluded.any())
+        with self.assertRaisesRegex(ValueError, 'unavailable DESPOTIC temperature'):
+            self.prepare(excluded=mask, td=[40., 90., 100.], allow_hot=True)
+
+    def test_hot_exclusion_cannot_hide_invalid_physical_inputs(self):
+        for index, name in enumerate(('density', 'column', 'QUOKKA temperature')):
+            for bad in (np.nan, 0., -1.):
+                inputs = [1e-20, 1e20, 1e4]
+                inputs[index] = bad
+                with self.subTest(name=name, bad=bad), self.assertRaisesRegex(ValueError, name):
+                    prepare_cloudy_cell_queries(
+                        *inputs, np.nan, np.nan, np.nan, authorized_excluded=True,
+                        allow_hot_missing_despotic_exclusions=True, **CONSTANTS)
 
     def test_physical_depth_outside_table_is_not_clamped(self):
         self.payload['log_L_model_pc'] = np.array([-.25, 1.])

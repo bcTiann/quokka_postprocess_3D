@@ -65,13 +65,17 @@ def prepare_cloudy_cell_queries(
     mean_molecular_weight_despotic, *, hydrogen_mass_g: float,
     boltzmann_erg_K: float, gravitational_cm3_g_s2: float,
     parsec_cm: float, authorized_excluded=None,
+    allow_hot_missing_despotic_exclusions: bool = False,
 ) -> CloudyCellQueries:
     """Use the simulation density conversion, actual rho, mu=1 and a 100 pc cap.
 
     ``authorized_excluded`` is an explicit boolean array supplied by the
-    snapshot-specific policy. Only cold cells with unavailable DESPOTIC temperature
-    may be excluded here. The caller must verify the approved snapshot and
-    cell IDs before constructing that mask. Other invalid states raise.
+    snapshot-specific policy. By default only cold cells with unavailable
+    DESPOTIC temperature may be excluded. The explicit
+    ``allow_hot_missing_despotic_exclusions`` opt-in also permits hot cells
+    whose DESPOTIC temperature is unavailable (needed by the adopted CO
+    branch). The caller must verify the approved snapshot and cell IDs
+    before constructing that mask. Other invalid states raise.
     QUOKKA temperature, density and foreground column must always be valid,
     including for excluded cells, so their mass and coverage remain usable.
     """
@@ -94,7 +98,9 @@ def prepare_cloudy_cell_queries(
             raise ValueError("authorized_excluded must be explicitly boolean")
         excluded = np.broadcast_to(mask, rho.shape).copy()
     paired_valid = np.isfinite(td) & (td > 0)
-    if np.any(excluded & ((tq >= 3000) | paired_valid)):
+    if np.any(excluded & paired_valid):
+        raise ValueError("Authorized exclusions require unavailable DESPOTIC temperature")
+    if not allow_hot_missing_despotic_exclusions and np.any(excluded & (tq >= 3000)):
         raise ValueError("Authorized exclusions must be cold cells with unavailable DESPOTIC temperature")
     state = derive_model_depth(
         rho, tq, u, td, mud, hydrogen_mass_g=hydrogen_mass_g,
