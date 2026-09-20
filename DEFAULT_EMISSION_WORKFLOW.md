@@ -45,6 +45,23 @@ Historical parameters lacking `coolingMapHydrogenMassFraction` do not
 identify which runtime default was used. Their abundance/density metadata
 must not be retroactively relabelled with the corrected value.
 
+Cloudy lookup uses two cached SciPy `RegularGridInterpolator` instances with
+`method="linear"`, one for stored coefficients and one for their logarithms.
+The existing interpolation rule is retained: use the logarithmic result
+unless an individual valid zero-valued corner has weight above `1e-12`, in
+which case use the raw coefficient result for that line and query. Failure
+support, query bounds, attenuation clipping, and density normalization are
+unchanged. This is an implementation refactor, not a change to the physical
+interpolation prescription or a new accuracy validation of that prescription.
+
+The full `plt0655228` comparison against the frozen manual sampler covered
+133,718,872 retained hot cells and all eight Cloudy lines (1,069,750,976
+coefficient comparisons). Every coefficient, zero pattern and attenuation flag
+was identical. All arrays in the regenerated ten-line `spectra.npz`, including
+every velocity channel and both branch luminosities, were also bitwise equal
+to the previous products. The original tables and products were preserved.
+Comparison artifacts are in `output/cloudy_rgi_comparison_20260920/`.
+
 Example from the repository root:
 
 ```sh

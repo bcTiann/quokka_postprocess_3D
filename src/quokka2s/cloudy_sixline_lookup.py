@@ -7,6 +7,8 @@ import json
 from pathlib import Path
 
 import numpy as np
+from scipy.interpolate import RegularGridInterpolator
+
 from .tables.abundances import reject_superseded_composition
 
 
@@ -161,6 +163,32 @@ class CloudySixLineLookup:
         if np.any(self.emissivity_per_nH2[self.failure_mask] != 0.0):
             raise ValueError("failed nodes must have zero placeholder coefficients")
 
+        axes = [self.log_NH_attenuation, self.log_nH, self.log_T]
+        if self.log_L_model_pc is not None:
+            axes.append(self.log_L_model_pc)
+        # SciPy treats trailing value dimensions as independent outputs, so a
+        # single interpolator evaluates every line at the same coordinates.
+        self._linear_interpolator = RegularGridInterpolator(
+            tuple(axes),
+            np.moveaxis(self.emissivity_per_nH2, 0, -1),
+            method="linear",
+            bounds_error=True,
+        )
+        # Retain finite historical zero sentinels (e.g. -99) exactly as the
+        # previous sampler did. Only non-finite log placeholders become zero;
+        # the explicit support checks below select the physical output branch.
+        finite_log = np.where(
+            np.isfinite(self.log_emissivity_per_nH2),
+            self.log_emissivity_per_nH2,
+            0.0,
+        )
+        self._log_interpolator = RegularGridInterpolator(
+            tuple(axes),
+            np.moveaxis(finite_log, 0, -1),
+            method="linear",
+            bounds_error=True,
+        )
+
     @property
     def attenuation_column_bounds_cm2(self) -> tuple[float, float]:
         return (
@@ -179,6 +207,18 @@ class CloudySixLineLookup:
         )
 
     def _prepare_query(
+        self,
+        temperature_K,
+        n_H_cm3,
+        column_density_H_cm2,
+        model_depth_pc,
+    ):
+        # Keep the four-value interface used by coverage and hot-cell adapters.
+        return self._prepare_query_with_coordinates(
+            temperature_K, n_H_cm3, column_density_H_cm2, model_depth_pc
+        )[:4]
+
+    def _prepare_query_with_coordinates(
         self,
         temperature_K,
         n_H_cm3,
@@ -255,7 +295,7 @@ class CloudySixLineLookup:
             _brackets(axis, coordinate)
             for axis, coordinate in zip(axes, coordinates)
         )
-        return original_shape, below, above, brackets
+        return original_shape, below, above, brackets, coordinates
 
     def sample(
         self,
@@ -266,15 +306,16 @@ class CloudySixLineLookup:
         model_depth_pc=None,
     ) -> CloudySixLineSample:
         """Sample coefficients; depth is mandatory for an explicit-depth table."""
-        original_shape, below, above, brackets = self._prepare_query(
-            temperature_K, n_H_cm3, column_density_H_cm2, model_depth_pc
+        original_shape, below, above, brackets, coordinates = (
+            self._prepare_query_with_coordinates(
+                temperature_K, n_H_cm3, column_density_H_cm2, model_depth_pc
+            )
         )
 
         n_points = below.size
-        linear_sum = np.zeros((len(self.line_keys), n_points))
-        log_sum = np.zeros_like(linear_sum)
-        zero_support = np.zeros_like(linear_sum, dtype=bool)
-        failure_weight = np.zeros_like(linear_sum)
+        shape = (len(self.line_keys), n_points)
+        zero_support = np.zeros(shape, dtype=bool)
+        failure_weight = np.zeros(shape)
 
         def visit(
             axis_number: int,
@@ -284,11 +325,6 @@ class CloudySixLineLookup:
             if axis_number == len(brackets):
                 local_index = (slice(None), *indices)
                 local_weight = weight[None, :]
-                local_log = self.log_emissivity_per_nH2[local_index]
-                linear_sum[:] += self.emissivity_per_nH2[local_index] * local_weight
-                log_sum[:] += np.where(
-                    np.isfinite(local_log), local_log, 0.0
-                ) * local_weight
                 zero_support[:] |= self.zero_mask[local_index] & (
                     local_weight > TOUCH_EPS
                 )
@@ -310,6 +346,9 @@ class CloudySixLineLookup:
                 "simulation touches unavailable Cloudy nodes: "
                 f"counts={counts}, maximum_weight={failure_weight[touched].max():.6g}"
             )
+        points = np.stack(coordinates, axis=-1)
+        linear_sum = self._linear_interpolator(points).T
+        log_sum = self._log_interpolator(points).T
         coefficient = np.where(zero_support, linear_sum, np.power(10.0, log_sum))
         return CloudySixLineSample(
             emissivity_per_nH2=coefficient.reshape(
