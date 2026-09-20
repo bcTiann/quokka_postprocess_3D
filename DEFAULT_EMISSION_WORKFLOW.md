@@ -26,6 +26,25 @@ default Cloudy table is reused only where the cell's model depth and all
 contributing table nodes are capped. Its rounded cap of 3.086e20 cm differs from
 100 pc by 0.01045%; this is a geometry difference, not a measured emission error.
 
+The active eight-line table builder now explicitly supplies
+`coolingMapHydrogenMassFraction = 0.7157683773530885`, matching the QUOKKA
+rho-to-nH conversion. The adapted CIAOLoop uses `rho_J = nH*mH/X_H` with
+fixed mu=1 and the unchanged 3.086e20 cm cap. This density conversion does
+not change Cloudy or DESPOTIC elemental abundances.
+
+The retained table was built with X_H=0.76. For snapshot `plt0655228`, all
+343 interpolation nodes used by the hot branch remain capped under both
+conversions: the smallest uncapped node length changes from 108.3453 to
+105.1452 pc. The hot adapter checks both conversions before permitting
+legacy reuse. This correction therefore requires no rebuild of the current
+table or spectra. It does not establish equivalence for another snapshot
+or grid; nodes near or below the cap can change. The existing 10 density
+nodes and all other grid coordinates are retained.
+
+Historical parameters lacking `coolingMapHydrogenMassFraction` do not
+identify which runtime default was used. Their abundance/density metadata
+must not be retroactively relabelled with the corrected value.
+
 Example from the repository root:
 
 ```sh

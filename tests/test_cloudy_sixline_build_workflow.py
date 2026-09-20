@@ -4,6 +4,8 @@ from pathlib import Path
 
 import numpy as np
 
+from quokka2s.tables.abundances import QUOKKA_MASS_FRACTIONS
+
 from scripts.build_cloudy_sixline_tables import (
     HM12_LOG_NH,
     LINES,
@@ -29,6 +31,10 @@ class CloudySixLineBuildWorkflowTests(unittest.TestCase):
             )
             text = path.read_text()
             self.assertIn("coolingMapUseJeansLength = 1", text)
+            self.assertIn(
+                f"coolingMapHydrogenMassFraction = {QUOKKA_MASS_FRACTIONS['X']!r}",
+                text,
+            )
             self.assertIn("coolingMapMaximumJeansLength = 3.086e20", text)
             self.assertNotIn("loop [stop column density]", text)
             self.assertIn(

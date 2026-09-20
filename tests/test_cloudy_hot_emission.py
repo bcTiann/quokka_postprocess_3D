@@ -178,6 +178,16 @@ class CloudyHotEmissionTests(unittest.TestCase):
         result = sample_cloudy_hot_emission(queries, self.lookup(), allow_capped_legacy_jeans=True)
         self.assertTrue(np.isfinite(result.emissivity_erg_s_cm3).all())
 
+    def test_legacy_rejects_node_that_becomes_uncapped_after_xh_correction(self):
+        self.use_legacy_payload()
+        # At nH=94 and T=1000 K, the legacy length exceeds the cap, but the
+        # corrected length does not. A capped cell still touches this node.
+        self.payload['log_nH'] = [0., np.log10(94.)]
+        queries = self.queries()
+        np.testing.assert_allclose(queries.model_depth_pc[1:3], 100.)
+        with self.assertRaisesRegex(ValueError, 'corrected density conversion'):
+            sample_cloudy_hot_emission(queries, self.lookup(), allow_capped_legacy_jeans=True)
+
     def test_legacy_failed_support_and_domain_exceptions_still_propagate(self):
         self.use_legacy_payload()
         self.fail((0, 0, slice(None), 1))

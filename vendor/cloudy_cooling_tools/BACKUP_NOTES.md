@@ -7,6 +7,11 @@ commit `3e842e5d03de7fb3e9696b1c69d8b37cef1d018e`.
 Local changes included in this snapshot:
 
 - `CIAOLoop_lines` adds line-emissivity map output compatible with Cloudy 17.
+- Its Jeans density conversion uses `coolingMapHydrogenMassFraction`
+  (default `0.7157683773530885`) to match QUOKKA's rho-to-nH conversion.
+  This changes no elemental abundances. An explicit value of `0.76`
+  reproduces the historical conversion; the upstream `CIAOLoop` is retained
+  unchanged as a source reference.
 - `scripts/subtract_cooling_lite.pl` converts Cloudy 17 component fractions
   back to physical heating/cooling rates using the total rate.
 - `examples/grackle/*.par` contains the C II, H-alpha, HM2012, and diagnostic

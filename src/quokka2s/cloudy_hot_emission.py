@@ -13,6 +13,7 @@ import numpy as np
 
 from .cloudy_cell_queries import CloudyCellEmission, CloudyCellQueries
 from .cloudy_sixline_lookup import CloudySixLineLookup, TOUCH_EPS
+from .tables.abundances import QUOKKA_MASS_FRACTIONS
 
 
 @dataclass(frozen=True)
@@ -38,7 +39,8 @@ def sample_cloudy_hot_emission(
     sampler. The legacy Jeans table is rejected unless the caller explicitly
     permits its use after validating provenance. In that mode queried hot
     model depths must be 100 pc and contributing table nodes must reach the
-    original CIAOLoop cap, 3.086e20 cm (rounded parsec conversion). No legacy
+    original CIAOLoop cap, 3.086e20 cm (rounded parsec conversion), with both
+    the historical and corrected density conversions. No legacy
     table is accepted for arbitrary cell-dependent model depths.
     Original cell columns are passed unchanged;
     the lookup clips only the incident-radiation query coordinate. Returned
@@ -81,7 +83,8 @@ def _validate_capped_legacy_jeans_support(queries, lookup, applicable):
     The external cell depth uses actual simulation rho and a precise parsec;
     the legacy table used rho=nH*mH/0.76, mu=1 and a rounded 100 pc cap.
     Equality of the capped states is authorized only for this small rounding
-    difference. Interpolation must not bring in a shorter legacy model.
+    difference. Interpolation must not bring in a shorter model under either
+    the legacy conversion or the corrected QUOKKA hydrogen mass fraction.
     """
     depth = queries.model_depth_pc[applicable]
     if not np.isfinite(depth).all() or not np.allclose(depth, 100., rtol=1e-12, atol=0):
@@ -99,7 +102,8 @@ def _validate_capped_legacy_jeans_support(queries, lookup, applicable):
     length_cm = np.pi * np.sqrt(
         (5. / 3.) * boltzmann * temperature / (gravitational * hydrogen_mass * rho)
     )
-    capped = length_cm >= 3.086e20
+    corrected_length_cm = length_cm * np.sqrt(QUOKKA_MASS_FRACTIONS['X'] / .76)
+    capped = (length_cm >= 3.086e20) & (corrected_length_cm >= 3.086e20)
     uncapped_weight = np.zeros(depth.size)
     for choices in product((0, 1), repeat=3):
         indices = [bracket[choice] for bracket, choice in zip(brackets, choices)]
@@ -109,4 +113,7 @@ def _validate_capped_legacy_jeans_support(queries, lookup, applicable):
         uncapped_weight += weight * ~capped[indices[1], indices[2]]
     if np.any(uncapped_weight > TOUCH_EPS):
         count = int(np.count_nonzero(uncapped_weight > TOUCH_EPS))
-        raise ValueError(f"Legacy Jeans interpolation touches uncapped table nodes in {count} hot cells")
+        raise ValueError(
+            f"Legacy Jeans interpolation touches uncapped table nodes in {count} hot cells "
+            "under the historical or corrected density conversion"
+        )

@@ -203,6 +203,10 @@ my $coolingScaleFactor = 1;
 # flag to attenuate radiation over a Jeans length
 my $coolingMapUseJeansLength = 0;
 
+# Match the QUOKKA rho -> n_H conversion when estimating the Jeans density.
+# This is a density conversion only; it does not set Cloudy's abundances.
+my $coolingMapHydrogenMassFraction = 0.7157683773530885;
+
 # maximum length scale to use with radiation attenuation
 my $coolingMapMaximumJeansLength = 3.086e20; # 100 pc
 
@@ -960,6 +964,18 @@ sub readParameterFile {
 	  die "coolingMapUseJeansLength must be set to 0 or 1 on line $lineNumber of $parameterFile.\n"
 	      unless (($value eq '0') || ($value eq '1'));
 	  $coolingMapUseJeansLength = $value;
+      }
+
+      # hydrogen mass fraction for converting n_H back to total gas density
+      elsif ($line =~ /^coolingMapHydrogenMassFraction(\z|[\s\=])/i) {
+          my (undef,$value) = split /=/, $line, 2;
+          (undef,$value) = split " ", $line, 2 unless (defined($value));
+          $value =~ s/^\s+|\s+$//g if defined($value);
+          die "coolingMapHydrogenMassFraction must be a finite number with 0 < X_H <= 1 on line $lineNumber of $parameterFile.\n"
+              unless (defined($value) &&
+                      $value =~ /\A[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?\z/ &&
+                      $value > 0 && $value <= 1);
+          $coolingMapHydrogenMassFraction = 0 + $value;
       }
 
       # maximum length scale to consider for Jeans length
@@ -2619,7 +2635,7 @@ sub calculate_jeans_length {
     my $G = 6.67384e-08; # cm**3/(g*s**2)
     my $jeans_length_constant = $pi * (($gamma * $kboltz) / ($G * $mh))**0.5;
 
-    my $total_density = $hden * $mh / 0.76; # primordial H mass fraction
+    my $total_density = $hden * $mh / $coolingMapHydrogenMassFraction;
     # assume mu = 1
     my $jeans_length = $jeans_length_constant *
 	($temperature / $total_density)**(0.5);

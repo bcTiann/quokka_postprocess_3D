@@ -39,6 +39,12 @@ HDEN_RE = re.compile(r"^#\s*hden\s+(.+?)\s*$")
 INIT_RE = re.compile(
     r'^#\s*init\s+"[^"]*logNH([0-9]+(?:\.[0-9]+)?)\.out"\s*$'
 )
+JEANS_X_H_PARAMETER_RE = re.compile(
+    r"^coolingMapHydrogenMassFraction(?:$|[\s=])", re.IGNORECASE
+)
+DECIMAL_NUMBER_RE = re.compile(
+    r"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?"
+)
 
 
 def _sha256(path: Path) -> str:
@@ -47,6 +53,44 @@ def _sha256(path: Path) -> str:
         for block in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+def _jeans_mass_fraction_metadata(parameter_file: Path) -> dict[str, float | str]:
+    """Record explicit Jeans X_H without guessing an older runner's default."""
+    metadata: dict[str, float | str] = {
+        "jeans_length_hydrogen_mass_fraction_source": (
+            "not specified in parameter file; runtime default not inferred"
+        )
+    }
+    for line_number, raw in enumerate(parameter_file.read_text().splitlines(), start=1):
+        line = raw.split("#", 1)[0].strip()
+        if not JEANS_X_H_PARAMETER_RE.match(line):
+            continue
+        if "=" in line:
+            value = line.split("=", 1)[1].strip()
+        else:
+            fields = line.split(maxsplit=1)
+            value = fields[1] if len(fields) == 2 else ""
+        if not DECIMAL_NUMBER_RE.fullmatch(value):
+            raise ValueError(
+                f"coolingMapHydrogenMassFraction must be a finite number with "
+                f"0 < X_H <= 1: {parameter_file}:{line_number}"
+            )
+        fraction = float(value)
+        if not np.isfinite(fraction) or not 0.0 < fraction <= 1.0:
+            raise ValueError(
+                f"coolingMapHydrogenMassFraction must be a finite number with "
+                f"0 < X_H <= 1: {parameter_file}:{line_number}"
+            )
+        # CIAOLoop processes parameters sequentially; the last assignment wins.
+        metadata = {
+            "jeans_length_hydrogen_mass_fraction": fraction,
+            "jeans_length_hydrogen_mass_fraction_source": (
+                f"explicit coolingMapHydrogenMassFraction in parameter file "
+                f"on line {line_number}"
+            ),
+        }
+    return metadata
 
 
 def _parse(path: Path) -> tuple[float, float, dict[float, np.ndarray | None]]:
@@ -194,6 +238,7 @@ def main() -> None:
     parameter_file = args.parameter_file.expanduser().resolve()
     if not parameter_file.is_file():
         raise FileNotFoundError(parameter_file)
+    jeans_mass_fraction_metadata = _jeans_mass_fraction_metadata(parameter_file)
     requested_attenuation = np.asarray(args.hm12_log_nh, dtype=float)
     if requested_attenuation.ndim != 1 or np.any(np.diff(requested_attenuation) <= 0):
         raise ValueError("HM2012 attenuation axis must be strictly increasing")
@@ -242,6 +287,7 @@ def main() -> None:
         failed_node_policy=np.asarray("unavailable; no numerical fill"),
         parameter_file=np.asarray(parameter_file.name),
         parameter_file_sha256=np.asarray(_sha256(parameter_file)),
+        **{key: np.asarray(value) for key, value in jeans_mass_fraction_metadata.items()},
         **_payload(raw),
     )
 
@@ -251,6 +297,7 @@ def main() -> None:
         "product": str(output_path),
         "shape": list(raw.shape),
         "axis_order": "line,log_NH_attenuation,log_nH,log_T",
+        **jeans_mass_fraction_metadata,
         "union_failure_nodes": int(np.count_nonzero(union)),
         "line_failure_masks_identical": all(
             np.array_equal(masks[0], masks[index])

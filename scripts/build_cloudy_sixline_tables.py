@@ -12,12 +12,19 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import runpy
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 import numpy as np
+
+ROOT = Path(__file__).resolve().parents[1]
+# Read the shared constants without importing DESPOTIC table dependencies.
+QUOKKA_MASS_FRACTIONS = runpy.run_path(
+    str(ROOT / "src/quokka2s/tables/abundances.py")
+)["QUOKKA_MASS_FRACTIONS"]
 
 
 STEM = "hm2012_attgrid_ism_nh21_cmb_cr_defaultabund_eightline_jeans"
@@ -88,6 +95,7 @@ def _write_parameter_file(
         f"coolingMapTpoints = {1 if smoke else 21}",
         "coolingScaleFactor = 1",
         "coolingMapUseJeansLength = 1",
+        f"coolingMapHydrogenMassFraction = {QUOKKA_MASS_FRACTIONS['X']!r}",
         "coolingMapMaximumJeansLength = 3.086e20",
         "command iterate to convergence",
         "command stop temperature off",
