@@ -286,23 +286,23 @@ def plot_adopted_spectra(payload, output_stem, *, projected_area_cm2=None,
     figure, axes = plt.subplots(rows, 2, figsize=(12, 2.6 * rows), squeeze=False, sharex=True)
     for idx, (key, axis) in enumerate(zip(keys, axes.flat)):
         total = spectra[idx].sum(axis=0)
-        for values, label, color, style in (
-            (total, "Total", "#161616", "-"),
-            (spectra[idx, 0], r"$T_{\rm QUOKKA}<3000$ K", "#2467A6", "--"),
-            (spectra[idx, 1], r"$T_{\rm QUOKKA}\geq3000$ K", "#C55529", ":"),
+        for values, label, color, style, width in (
+            (total, "Total", "#161616", "-", 1.1),
+            (spectra[idx, 0], r"$T_{\rm QUOKKA}<3000$ K", "#0072F5", "--", 1.9),
+            (spectra[idx, 1], r"$T_{\rm QUOKKA}\geq3000$ K", "#E63946", ":", 2.0),
         ):
-            axis.plot(velocity, values, label=label, color=color, ls=style, lw=1.3)
+            axis.plot(velocity, values, label=label, color=color, ls=style, lw=width)
         axis.set_title(LINE_TITLES.get(key, key), fontsize=11)
         axis.ticklabel_format(axis="y", style="sci", scilimits=(-2, 2), useMathText=True)
         axis.set_ylim(bottom=0.)
         axis.grid(alpha=.18)
         axis.set_xlim(float(payload["velocity_edges_kms"][0]), float(payload["velocity_edges_kms"][-1]))
+        axis.legend(loc="upper right", fontsize=8, frameon=False)
     for axis in list(axes.flat)[len(keys):]:
         axis.set_visible(False)
     for axis in axes[-1]:
         if axis.get_visible():
             axis.set_xlabel(r"LOS velocity [km s$^{-1}$]")
-    axes[0, 0].legend(fontsize=8, frameon=False)
     figure.supylabel(ylabel, fontsize=11)
     figure.suptitle(title, fontsize=13)
     figure.tight_layout(rect=(.025, 0., 1., .98))
