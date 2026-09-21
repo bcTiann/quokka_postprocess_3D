@@ -24,8 +24,8 @@ LINE_MASSES_AMU = {
 LINE_TITLES = {
     "cii": r"C II 158 $\mu$m", "halpha": r"H$\alpha$", "hi21": "H I 21 cm",
     "ciii_977": r"C III 977.020 $\AA$",
-    "ciii_1907": r"C III] 1906.68 $\AA$",
-    "ciii_1909": r"C III] 1908.73 $\AA$",
+    "ciii_1907": r"C III 1906.68 $\AA$",
+    "ciii_1909": r"C III 1908.73 $\AA$",
     "civ_1548": r"C IV 1548.19 $\AA$",
     "civ_1551": r"C IV 1550.78 $\AA$",
     "co10": "CO(1-0)", "co21": "CO(2-1)",
@@ -284,12 +284,24 @@ def plot_adopted_spectra(payload, output_stem, *, projected_area_cm2=None,
         ylabel = r"$dL/dv$ [erg s$^{-1}$ (km s$^{-1}$)$^{-1}$]"
     rows = (len(keys) + 1) // 2
     figure, axes = plt.subplots(rows, 2, figsize=(12, 2.6 * rows), squeeze=False, sharex=True)
-    for idx, (key, axis) in enumerate(zip(keys, axes.flat)):
+    preferred_order = (
+        "halpha", "hi21", "cii", "ciii_977", "ciii_1907", "ciii_1909",
+        "civ_1548", "civ_1551", "co10", "co21",
+    )
+    priority = {key: rank for rank, key in enumerate(preferred_order)}
+    plot_indices = sorted(range(len(keys)), key=lambda idx: priority.get(keys[idx], len(priority)))
+    for idx, axis in zip(plot_indices, axes.flat):
+        key = keys[idx]
         total = spectra[idx].sum(axis=0)
+        cold_source = ("DESPOTIC state\nAnalytic emissivity"
+                       if key in ("halpha", "hi21") else "DESPOTIC emissivity")
+        hot_source = "DESPOTIC emissivity" if key in ("co10", "co21") else "Cloudy emissivity"
         for component, values, label, color, style, width in (
             ("total", total, "Total", "#161616", "-", 1.1),
-            ("cold", spectra[idx, 0], r"$T_{\rm QUOKKA}<3000$ K", "#0072F5", "--", 1.9),
-            ("hot", spectra[idx, 1], r"$T_{\rm QUOKKA}\geq3000$ K", "#E63946", ":", 2.0),
+            ("cold", spectra[idx, 0], r"$T_{\rm QUOKKA}<3000$ K" + "\n" + cold_source,
+             "#0072F5", "--", 1.9),
+            ("hot", spectra[idx, 1], r"$T_{\rm QUOKKA}\geq3000$ K" + "\n" + hot_source,
+             "#E63946", ":", 2.0),
         ):
             if component == "cold" and key.startswith(("ciii_", "civ_")):
                 continue
