@@ -33,6 +33,73 @@ def select_emissivities(t_quokka, despotic, cloudy):
     return result
 
 
+def add_adopted_phase_chunk(histograms, rho, tq, td, column, emission, volume,
+                            *, raw_mass_all_cells=False):
+    """Accumulate the nine panels from the accepted emission calculation.
+
+    Emission and DESPOTIC-dependent panels include only ``emission.valid``.
+    With ``raw_mass_all_cells=True``, the raw QUOKKA-temperature and column
+    mass panels include excluded cells as well. Per-line temperatures come
+    directly from the emission result; this helper does not reselect branches
+    or recompute line emissivities. Empty retained chunks are valid no-ops.
+    """
+    missing = {key for key, _, _ in PANELS} - histograms.keys()
+    if missing:
+        raise ValueError(f'Missing phase histograms: {sorted(missing)}')
+    rho, tq, td, column = (np.asarray(value, dtype=float)
+                          for value in (rho, tq, td, column))
+    shape = rho.shape
+    if any(value.shape != shape for value in (tq, td, column)):
+        raise ValueError('Phase coordinate shapes must match')
+    valid, excluded = np.asarray(emission.valid), np.asarray(emission.excluded)
+    if (valid.dtype.kind != 'b' or excluded.dtype.kind != 'b'
+            or valid.shape != shape or excluded.shape != shape
+            or not np.array_equal(valid, ~excluded)):
+        raise ValueError('Emission valid/excluded masks must be complementary boolean arrays')
+    volume = np.asarray(volume, dtype=float)
+    if volume.shape not in ((), shape):
+        raise ValueError('Volume must be scalar or match the cell shape')
+    for name, value in (('density', rho), ('QUOKKA temperature', tq),
+                        ('column', column), ('volume', volume),
+                        ('retained DESPOTIC temperature', td[valid])):
+        if not np.isfinite(value).all() or np.any(value <= 0):
+            raise ValueError(f'Invalid {name}: expected finite positive values')
+    keys = tuple(emission.line_keys)
+    lines = tuple(key for key, _, _ in PANELS if not key.startswith('mass') and key != 'NH_rho')
+    if len(keys) != len(set(keys)) or not set(lines).issubset(keys):
+        raise ValueError('Emission must contain each plotted line exactly once')
+    epsilon = np.asarray(emission.emissivity_erg_s_cm3, dtype=float)
+    thermal = np.asarray(emission.thermal_temperature_K, dtype=float)
+    if epsilon.shape != (len(keys), *shape) or thermal.shape != epsilon.shape:
+        raise ValueError('Emission and thermal-temperature arrays must have line-first cell shape')
+    for key in lines:
+        index = keys.index(key)
+        values, temperature = epsilon[index][valid], thermal[index][valid]
+        if not np.isfinite(values).all() or np.any(values < 0):
+            raise ValueError(f'Invalid retained {key} emissivity')
+        if not np.isfinite(temperature).all() or np.any(temperature <= 0):
+            raise ValueError(f'Invalid retained {key} thermal temperature')
+
+    mass = rho * volume
+    raw = np.ones(shape, dtype=bool) if raw_mass_all_cells else valid
+    rows = [
+        ('mass_T_QK', rho[raw], tq[raw], mass[raw]),
+        ('mass_T_DSP', rho[valid], td[valid], mass[valid]),
+        ('mass_T_2R', rho[valid], thermal[keys.index('halpha')][valid], mass[valid]),
+        ('NH_rho', column[raw], rho[raw], mass[raw]),
+    ]
+    retained_volume = np.broadcast_to(volume, shape)[valid]
+    rows.extend((key, rho[valid], thermal[keys.index(key)][valid],
+                 epsilon[keys.index(key)][valid] * retained_volume) for key in lines)
+    # Check every weight before modifying any histogram, including overflow in
+    # conversion from density/emissivity to mass/luminosity.
+    if any(not np.isfinite(weight).all() for _, _, _, weight in rows):
+        raise ValueError('Nonfinite phase mass or luminosity')
+    for key, x, y, weight in rows:
+        if weight.size:
+            histograms[key].add(np.log10(x), np.log10(y), weight)
+
+
 class DexHistogram:
     """Streaming absolute sums in globally aligned, fixed-width dex bins.
 

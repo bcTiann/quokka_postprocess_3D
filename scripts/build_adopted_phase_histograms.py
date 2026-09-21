@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
-"""Build the manuscript's nine all-cell phase histograms (no C III/C IV).
+"""Refresh the nine phase panels using the accepted emission calculation.
 
-Run from the repository root. Outputs are new PNG/PDF plus a small histogram
-bundle and a provenance/conservation report. --plot-only reuses that bundle.
-This does not invoke the historical mu-based high-temperature line fields.
+The table provenance, exact exclusions, fresh snapshot queries and emissivities
+are shared with build_default_emission_products.py. Existing axes, 0.2-dex bins,
+absolute mass/luminosity weights and nine-panel layout are preserved.
 """
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 import gc
 import json
 import os
 from pathlib import Path
+import sys
 import time
 
 os.environ.setdefault('OMP_NUM_THREADS', '1')
@@ -19,187 +21,228 @@ os.environ.setdefault('OPENBLAS_NUM_THREADS', '1')
 os.environ.setdefault('VECLIB_MAXIMUM_THREADS', '1')
 import matplotlib
 matplotlib.use('Agg')
-import h5py
 import numpy as np
-import yt
-from yt.units.physical_constants import mh
-
-from quokka2s.cloudy_sixline_lookup import CloudySixLineLookup
-from quokka2s.pipeline.prep import config as cfg
-from quokka2s.pipeline.prep.physics_fields import (
-    _clip_to_table_domain, _HI_emissivity_from_number_density,
-    effective_halpha_recombination_coefficient, h, c, lambda_Halpha,
-)
-from quokka2s.pipeline.tasks.adopted_phase_hist import (
-    PANELS, DexHistogram, select_emissivities, plot_panels,
-)
-from quokka2s.tables import load_table
-from quokka2s.tables.lookup import TableLookup
-from plot_hm12_filtered_ism_sixline_spectra import _recompute_dvdr_slab
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_CLOUDY = ROOT / 'data/cloudy_hm2012_attgrid_ism_nh21_cmb_cr_defaultabund_sixline_jeans_7x10x21.npz'
+if __package__ in (None, ''):
+    sys.path.insert(0, str(ROOT))
 
-
-def emissivities(tq, td, nh, column, dvdr, dsp, cloudy):
-    """Evaluate only the applicable branch, keeping zero emission distinct from NaN."""
-    safe = _clip_to_table_domain(dsp, nh, column, dvdr)
-    low = tq < 3000
-    cold, hot = {}, {}
-    for key, species in (('co10', 'CO'), ('co21', 'CO21')):
-        cold[key] = safe[0] * dsp.line_field(species, 'lumPerH', *safe)
-    for key in ('cii', 'halpha', 'hi21'):
-        cold[key], hot[key] = np.zeros_like(tq), np.zeros_like(tq)
-    if low.any():
-        cold_safe = tuple(v[low] for v in safe)
-        number = dsp.number_densities(('e-', 'H+', 'H'), *cold_safe)
-        for key, value in number.items():
-            if not np.isfinite(value).all() or np.any(value < 0):
-                raise ValueError(f'Invalid DESPOTIC number density: {key}')
-        cold['cii'][low] = cold_safe[0] * dsp.line_field('C+', 'lumPerH', *cold_safe)
-        photon = float(((h * c) / lambda_Halpha).in_cgs().value)
-        cold['halpha'][low] = (photon * effective_halpha_recombination_coefficient(td[low])
-                               * number['e-'] * number['H+'])
-        cold['hi21'][low] = _HI_emissivity_from_number_density(number['H'])
-    if (~low).any():
-        sample = cloudy.sample(tq[~low], nh[~low], column[~low])
-        for key in hot:
-            hot[key][~low] = (sample.emissivity_per_nH2[cloudy.line_keys.index(key)]
-                              * nh[~low] ** 2)
-    return select_emissivities(tq, cold, hot)
+from scripts.build_default_emission_products import validate_accepted_inputs, check_exclusion_queries
+from scripts.check_despotic_snapshot_coverage import slab_windows, _validate_scan_provenance, _sha256
+from quokka2s.adopted_cell_emission import compute_adopted_cell_emission
+from quokka2s.cloudy_cell_queries import prepare_cloudy_cell_queries
+from quokka2s.cloudy_sixline_lookup import CloudySixLineLookup
+from quokka2s.pipeline.tasks.adopted_phase_hist import (
+    PANELS, DexHistogram, add_adopted_phase_chunk, plot_panels,
+)
+from quokka2s.tables.io import load_table
+from quokka2s.tables.lookup import TableLookup
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--dataset', type=Path, default=Path(cfg.YT_DATASET_PATH))
-    parser.add_argument('--despotic-table', type=Path, default=Path(cfg.DESPOTIC_TABLE_PATH))
-    parser.add_argument('--cloudy-table', type=Path, default=DEFAULT_CLOUDY)
-    parser.add_argument('--column-cache', type=Path,
-                        default=ROOT / 'intermediates/plt0655228/fields/field_gas_column_density_H.h5')
-    parser.add_argument('--output-dir', type=Path,
-                        default=ROOT / 'output/phase_histograms/2026-09-06_adopted')
-    parser.add_argument('--slab-nz', type=int, default=16)
+    defaults = {
+        'dataset': ROOT/'plt0655228',
+        'accepted-despotic': ROOT/'output/despotic_default_parallel_20260918/interpolated/accepted_table.json',
+        'cloudy-table': ROOT/'data/cloudy_hm2012_attgrid_ism_nh21_cmb_cr_defaultabund_eightline_jeans_7x10x21.npz',
+        'cloudy-audit': ROOT/'output/default_table_reuse_20260918/cloudy_reuse_coverage.json',
+        'reference-emission-report': ROOT/'output/cloudy_rgi_comparison_20260920/full/emission_report.json',
+    }
+    for name, path in defaults.items():
+        parser.add_argument('--'+name, type=Path, default=path)
+    parser.add_argument('--output-dir', type=Path, required=True)
+    parser.add_argument('--figure-stem', type=Path)
+    parser.add_argument('--mass-selection', choices=('retained', 'raw-all'), required=True,
+                        help='retained: all nine share the emission mask; raw-all: only raw QK/NH mass panels use all cells')
+    parser.add_argument('--slab-nx', type=int, default=8)
+    parser.add_argument('--query-chunk', type=int, default=100000)
+    parser.add_argument('--max-slabs', type=int, help='Diagnostic subset; never labelled full snapshot')
+    parser.add_argument('--no-plot', action='store_true')
     parser.add_argument('--plot-only', action='store_true')
     args = parser.parse_args()
-    args.output_dir.mkdir(parents=True, exist_ok=True)
-    bundle = args.output_dir / 'phase_histograms.npz'
-    report = args.output_dir / 'phase_histograms.json'
-    png = args.output_dir / 'phase_histograms_9panel.png'
-    pdf = args.output_dir / 'phase_histograms_9panel.pdf'
+    if min(args.slab_nx, args.query_chunk) <= 0 or (args.max_slabs is not None and args.max_slabs <= 0):
+        parser.error('Chunk sizes must be positive')
+    bundle = args.output_dir/'phase_histograms.npz'
+    report_path = args.output_dir/'phase_histograms.json'
+    figure = args.figure_stem or args.output_dir/'phase_histograms_9panel'
     if args.plot_only:
-        with np.load(bundle) as data:
+        report = json.loads(report_path.read_text())
+        if report.get('status') != 'completed' or report['mass_selection'] != args.mass_selection:
+            raise ValueError('Plot-only requires a completed run with the same mass selection')
+        with np.load(bundle, allow_pickle=False) as data:
             panels = {key: {name: data[f'{key}__{name}'] for name in ('H', 'x_edges', 'y_edges')}
                       for key, _, _ in PANELS}
-        plot_panels(panels, png, pdf)
+        figure.parent.mkdir(parents=True, exist_ok=True)
+        plot_panels(panels, figure.with_suffix('.png'), figure.with_suffix('.pdf'))
         return
-    if any(path.exists() for path in (bundle, report, png, pdf)):
-        raise FileExistsError('Choose a new output directory; use --plot-only to replot')
-    if args.slab_nz < 1:
-        raise ValueError('--slab-nz must be positive')
-    started = time.monotonic()
-    ds = yt.load(str(args.dataset))
-    ds.force_periodicity()
-    if ds.max_level != 0:
-        raise ValueError('This runner expects the current uniform level-0 snapshot')
-    dims = tuple(int(v) for v in ds.domain_dimensions)
-    width = np.asarray(ds.domain_width.to('cm') / ds.domain_dimensions)
-    volume = float(np.prod(width))
-    dsp = TableLookup(load_table(args.despotic_table))
+    if args.output_dir.exists():
+        raise FileExistsError('Choose a new output directory; --plot-only reuses completed bins')
+    if not args.no_plot and any(figure.with_suffix(ext).exists() for ext in ('.pdf', '.png')):
+        raise FileExistsError('Choose a new figure stem')
+    manifest, coverage, excluded_ids, table_path, inputs, hashes = validate_accepted_inputs(
+        args.accepted_despotic, args.cloudy_table, args.cloudy_audit, args.dataset)
+    reference = json.loads(args.reference_emission_report.read_text())
+    if (reference.get('status') != 'completed' or not reference.get('full_snapshot') or
+            reference['source_sha256'] != hashes):
+        raise ValueError('Reference spectra must use the same accepted inputs')
+    hashes[str(args.reference_emission_report.resolve())] = _sha256(args.reference_emission_report)
+
+    import yt
+    from yt.units import gravitational_constant
+    from quokka2s.pipeline.prep import physics_fields as physics, config as cfg
+    ds = yt.load(str(args.dataset.resolve()))
+    shape = tuple(int(x) for x in ds.domain_dimensions)
+    if shape != tuple(manifest['snapshot_shape']) or ds.max_level != 0 or cfg.DOWNSAMPLE_FACTOR != 1:
+        raise ValueError('Expected the complete accepted uniform snapshot')
+    dsp = TableLookup(load_table(table_path))
+    if dsp.table.build_metadata['composition']['setup'] != 'cloudy_c17_02_default_gow_default_v2':
+        raise ValueError('Expected default DESPOTIC abundances')
+    domain = _validate_scan_provenance(dsp.table, args.dataset, shape, cfg, physics)
     cloudy = CloudySixLineLookup(args.cloudy_table)
+    if cloudy.model_depth_bounds_pc is not None:
+        raise ValueError('Expected the audited default legacy Jeans table')
+    constants = dict(hydrogen_mass_g=float(physics.m_H.to('g').value),
+        boltzmann_erg_K=float(physics.kb.to('erg/K').value),
+        gravitational_cm3_g_s2=float(gravitational_constant.to('cm**3/g/s**2').value),
+        parsec_cm=float(yt.YTQuantity(1, 'pc').to('cm').value))
+    widths = ds.domain_width/ds.domain_dimensions
+    volume = float(np.prod(widths.to('cm').value))
+    code_files = (Path(__file__), Path(physics.__file__),
+        ROOT/'scripts/build_default_emission_products.py', ROOT/'scripts/check_despotic_snapshot_coverage.py',
+        ROOT/'src/quokka2s/pipeline/tasks/adopted_phase_hist.py',
+        ROOT/'src/quokka2s/pipeline/tasks/phase_combined_plot.py',
+        ROOT/'src/quokka2s/cloudy_cell_queries.py', ROOT/'src/quokka2s/cloudy_hot_emission.py',
+        ROOT/'src/quokka2s/adopted_cell_emission.py', ROOT/'src/quokka2s/cloudy_sixline_lookup.py',
+        ROOT/'src/quokka2s/tables/lookup.py', ROOT/'src/quokka2s/tables/model_depth.py')
+    code_hashes = {str(p.resolve()): _sha256(p) for p in code_files}
     histograms = {key: DexHistogram(.2) for key, _, _ in PANELS}
-    counts = {'cells': 0, 'low_temperature_cells': 0}
-    counts.update({name: 0 for name in ('dsp_nH_clipped', 'dsp_NH_clipped', 'dsp_dvdr_clipped')})
+    counts = dict(all=0, cold=0, hot=0, excluded=0, excluded_cold=0, retained=0)
+    mass = {key: 0. for key in ('all', 'cold', 'hot', 'excluded', 'retained')}
+    clipped = {key: 0 for key in ('nH', 'NH', 'dVdr')}
     ranges = {}
-    ray_positions = ((0, 0), (dims[0] // 2, dims[1] // 2), (dims[0]-1, dims[1]-1))
-    density_rays = {position: [] for position in ray_positions}
-    with h5py.File(args.column_cache, 'r') as column_file:
-        if column_file['data'].shape != dims:
-            raise ValueError('Column cache shape differs from the snapshot')
-        if column_file.attrs.get('field_name') != 'column_density_H':
-            raise ValueError('Wrong column cache field')
-        for iz in range(0, dims[2], args.slab_nz):
-            size = min(args.slab_nz, dims[2] - iz)
+    began = time.monotonic()
+    args.output_dir.mkdir(parents=True, exist_ok=False)
+
+    def status(state, **extra):
+        data = dict(status=state, counts=counts, elapsed_seconds=time.monotonic()-began, **extra)
+        temporary = args.output_dir/'status.tmp'
+        temporary.write_text(json.dumps(data, indent=2)+'\n')
+        temporary.replace(args.output_dir/'status.json')
+
+    status('running')
+    try:
+        for slab, (ix, end, lo, hi, core) in enumerate(slab_windows(shape[0], args.slab_nx)):
+            if args.max_slabs is not None and slab >= args.max_slabs:
+                break
             edge = ds.domain_left_edge.copy()
-            edge[2] += iz * ds.domain_width[2] / dims[2]
-            grid = ds.covering_grid(0, edge, (dims[0], dims[1], size))
-            rho = np.asarray(grid['gas', 'density'].to('g/cm**3')).reshape(-1)
-            tq = np.asarray(grid['boxlib', 'temperature']).reshape(-1)
+            edge[0] += lo*widths[0]
+            grid = ds.covering_grid(0, edge, (hi-lo, *shape[1:]))
+            bulk = np.asarray(grid.get_field_parameter('bulk_velocity'))
+            if not np.isfinite(bulk).all() or np.any(bulk != 0):
+                raise ValueError('Unexpected bulk velocity')
+            rho = np.array(grid['gas', 'density'].to('g/cm**3')[core]).ravel()
+            tq = np.array(grid['boxlib', 'temperature'][core], dtype=float).ravel()
+            column = np.array(physics._column_density_H(None, grid).to('cm**-2')[core]).ravel()
+            dvdr = np.array(physics._dVdr_lvg(None, grid).to('s**-1')[core]).ravel()
             del grid
-            nh = rho * float(cfg.X_H) / float(mh.to('g').value)
-            for ix, iy in ray_positions:
-                density_rays[ix, iy].append(nh.reshape(dims[0], dims[1], size)[ix, iy].copy())
-            column = np.asarray(column_file['data'][:, :, iz:iz+size]).reshape(-1)
-            dvdr = _recompute_dvdr_slab(ds, dims, iz, size)
-            safe = _clip_to_table_domain(dsp, nh, column, dvdr)
-            for name, original, clipped in zip(('dsp_nH_clipped', 'dsp_NH_clipped', 'dsp_dvdr_clipped'),
-                                                 (nh, column, dvdr), safe):
-                counts[name] += int(np.count_nonzero(original != clipped))
-            td = dsp.temperature(*safe)
-            mixed = np.where(tq < 3000, td, tq)
-            for key, value in (('rho', rho), ('NH', column), ('T_QUOKKA', tq),
-                               ('T_DESPOTIC', td), ('dvdr', dvdr)):
-                if not np.isfinite(value).all() or np.any(value <= 0):
-                    raise ValueError(f'Invalid {key}; not dropping simulation cells')
-                lo, hi = ranges.get(key, (np.inf, -np.inf))
-                ranges[key] = (min(lo, float(value.min())), max(hi, float(value.max())))
-            lr, lc = np.log10(rho), np.log10(column)
-            mass = rho * volume
-            for key, temperature in (('mass_T_QK', tq), ('mass_T_DSP', td), ('mass_T_2R', mixed)):
-                histograms[key].add(lr, np.log10(temperature), mass)
-            histograms['NH_rho'].add(lc, lr, mass)
-            # Small lookup batches bound the temporary eight-corner Cloudy arrays.
-            for start in range(0, tq.size, 65536):
-                sl = slice(start, start + 65536)
-                eps = emissivities(tq[sl], td[sl], nh[sl], column[sl], dvdr[sl], dsp, cloudy)
-                for key, value in eps.items():
-                    temperature = td[sl] if key.startswith('co') else mixed[sl]
-                    histograms[key].add(lr[sl], np.log10(temperature), value * volume)
-            counts['cells'] += tq.size
-            counts['low_temperature_cells'] += int(np.count_nonzero(tq < 3000))
-            if iz == 0 or (iz + size) % 256 == 0 or iz + size == dims[2]:
-                print(f'z={iz+size}/{dims[2]}; cells={counts["cells"]}; '
-                      f'elapsed={(time.monotonic()-started)/60:.1f} min', flush=True)
-            del rho, tq, nh, column, dvdr, td, mixed, safe, mass, lr, lc
+            for start in range(0, rho.size, args.query_chunk):
+                stop = min(start+args.query_chunk, rho.size)
+                sl = slice(start, stop)
+                offset = ix*shape[1]*shape[2]+start
+                ids = np.arange(offset, offset+stop-start, dtype=np.int64)
+                nh = rho[sl]*cfg.X_H/constants['hydrogen_mass_g']
+                raw = (nh, column[sl], dvdr[sl])
+                axes = (dsp.table.nH_values, dsp.table.col_density_values, dsp.table.dVdr_values)
+                for name, values, axis in zip(('nH', 'NH', 'dVdr'), raw, axes):
+                    if (not np.isfinite(values).all() or np.any(values <= 0) or
+                            np.any(values < axis[0]) or np.any(values > axis[-1])):
+                        raise ValueError(f'Fresh DESPOTIC {name} outside accepted snapshot domain')
+                td = dsp.temperature(*physics._clip_to_table_domain(dsp, *raw))
+                excluded = check_exclusion_queries(ids, excluded_ids, td)
+                queries = prepare_cloudy_cell_queries(rho[sl], column[sl], tq[sl], np.nan, td, np.nan,
+                    authorized_excluded=excluded, allow_hot_missing_despotic_exclusions=True, **constants)
+                emission = compute_adopted_cell_emission(queries, dvdr[sl], dsp, cloudy,
+                    allow_capped_legacy_jeans=True)
+                add_adopted_phase_chunk(histograms, rho[sl], tq[sl], td, column[sl], emission, volume,
+                                        raw_mass_all_cells=args.mass_selection == 'raw-all')
+                cold = tq[sl] < 3000
+                for name, selected in (('all', np.ones(ids.shape, dtype=bool)), ('cold', cold),
+                        ('hot', ~cold), ('excluded', excluded), ('retained', emission.valid)):
+                    counts[name] += int(selected.sum())
+                    mass[name] += float(rho[sl][selected].sum()*volume)
+                counts['excluded_cold'] += int(np.count_nonzero(excluded & cold))
+                for key, flag in emission.despotic_clipped.items():
+                    clipped[key] += int(flag.sum())
+                for key, values in (('rho', rho[sl]), ('nH', nh), ('NH', column[sl]),
+                        ('T_QUOKKA', tq[sl]), ('T_DESPOTIC', td[emission.valid]), ('dVdr', dvdr[sl])):
+                    if values.size:
+                        old = ranges.get(key, (np.inf, -np.inf))
+                        ranges[key] = (min(old[0], float(values.min())), max(old[1], float(values.max())))
+            status('running', completed_slabs=slab+1)
+            print(f'Phase histograms: {counts["all"]}/{manifest["total_cells"]} cells; '
+                  f'{time.monotonic()-began:.1f} s', flush=True)
+            del rho, tq, column, dvdr
             gc.collect()
-        # Sample the validation rays from the same full-x/y slabs used above.
-        # Tiny off-origin covering grids can map incorrectly in this yt reader.
-        ray_errors = []
-        for ix, iy in ray_positions:
-            n_ray = np.concatenate(density_rays[ix, iy])
-            minus = np.cumsum(n_ray) * width[2]
-            plus = np.cumsum(n_ray[::-1])[::-1] * width[2]
-            expected = 2.0 / (1.0 / minus + 1.0 / plus)
-            cached = column_file['data'][ix, iy, :]
-            np.testing.assert_allclose(cached, expected, rtol=1e-6)
-            ray_errors.append(float(np.max(np.abs(cached / expected - 1))))
-    panels = {key: histogram.result() for key, histogram in histograms.items()}
-    validation = {}
-    for key, histogram in histograms.items():
-        binned = float(histogram.H.sum())
-        np.testing.assert_allclose(binned, histogram.total, rtol=1e-10, atol=0)
-        assert histogram.count == int(np.prod(dims))
-        validation[key] = dict(direct_sum=histogram.total, bin_sum=binned,
-                              relative_error=abs(binned-histogram.total)/histogram.total
-                              if histogram.total else 0.0,
-                              cells=histogram.count,
-                              unit='g' if key.startswith('mass') or key == 'NH_rho' else 'erg/s')
-    np.savez_compressed(bundle, **{f'{key}__{name}': value
-                       for key, panel in panels.items() for name, value in panel.items()})
-    metadata = dict(dataset=str(args.dataset), despotic_table=str(args.despotic_table),
-                    cloudy_table=str(args.cloudy_table), column_cache=str(args.column_cache),
-                    column_definition='harmonic mean of +z and -z inclusive cumulative columns',
-                    dvdr='recomputed abs(div(v))/3; current simulation numerical floor',
-                    temperature_split_K=3000, X_H=float(cfg.X_H), cell_volume_cm3=volume,
-                    line_policy='CII: DESPOTIC low / Cloudy high; Halpha,HI: DESPOTIC densities and analytic low / Cloudy high; CO10,CO21: DESPOTIC all cells',
-                    mixed_temperature='T_DESPOTIC below T_QUOKKA=3000 K; T_QUOKKA otherwise',
-                    cloud_attenuation_column='clip to 1e18..1e21; interpolate within',
-                    bin_dex=.2, color_dynamic_range_dex=6, velocity_selection=None,
-                    counts=counts, input_ranges=ranges, validation=validation,
-                    column_ray_max_relative_errors=ray_errors,
-                    elapsed_minutes=(time.monotonic()-started)/60)
-    report.write_text(json.dumps(metadata, indent=2) + '\n')
-    plot_panels(panels, png, pdf)
-    print(f'Completed: {png}\n{pdf}\nConservation: {report}', flush=True)
+        full = counts['all'] == manifest['total_cells']
+        if full:
+            if counts != reference['counts']:
+                raise ValueError('Cell membership differs from accepted spectra')
+            for key, value in reference['mass_g'].items():
+                np.testing.assert_allclose(mass[key], value, rtol=1e-12, atol=0)
+        if any(clipped.values()):
+            raise ValueError('Unexpected DESPOTIC query-coordinate clipping')
+        panels = {key: histogram.result() for key, histogram in histograms.items()}
+        validation = {}
+        for key, histogram in histograms.items():
+            is_mass = key.startswith('mass') or key == 'NH_rho'
+            use_all = args.mass_selection == 'raw-all' and key in ('mass_T_QK', 'NH_rho')
+            expected_count = counts['all' if use_all else 'retained']
+            if histogram.count != expected_count:
+                raise ValueError(f'Wrong cell membership for {key}')
+            binned = float(histogram.H.sum())
+            np.testing.assert_allclose(binned, histogram.total, rtol=1e-12, atol=0)
+            check = dict(direct_sum=histogram.total, bin_sum=binned, cells=histogram.count,
+                         unit='g' if is_mass else 'erg/s',
+                         bin_sum_relative_error=abs(binned/histogram.total-1) if histogram.total else 0.)
+            if is_mass:
+                np.testing.assert_allclose(binned, mass['all' if use_all else 'retained'], rtol=1e-12, atol=0)
+            elif full:
+                expected = reference['spectral_report']['lines'][key]['total']['input_luminosity_erg_s']
+                np.testing.assert_allclose(binned, expected, rtol=1e-12, atol=0)
+                check.update(reference_luminosity_erg_s=expected,
+                             reference_relative_error=abs(binned/expected-1) if expected else 0.)
+            validation[key] = check
+        for mapping in (hashes, code_hashes):
+            for path, digest in mapping.items():
+                if _sha256(path) != digest:
+                    raise ValueError(f'Input changed during run: {path}')
+        np.savez_compressed(bundle, **{f'{key}__{name}': value
+                            for key, panel in panels.items() for name, value in panel.items()})
+        report = dict(status='completed' if full else 'partial diagnostic', full_snapshot=full,
+            completed_at=datetime.now(timezone.utc).isoformat(), dataset=str(args.dataset.resolve()),
+            despotic_table=str(table_path), cloudy_table=str(args.cloudy_table.resolve()),
+            counts=counts, mass_g=mass, mass_selection=args.mass_selection,
+            temperature_split_K=3000, X_H=float(cfg.X_H), cell_volume_cm3=volume,
+            temperature_axes={key: temp for key, temp, _ in PANELS},
+            line_policy='Canonical compute_adopted_cell_emission; existing five plotted lines',
+            column_definition='Fresh inclusive +/-z columns, harmonic mean; no cached column field',
+            dvdr='Fresh abs(div(v))/3, x-slab halo, current numerical floor',
+            bin_dex=.2, color_dynamic_range_dex=6, velocity_selection=None,
+            despotic_coordinate_clipped_cells=clipped, input_ranges=ranges,
+            validation=validation, source_sha256=hashes, code_sha256=code_hashes,
+            snapshot_domain=domain, reference_emission_report=str(args.reference_emission_report.resolve()),
+            elapsed_seconds=time.monotonic()-began)
+        report_path.write_text(json.dumps(report, indent=2, allow_nan=False)+'\n')
+        if not args.no_plot:
+            if not full:
+                raise ValueError('Partial runs must use --no-plot')
+            figure.parent.mkdir(parents=True, exist_ok=True)
+            plot_panels(panels, figure.with_suffix('.png'), figure.with_suffix('.pdf'))
+        status(report['status'])
+        print(f'Completed phase histogram bundle: {bundle}', flush=True)
+    except Exception as error:
+        status('failed', error=repr(error))
+        raise
 
 
 if __name__ == '__main__':

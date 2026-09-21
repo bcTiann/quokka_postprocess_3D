@@ -1,7 +1,7 @@
 import numpy as np
 
 from quokka2s.pipeline.tasks.adopted_phase_hist import (
-    PANELS, DexHistogram, select_emissivities,
+    PANELS, DexHistogram, select_emissivities, add_adopted_phase_chunk,
 )
 
 
@@ -55,50 +55,127 @@ def test_no_silent_invalid_emission():
         select_emissivities(np.array([100.]), cold, hot)
 
 
-def test_lookup_inputs_and_emissivity_formulas():
-    import sys
-    from pathlib import Path
+def _accepted_phase_chunk():
     from types import SimpleNamespace
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
-    from build_adopted_phase_histograms import emissivities
-    from quokka2s.pipeline.prep.physics_fields import (
-        _HI_emissivity_from_number_density, effective_halpha_recombination_coefficient,
-        h, c, lambda_Halpha,
-    )
+    rho = np.array([1e-25, 2e-25, 3e-25, 4e-25])
+    tq = np.array([100., 2999., 3000., 1e6])
+    td = np.array([21., 5000., 33., np.nan])
+    column = np.array([1e18, 1e19, 1e20, 1e21])
+    # Deliberately different order from PANELS, and an unplotted line.
+    keys = ('co21', 'hi21', 'ciii_977', 'cii', 'halpha', 'co10')
+    epsilon = np.arange(1., 25.).reshape(6, 4)
+    epsilon[:, -1] = np.nan
+    temperature = np.tile([21., 5000., 3000., np.nan], (6, 1))
+    for key in ('co10', 'co21'):
+        temperature[keys.index(key)] = td
+    emission = SimpleNamespace(line_keys=keys, emissivity_erg_s_cm3=epsilon,
+        thermal_temperature_K=temperature, valid=np.array([True, True, True, False]),
+        excluded=np.array([False, False, False, True]))
+    return rho, tq, td, column, emission
 
-    class Despotic:
-        table = SimpleNamespace(nH_values=np.array([.1, 100.]),
-                                col_density_values=np.array([1e18, 1e23]),
-                                dVdr_values=np.array([1e-22, 1e-10]))
 
-        def line_field(self, species, field, nh, column, dvdr):
-            assert field == 'lumPerH'
-            return np.full_like(nh, {'CO': 2., 'CO21': 3., 'C+': 5.}[species])
+def _phase_histograms():
+    return {key: DexHistogram(.2) for key, _, _ in PANELS}
 
-        def number_densities(self, species, nh, column, dvdr):
-            return {'e-': nh * .1, 'H+': nh * .2, 'H': nh * .8}
 
-    class Cloudy:
-        line_keys = ('cii', 'halpha', 'hi21')
+def _slice_phase_chunk(chunk, selected):
+    from types import SimpleNamespace
+    rho, tq, td, column, emission = chunk
+    return tuple(value[selected] for value in (rho, tq, td, column)) + (
+        SimpleNamespace(line_keys=emission.line_keys,
+            emissivity_erg_s_cm3=emission.emissivity_erg_s_cm3[:, selected],
+            thermal_temperature_K=emission.thermal_temperature_K[:, selected],
+            valid=emission.valid[selected], excluded=emission.excluded[selected]),)
 
-        def sample(self, temperature, nh, column):
-            np.testing.assert_array_equal(temperature, [3000.])
-            np.testing.assert_array_equal(nh, [4.])
-            return SimpleNamespace(emissivity_per_nH2=np.array([[7.], [11.], [13.]]))
 
-    values = emissivities(np.array([2999., 3000.]), np.array([1000., 100.]),
-                          np.array([2., 4.]), np.array([1e20, 1e20]),
-                          np.array([1e-15, 1e-15]), Despotic(), Cloudy())
-    np.testing.assert_allclose(values['cii'], [10., 7. * 16])
-    np.testing.assert_allclose(values['co10'], [4., 8.])
-    np.testing.assert_allclose(values['co21'], [6., 12.])
-    photon = float(((h * c) / lambda_Halpha).in_cgs().value)
-    np.testing.assert_allclose(values['halpha'],
-                              [photon * effective_halpha_recombination_coefficient(1000.) * .2 * .4,
-                               11. * 16], rtol=1e-14, atol=0)
-    np.testing.assert_allclose(values['hi21'],
-                              [_HI_emissivity_from_number_density(1.6), 13. * 16],
-                              rtol=1e-14, atol=0)
+def _assert_panel_points(histogram, x, y, weights):
+    panel = histogram.result()
+    expected, _, _ = np.histogram2d(np.log10(x), np.log10(y),
+        bins=(panel['x_edges'], panel['y_edges']), weights=weights)
+    np.testing.assert_allclose(panel['H'], expected, rtol=1e-14, atol=0)
+    np.testing.assert_allclose(histogram.total, np.sum(weights), rtol=1e-14, atol=0)
+    assert histogram.count == len(weights)
+
+
+def test_adopted_chunk_uses_supplied_emission_and_per_line_temperatures():
+    chunk = _accepted_phase_chunk()
+    rho, tq, td, column, emission = chunk
+    histograms = _phase_histograms()
+    volume = np.array([2., 3., 4., 5.])
+    add_adopted_phase_chunk(histograms, *chunk, volume)
+    valid = emission.valid
+    mass = rho[valid] * volume[valid]
+    _assert_panel_points(histograms['mass_T_QK'], rho[valid], tq[valid], mass)
+    _assert_panel_points(histograms['mass_T_DSP'], rho[valid], td[valid], mass)
+    # A cold QK cell may have a hotter DESPOTIC temperature; the 3000 K cell
+    # still uses QK T. This is the canonical emission's chosen temperature.
+    _assert_panel_points(histograms['mass_T_2R'], rho[valid], [21., 5000., 3000.], mass)
+    _assert_panel_points(histograms['NH_rho'], column[valid], rho[valid], mass)
+    for key in ('halpha', 'hi21', 'cii', 'co10', 'co21'):
+        index = emission.line_keys.index(key)
+        temperature = td[valid] if key.startswith('co') else [21., 5000., 3000.]
+        _assert_panel_points(histograms[key], rho[valid], temperature,
+                            emission.emissivity_erg_s_cm3[index, valid] * volume[valid])
+
+
+def test_adopted_chunk_raw_mass_policy_keeps_only_raw_panels_all_cell():
+    chunk = _accepted_phase_chunk()
+    rho, tq, _, column, _ = chunk
+    histograms = _phase_histograms()
+    add_adopted_phase_chunk(histograms, *chunk, 2., raw_mass_all_cells=True)
+    _assert_panel_points(histograms['mass_T_QK'], rho, tq, rho * 2.)
+    _assert_panel_points(histograms['NH_rho'], column, rho, rho * 2.)
+    for key, _, _ in PANELS:
+        assert histograms[key].count == (4 if key in ('mass_T_QK', 'NH_rho') else 3)
+
+
+def test_adopted_chunk_streaming_and_empty_retained_chunks():
+    chunk = _accepted_phase_chunk()
+    for raw_all in (False, True):
+        one_shot, streamed = _phase_histograms(), _phase_histograms()
+        add_adopted_phase_chunk(one_shot, *chunk, 2., raw_mass_all_cells=raw_all)
+        # Start with a fully excluded chunk (all emission/TD are NaN).
+        for selected in (slice(3, 4), slice(0, 2), slice(2, 3), slice(0, 0)):
+            add_adopted_phase_chunk(streamed, *_slice_phase_chunk(chunk, selected),
+                                    2., raw_mass_all_cells=raw_all)
+        for key, _, _ in PANELS:
+            np.testing.assert_allclose(streamed[key].H, one_shot[key].H, rtol=1e-14, atol=0)
+            np.testing.assert_array_equal(streamed[key].origin, one_shot[key].origin)
+            assert streamed[key].count == one_shot[key].count
+            np.testing.assert_allclose(streamed[key].total, one_shot[key].total, rtol=1e-14)
+
+
+def test_adopted_chunk_rejects_invalid_inputs_without_partial_accumulation():
+    import unittest
+    def invalid(case):
+        rho, tq, td, column, emission = _accepted_phase_chunk()
+        volume = 2.
+        if case == 'rho': rho[0] = 0.
+        elif case == 'column': column[0] = np.nan
+        elif case == 'tq': tq[-1] = np.nan  # Raw simulation values must remain valid.
+        elif case == 'td': td[0] = np.nan
+        elif case == 'mask': emission.excluded[0] = True
+        elif case == 'mask_type': emission.valid = emission.valid.astype(int)
+        elif case == 'coordinate_shape': td = td[:-1]
+        elif case == 'emission_shape': emission.emissivity_erg_s_cm3 = emission.emissivity_erg_s_cm3[:, :-1]
+        elif case == 'thermal': emission.thermal_temperature_K[0, 0] = 0.
+        elif case == 'epsilon': emission.emissivity_erg_s_cm3[0, 0] = np.nan
+        elif case == 'negative_epsilon': emission.emissivity_erg_s_cm3[0, 0] = -1.
+        elif case == 'missing_line': emission.line_keys = ('unknown', *emission.line_keys[1:])
+        elif case == 'duplicate_line': emission.line_keys = ('co10', *emission.line_keys[1:])
+        elif case == 'volume': volume = -2.
+        elif case == 'volume_nan': volume = np.nan
+        elif case == 'volume_shape': volume = np.ones(3)
+        return rho, tq, td, column, emission, volume
+
+    for case in ('rho', 'column', 'tq', 'td', 'mask', 'mask_type', 'coordinate_shape',
+                 'emission_shape', 'thermal', 'epsilon', 'negative_epsilon', 'missing_line',
+                 'duplicate_line', 'volume', 'volume_nan', 'volume_shape'):
+        histograms = _phase_histograms()
+        with unittest.TestCase().assertRaises(ValueError, msg=case):
+            add_adopted_phase_chunk(histograms, *invalid(case))
+        assert all(histogram.H is None and histogram.count == 0
+                   for histogram in histograms.values()), case
 
 
 if __name__ == '__main__':

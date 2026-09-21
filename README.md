@@ -365,12 +365,13 @@ MODE=plot    LEXT_KPC=15 scripts/run_dataset_series.sh plt0655228
 
 ### Current manuscript phase histograms
 
-Run `python scripts/build_adopted_phase_histograms.py` in the environment
-containing yt and DESPOTIC. This is the current all-cell, nine-panel figure;
-it does not use the historical high-temperature analytic field aliases below.
-The output directory defaults to `output/phase_histograms/2026-09-06_adopted`.
-Use `--output-dir` for another run and `--plot-only` to redraw an existing
-histogram bundle without recomputing the emission.
+Run `python scripts/build_adopted_phase_histograms.py --output-dir NEW_DIRECTORY
+--mass-selection retained` in the environment containing yt and DESPOTIC.
+The current nine-panel figure uses the same accepted DESPOTIC table, audited
+Cloudy table, exact exclusions and `compute_adopted_cell_emission` function as
+the current spectra. All nine panels use the same 134,197,901 retained cells.
+The September 6 outputs are historical and remain unchanged. Use `--plot-only`
+with the same output directory and mass selection to redraw completed bins.
 
 The 3-by-3 layout is mass versus rho and each of T_QUOKKA, T_DESPOTIC,
 and mixed T; mass in the NH-rho plane; then Halpha, H I, C II, CO(1-0),
@@ -384,15 +385,13 @@ T_QUOKKA otherwise. Both CO panels always use T_DESPOTIC.
 | H I 21 cm | DESPOTIC nHI and analytic optically thin formula | Cloudy emissivity |
 | CO(1-0), CO(2-1) | DESPOTIC emissivity | DESPOTIC emissivity |
 
-C III/C IV are deliberately outside this figure's scope. The Cloudy input is
-the seven HM12-attenuation Jeans tables (18--21 in log column, clipped rather
-than extrapolated), with filtered ISM, CMB and CR. The DESPOTIC input is the
-extended-dVdr CO10/CO21 table. Their paths can be set with `--cloudy-table`
-and `--despotic-table`. The default column cache is the +z/-z harmonic mean;
-three full vertical rays are checked against the snapshot before delivery.
-The velocity gradient and T_DESPOTIC are recomputed, not taken from old caches.
+C III/C IV remain outside this figure's scope. The accepted inputs and their
+hashes are validated using the spectrum workflow; input overrides use
+`--accepted-despotic`, `--cloudy-table`, and `--cloudy-audit`. The +z/-z harmonic
+mean columns and velocity gradients are recalculated from full-z snapshot
+slabs with an x halo. No historical column or emission cache is used.
 
-All cells contribute, with no velocity cut. Each 0.2-dex bin stores absolute
+All retained cells contribute, with no velocity cut. Each 0.2-dex bin stores absolute
 mass in g or luminosity in erg/s (`emissivity * cell volume`, summed), not a
 normalized fraction or luminosity per dex. Colors show six decades below the
 maximum; the three mass-temperature panels share a scale. The NPZ saves the
@@ -401,12 +400,14 @@ figure is saved as PNG and PDF. Existing outputs are not overwritten by a
 new calculation. Unit/model/bin tests can be run with
 `python tests/test_adopted_phase_hist.py`.
 
-The 2026-09-06 full-snapshot run contains 134,217,728 cells in every panel.
-Bin/direct-sum discrepancies are below 1e-14; line totals match the respective
-DESPOTIC-low/Cloudy-high inputs of the earlier LOS-z spectra within 4e-14.
-The existing DESPOTIC density-boundary clipping applies to 958,296 cells
-(0.714%); no DESPOTIC column or dVdr inputs are clipped in this snapshot.
-This run does not change those lookup-boundary rules.
+Each full run checks the exact accepted cell counts and mass, histogram
+conservation, absence of DESPOTIC coordinate clipping, and agreement of all
+five line totals with the current spectrum's input luminosities before its
+finite velocity window. The default reference is the September 20 RGI run.
+The accepted DESPOTIC table covers the complete snapshot coordinate range;
+the refreshed phase calculation rejects any DESPOTIC coordinate clipping.
+The old September 6 figure used density-boundary clipping for 958,296 cells
+and must not be used as the updated result.
 
 ### Historical standard-task products
 
