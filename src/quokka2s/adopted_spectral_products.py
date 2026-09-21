@@ -303,9 +303,11 @@ def plot_adopted_spectra(payload, output_stem, *, projected_area_cm2=None,
             ("hot", spectra[idx, 1], r"$T_Q\geq3000$ K" + "\n" + hot_source,
              "#E63946", ":", 2.0),
         ):
+            if component == "total" and key.startswith(("ciii_", "civ_", "co")):
+                continue
             if component == "cold" and key.startswith(("ciii_", "civ_")):
                 continue
-            # Hide the weak hot CO curve only in the display; Total retains it.
+            # Hide the weak hot CO curve only in the display; saved data retain it.
             if component == "hot" and key in ("co10", "co21"):
                 continue
             axis.plot(velocity, values, label=label, color=color, ls=style, lw=width)
