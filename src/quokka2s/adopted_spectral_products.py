@@ -268,6 +268,7 @@ def plot_adopted_spectra(payload, output_stem, *, projected_area_cm2=None,
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
+    from matplotlib.offsetbox import DrawingArea, HPacker, TextArea
 
     keys = tuple(str(key) for key in payload["line_keys"])
     velocity = np.asarray(payload["velocity_kms"])
@@ -293,14 +294,13 @@ def plot_adopted_spectra(payload, output_stem, *, projected_area_cm2=None,
     for idx, axis in zip(plot_indices, axes.flat):
         key = keys[idx]
         total = spectra[idx].sum(axis=0)
-        cold_source = ("DESPOTIC state\nAnalytic emissivity"
-                       if key in ("halpha", "hi21") else "DESPOTIC emissivity")
-        hot_source = "DESPOTIC emissivity" if key in ("co10", "co21") else "Cloudy emissivity"
+        cold_source = "DESPOTIC + analytic" if key in ("halpha", "hi21") else "DESPOTIC"
+        hot_source = "DESPOTIC" if key in ("co10", "co21") else "Cloudy"
         for component, values, label, color, style, width in (
             ("total", total, "Total", "#161616", "-", 1.1),
-            ("cold", spectra[idx, 0], r"$T_{\rm QUOKKA}<3000$ K" + "\n" + cold_source,
+            ("cold", spectra[idx, 0], r"$T_Q<3000$ K" + "\n" + cold_source,
              "#0072F5", "--", 1.9),
-            ("hot", spectra[idx, 1], r"$T_{\rm QUOKKA}\geq3000$ K" + "\n" + hot_source,
+            ("hot", spectra[idx, 1], r"$T_Q\geq3000$ K" + "\n" + hot_source,
              "#E63946", ":", 2.0),
         ):
             if component == "cold" and key.startswith(("ciii_", "civ_")):
@@ -314,7 +314,16 @@ def plot_adopted_spectra(payload, output_stem, *, projected_area_cm2=None,
         axis.set_ylim(bottom=0.)
         axis.grid(alpha=.18)
         axis.set_xlim(float(payload["velocity_edges_kms"][0]), float(payload["velocity_edges_kms"][-1]))
-        axis.legend(loc="upper right", fontsize=8, frameon=False)
+        legend = axis.legend(loc="upper right", fontsize=8, frameon=False,
+                             labelspacing=0.9, handletextpad=0.7)
+        for label in legend.get_texts():
+            label.set_linespacing(1.05)
+        # Align each line sample with the first (temperature) text line.
+        for row in legend.findobj(HPacker):
+            children = row.get_children()
+            if (len(children) == 2 and isinstance(children[0], DrawingArea)
+                    and isinstance(children[1], TextArea)):
+                row.align = "top"
     for axis in list(axes.flat)[len(keys):]:
         axis.set_visible(False)
     for axis in axes[-1]:
