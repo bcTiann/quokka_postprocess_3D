@@ -286,11 +286,16 @@ def plot_adopted_spectra(payload, output_stem, *, projected_area_cm2=None,
     figure, axes = plt.subplots(rows, 2, figsize=(12, 2.6 * rows), squeeze=False, sharex=True)
     for idx, (key, axis) in enumerate(zip(keys, axes.flat)):
         total = spectra[idx].sum(axis=0)
-        for values, label, color, style, width in (
-            (total, "Total", "#161616", "-", 1.1),
-            (spectra[idx, 0], r"$T_{\rm QUOKKA}<3000$ K", "#0072F5", "--", 1.9),
-            (spectra[idx, 1], r"$T_{\rm QUOKKA}\geq3000$ K", "#E63946", ":", 2.0),
+        for component, values, label, color, style, width in (
+            ("total", total, "Total", "#161616", "-", 1.1),
+            ("cold", spectra[idx, 0], r"$T_{\rm QUOKKA}<3000$ K", "#0072F5", "--", 1.9),
+            ("hot", spectra[idx, 1], r"$T_{\rm QUOKKA}\geq3000$ K", "#E63946", ":", 2.0),
         ):
+            if component == "cold" and key.startswith(("ciii_", "civ_")):
+                continue
+            # Hide the weak hot CO curve only in the display; Total retains it.
+            if component == "hot" and key in ("co10", "co21"):
+                continue
             axis.plot(velocity, values, label=label, color=color, ls=style, lw=width)
         axis.set_title(LINE_TITLES.get(key, key), fontsize=11)
         axis.ticklabel_format(axis="y", style="sci", scilimits=(-2, 2), useMathText=True)
