@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Refresh the nine phase panels using the accepted emission calculation.
+"""Build phase histograms and render ten selected manuscript panels.
 
 The table provenance, exact exclusions, fresh snapshot queries and emissivities
 are shared with build_default_emission_products.py. Existing axes, 0.2-dex bins,
-absolute mass/luminosity weights and nine-panel layout are preserved.
+absolute mass/luminosity weights are preserved. All ten line arrays are saved;
+the figure displays one transition per species alongside four gas panels.
 """
 from __future__ import annotations
 
@@ -53,7 +54,7 @@ def main():
     parser.add_argument('--output-dir', type=Path, required=True)
     parser.add_argument('--figure-stem', type=Path)
     parser.add_argument('--mass-selection', choices=('retained', 'raw-all'), required=True,
-                        help='retained: all nine share the emission mask; raw-all: only raw QK/NH mass panels use all cells')
+                        help='retained: all panels share the emission mask; raw-all: only raw QK/NH mass panels use all cells')
     parser.add_argument('--slab-nx', type=int, default=8)
     parser.add_argument('--query-chunk', type=int, default=100000)
     parser.add_argument('--max-slabs', type=int, help='Diagnostic subset; never labelled full snapshot')
@@ -64,7 +65,7 @@ def main():
         parser.error('Chunk sizes must be positive')
     bundle = args.output_dir/'phase_histograms.npz'
     report_path = args.output_dir/'phase_histograms.json'
-    figure = args.figure_stem or args.output_dir/'phase_histograms_9panel'
+    figure = args.figure_stem or args.output_dir/'phase_histograms_10panel'
     if args.plot_only:
         report = json.loads(report_path.read_text())
         if report.get('status') != 'completed' or report['mass_selection'] != args.mass_selection:
@@ -224,7 +225,7 @@ def main():
             counts=counts, mass_g=mass, mass_selection=args.mass_selection,
             temperature_split_K=3000, X_H=float(cfg.X_H), cell_volume_cm3=volume,
             temperature_axes={key: temp for key, temp, _ in PANELS},
-            line_policy='Canonical compute_adopted_cell_emission; existing five plotted lines',
+            line_policy='Canonical compute_adopted_cell_emission; all ten individual lines; CIII/CIV cold luminosity is zero',
             column_definition='Fresh inclusive +/-z columns, harmonic mean; no cached column field',
             dvdr='Fresh abs(div(v))/3, x-slab halo, current numerical floor',
             bin_dex=.2, color_dynamic_range_dex=6, velocity_selection=None,

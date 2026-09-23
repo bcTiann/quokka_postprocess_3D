@@ -104,6 +104,9 @@ def _make_init(self, config,
                filename: str = 'multi_field_slices.png',
                subdir: str | None = None,
                aspect: str = 'equal',
+               show_title: bool = True,
+               save_pdf: bool = False,
+               display_factors: dict | None = None,
                panels=None):
     """Shared __init__ body for Build_ and Plot_MultiFieldSlices (identical
     init args so the two are paired)."""
@@ -117,6 +120,11 @@ def _make_init(self, config,
     self.filename = filename
     self.subdir = subdir
     self.aspect = aspect
+    self.show_title = show_title
+    self.save_pdf = save_pdf
+    self.display_factors = dict(_DISPLAY_FACTOR)
+    if display_factors is not None:
+        self.display_factors.update(display_factors)
     self._axis_idx = {'x': 0, 'y': 1, 'z': 2}[slice_axis]
 
 
@@ -270,7 +278,7 @@ class Plot_MultiFieldSlices(PlotTask):
         cross_slice_ranges: dict[str, tuple[float, float]] = {}
         if is_multi:
             for panel_key, *_ in self.panels:
-                conv = _DISPLAY_FACTOR.get(panel_key, 1.0)
+                conv = self.display_factors.get(panel_key, 1.0)
                 lo, hi = +np.inf, -np.inf
                 for idx in slice_indices:
                     arr = slices_by_idx[int(idx)][panel_key] * conv
@@ -335,7 +343,7 @@ class Plot_MultiFieldSlices(PlotTask):
         # vmin/vmax across 0/9/99 kpc.
         panel_state: dict[str, dict | None] = {}
         for panel_key, _field, _label, _cmap, _mode, _vmin, _vmax, _grp in self.panels:
-            conv = _DISPLAY_FACTOR.get(panel_key, 1.0)
+            conv = self.display_factors.get(panel_key, 1.0)
             data = slices[panel_key].T * conv                 # vertical = long axis; cgs → display unit
             pos  = data > 0
             if not pos.any():
@@ -419,11 +427,12 @@ class Plot_MultiFieldSlices(PlotTask):
         down = getattr(context.config, 'downsample_factor', '?')
         lext = getattr(context.config, 'column_extension_lateral_kpc', 0.0)
         slice_pos = f'index {slice_idx}'
-        fig.suptitle(
-            f'{ds_name}   (down={down},  $L_{{\\rm ext}}$ = {lext:g} kpc)\n'
-            f'{plane[0]}–{plane[1]} slice at {self.slice_axis} = {slice_pos}',
-            fontsize=13, y=0.99,
-        )
+        if self.show_title:
+            fig.suptitle(
+                f'{ds_name}   (down={down},  $L_{{\\rm ext}}$ = {lext:g} kpc)\n'
+                f'{plane[0]}–{plane[1]} slice at {self.slice_axis} = {slice_pos}',
+                fontsize=13, y=0.99,
+            )
 
         # Output path: single slice → legacy filename in OUTPUT_DIR root;
         # multi-slice → numbered file in the subdir created by plot().
@@ -432,5 +441,7 @@ class Plot_MultiFieldSlices(PlotTask):
         else:
             out = multi_out_dir / f'multi_field_slices_idx{slice_idx:04d}.png'
         fig.savefig(str(out), dpi=200, bbox_inches='tight')
+        if self.save_pdf:
+            fig.savefig(out.with_suffix('.pdf'), dpi=200, bbox_inches='tight')
         plt.close(fig)
         print(f'  Saved: {out}')

@@ -40,6 +40,8 @@ def main():
     parser.add_argument('--output-dir', type=Path, required=True)
     parser.add_argument('--slab-nx', type=int, default=8)
     parser.add_argument('--query-chunk', type=int, default=100000)
+    parser.add_argument('--evaluate-hot-emission', action='store_true',
+                        help='Also sample the checked table for hot cells and sum intrinsic luminosities')
     args = parser.parse_args()
     if min(args.slab_nx,args.query_chunk) <= 0:
         parser.error('slab and query sizes must be positive')
@@ -88,6 +90,11 @@ def main():
         raise ValueError('Cell volume changed')
     args.output_dir.mkdir(parents=True,exist_ok=False)
     totals=CellCoverageTotals()
+    hot_cells_sampled=0
+    hot_luminosity=np.zeros(len(checked.line_keys))
+    hot_zero_counts=np.zeros(len(checked.line_keys),dtype=np.int64)
+    if args.evaluate_hot_emission:
+        from quokka2s.cloudy_hot_emission import sample_cloudy_hot_emission
     begin=time.monotonic()
     scanned=cold_scanned=excluded_scanned=0
     first_issue_ids={}
@@ -133,6 +140,12 @@ def main():
                     authorized_excluded=excluded,**constants)
                 flags=classify_cell_queries(queries,raw,checked)
                 totals.add(flags,queries.state.cold_mask,rho[sl]*volume)
+                if args.evaluate_hot_emission:
+                    emission=sample_cloudy_hot_emission(queries,checked)
+                    values=emission.emissivity_erg_s_cm3[:,emission.applicable]
+                    hot_cells_sampled+=int(emission.applicable.sum())
+                    hot_luminosity+=values.sum(axis=1)*volume
+                    hot_zero_counts+=(values==0).sum(axis=1)
                 for name,flag in flags.items():
                     if name.startswith(('outside_','unavailable','raw_failure')):
                         prior=first_issue_ids.setdefault(name,[])
@@ -149,8 +162,19 @@ def main():
         for path in inputs:
             if sha256(path) != hashes[str(path.resolve())]:
                 raise ValueError(f'Input changed during coverage scan: {path}')
+        hot_emission=None
+        if args.evaluate_hot_emission:
+            if hot_cells_sampled != groups['hot']['cells'] or not np.isfinite(hot_luminosity).all():
+                raise ValueError('Hot emission sample count or integrated luminosity is invalid')
+            hot_emission=dict(cells_sampled=hot_cells_sampled,
+                intrinsic_luminosity_erg_s=dict(zip(checked.line_keys,hot_luminosity.tolist())),
+                true_zero_cells=dict(zip(checked.line_keys,hot_zero_counts.tolist())),
+                temperature_policy='T_QUOKKA >= 3000 K; same cell-derived mu and L_model as coverage',
+                interpretation='Sum of checked Cloudy epsilon times cell volume in the hot branch only; no foreground dust or intercell transfer, no cold emission, no spectra.',
+                adapter_sha256=sha256(ROOT/'src/quokka2s/cloudy_hot_emission.py'))
         result=dict(status='completed diagnostic; adoption not decided',completed_at=datetime.now(timezone.utc).isoformat(),
             source_sha256=hashes,dataset=str(args.dataset.resolve()),shape=shape,total_cells=scanned,
+            hot_emission=hot_emission,
             cold_cells=cold_scanned,authorized_excluded_cells=excluded_scanned,cell_volume_cm3=volume,
             snapshot_domain=domain,groups=groups,first_issue_cell_ids=first_issue_ids,
             line_scope='Every stored Cloudy line in both regimes; not an adopted emission-branch selection.',

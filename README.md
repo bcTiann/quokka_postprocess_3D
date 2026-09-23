@@ -113,13 +113,21 @@ Tables lacking composition provenance remain unknown. New build checkpoints
 and manifests use a distinct composition identifier and cannot resume the old
 XYZ-corrected builds. No table recomputation is triggered by changing the code.
 
-### Historical 37-depth Cloudy build
+### Historical candidate: four-dimensional Cloudy tables
 
-The current candidate grid is 7 incident columns × 10 hydrogen densities ×
-21 temperatures × 37 model depths: 54,390 states, with eight lines per state.
-It uses the shared composition and Cloudy 17.02 default internal zoning.
-The local production run was stopped at the user's request; the full table
-has not been completed or adopted.
+The completed local candidate (2026-09-12) is 7 incident columns × 10 hydrogen
+densities × 21 temperatures × 10 model depths: 14,700 states, with eight lines
+per state. It uses the shared composition and Cloudy 17.02 default internal
+zoning. The earlier 37-depth build was stopped. The builder supports 10, 19,
+or 37 depths; the commands below now build the same grid with the current default abundances.
+
+Full-snapshot coverage found no unavailable support or physical-axis misses
+in any of the 133,738,699 hot cells. Independent validation retains 1,051
+unavailable table states (952 raw failures plus 99 local-convergence issues).
+Forty-eight cold diagnostic Cloudy queries touch unavailable support. The
+adopted cold branches use DESPOTIC/analytic emission, with cold CIII/CIV
+explicitly omitted, so these queries are not used. This coverage result does
+not establish interpolation accuracy or replace existing emission products.
 
 Clone the working branch with:
 
@@ -145,8 +153,8 @@ python scripts/build_hm12_filtered_ism_sed.py \
 python scripts/build_cloudy_model_depth_tables.py \
   --cloudy-exe "$CLOUDY_EXE" \
   --sed-dir runtime/cloudy_depth/HM12_ATTENUATION_ISM_NH21 \
-  --output-dir output/cloudy_depth_37 \
-  --workers "$CLOUDY_WORKERS" --depth-points 37 --run
+  --output-dir output/cloudy_depth_10 \
+  --workers "$CLOUDY_WORKERS" --depth-points 10 --run
 ```
 
 Use `--prepare-only` instead of `--run` to inspect the table inputs without
@@ -157,6 +165,32 @@ of the builder is not a convergence check. The separate
 and `check_cloudy_model_depth_coverage.py` scripts provide validation,
 packing, and snapshot coverage checks (see their `--help`). Coverage requires
 the separately transferred snapshot and accepted DESPOTIC checkpoint.
+
+The coverage checker also accepts `--evaluate-hot-emission`: it samples the
+independently checked four-dimensional table only for `T_QUOKKA >= 3000 K`
+and reports the intrinsic luminosity summed over those cells. This opt-in
+check exercises `sample_cloudy_hot_emission`, preserves failure exceptions,
+and does not silently replace unavailable cold emission with zero. The
+old production table and plotting entrypoints remain separate.
+
+`scripts/build_adopted_model_depth_products.py` is the new opt-in output
+entrypoint (see `--help`). It requires the checked Cloudy table, matching
+validation/coverage reports, accepted DESPOTIC checkpoint, and original
+full snapshot. It evaluates cold CII with DESPOTIC, cold Halpha/HI with the
+existing analytic expressions using DESPOTIC number densities, hot atomic
+lines with the four-dimensional Cloudy table, and both CO lines with
+DESPOTIC in both temperature regimes. Cold CIII/CIV is explicitly omitted
+by the confirmed manuscript prescription. Only the two recorded invalid
+DESPOTIC cells are excluded; other invalid output raises an error.
+
+Use `--emission-only` for full-cell emissivity checks and luminosity sums.
+Without it, the runner produces LOS-z spectra, defaulting to the previous
+±200 km/s range and 300 channels. `--spectral-workers` defaults to six;
+`--max-slabs` produces a clearly labelled diagnostic subset. Every run
+requires a new output directory. The spectrum report records luminosity
+outside the velocity window instead of redistributing it into the boundary
+channels. Cloudy local escape and DESPOTIC LVG treatments are retained;
+no foreground dust or intercell transfer is added by this output runner.
 
 ### Previous six-line Cloudy table workflow
 
@@ -367,16 +401,21 @@ MODE=plot    LEXT_KPC=15 scripts/run_dataset_series.sh plt0655228
 
 Run `python scripts/build_adopted_phase_histograms.py --output-dir NEW_DIRECTORY
 --mass-selection retained` in the environment containing yt and DESPOTIC.
-The current nine-panel figure uses the same accepted DESPOTIC table, audited
+The current ten-panel figure uses the same accepted DESPOTIC table, audited
 Cloudy table, exact exclusions and `compute_adopted_cell_emission` function as
-the current spectra. All nine panels use the same 134,197,901 retained cells.
+the current spectra. All panels use the same 134,197,901 retained cells.
 The September 6 outputs are historical and remain unchanged. Use `--plot-only`
 with the same output directory and mass selection to redraw completed bins.
 
-The 3-by-3 layout is mass versus rho and each of T_QUOKKA, T_DESPOTIC,
-and mixed T; mass in the NH-rho plane; then Halpha, H I, C II, CO(1-0),
-and CO(2-1). Mixed T uses T_DESPOTIC below T_QUOKKA=3000 K and
-T_QUOKKA otherwise. Both CO panels always use T_DESPOTIC.
+The 5-by-2 layout contains mass versus rho and T_QUOKKA / T_DESPOTIC in
+the first row, mixed-temperature mass / NH-rho mass in the second, Halpha /
+H I in the third, C II / C III 977.020 Angstrom in the fourth, and
+C IV 1548.19 Angstrom / CO(2-1) in the fifth. There is no explanatory panel.
+Mixed T uses T_DESPOTIC below T_QUOKKA=3000 K and T_QUOKKA otherwise.
+CO(2-1) uses T_DESPOTIC. C III and C IV use only the T_QUOKKA >= 3000 K
+Cloudy branch, with T_QUOKKA on their temperature axes. The numerical
+bundle retains all fourteen original panels; this selection changes only
+the rendered figure, preserving the retained panels' values and color scales.
 
 | Line | T_QUOKKA < 3000 K | T_QUOKKA >= 3000 K |
 |---|---|---|
@@ -384,8 +423,9 @@ T_QUOKKA otherwise. Both CO panels always use T_DESPOTIC.
 | Halpha | DESPOTIC T, ne, nH+ and analytic Case-B formula | Cloudy emissivity |
 | H I 21 cm | DESPOTIC nHI and analytic optically thin formula | Cloudy emissivity |
 | CO(1-0), CO(2-1) | DESPOTIC emissivity | DESPOTIC emissivity |
+| C III (three transitions), C IV (two transitions) | Omitted (zero) | Cloudy emissivity |
 
-C III/C IV remain outside this figure's scope. The accepted inputs and their
+The accepted inputs and their
 hashes are validated using the spectrum workflow; input overrides use
 `--accepted-despotic`, `--cloudy-table`, and `--cloudy-audit`. The +z/-z harmonic
 mean columns and velocity gradients are recalculated from full-z snapshot
@@ -402,12 +442,45 @@ new calculation. Unit/model/bin tests can be run with
 
 Each full run checks the exact accepted cell counts and mass, histogram
 conservation, absence of DESPOTIC coordinate clipping, and agreement of all
-five line totals with the current spectrum's input luminosities before its
+ten line totals with the current spectrum's input luminosities before its
 finite velocity window. The default reference is the September 20 RGI run.
 The accepted DESPOTIC table covers the complete snapshot coordinate range;
 the refreshed phase calculation rejects any DESPOTIC coordinate clipping.
 The old September 6 figure used density-boundary clipping for 958,296 cells
 and must not be used as the updated result.
+
+### Current gas-phase and line-profile comparison
+
+Run `python scripts/build_adopted_phase_spectrum_overlay.py --output-dir NEW_DIRECTORY
+--phase-temperature mixed` with the same scientific environment. This reuses
+the accepted September 20 LOS-z spectra without recomputing emission, and
+streams the snapshot to rebuild gas mass velocity distributions using the
+same 134,197,901 retained cells and accepted DESPOTIC temperature table.
+Fresh NH and dV/dr queries check the exact accepted exclusion inventory.
+
+The confirmed mixed temperature uses DESPOTIC for T_QUOKKA < 3000 K and
+QUOKKA otherwise. The established phase boundaries are 200, 3000, 10^4,
+and 10^5.5 K (CNM, UNM, WNM, WIM, HIM). Gas histograms use the saved
+spectrum's 300 channels over -200 to +200 km/s, with mass = density * volume.
+Raw velocities are retained; each plotted curve is normalized to its own peak.
+Black profiles follow the adopted spectrum display: total Halpha/H I/C II,
+hot C III/C IV, and cold CO(1-0)/CO(2-1), with all ten transitions separate.
+
+Phase velocity dispersions use all retained cell velocities and the common
+mass-weighted gas mean, as in the Methods. The report separately retains
+each phase's own mean/internal dispersion, in-window moments, and mass and
+cell counts outside the plot window. No out-of-window velocities are clipped.
+Line dispersions are channel moments about each line's luminosity centroid
+within the saved window; gas curves do not include thermal broadening.
+
+The output NPZ stores the six mass histograms; JSON records statistics,
+source hashes, selected line branches, and conservation checks. `--plot-only`
+reuses completed bins after verifying their hashes. Each of the ten transitions
+is saved as a separate PNG/PDF with its line key appended to `--figure-stem`.
+Legends sit outside the axes; the emission profile is a black dashed curve
+labelled `Line`, with the existing gas-phase colours and styles retained.
+Numerical tests are `tests/test_adopted_velocity_phases.py` and
+`tests/test_adopted_phase_overlay.py`.
 
 ### Historical standard-task products
 

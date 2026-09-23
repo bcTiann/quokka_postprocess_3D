@@ -5,14 +5,23 @@ from quokka2s.pipeline.tasks.adopted_phase_hist import (
 )
 
 
-def test_nine_panels_and_temperature_policy():
+HIGH_ION_LINES = ('ciii_977', 'ciii_1907', 'ciii_1909', 'civ_1548', 'civ_1551')
+
+
+def test_fourteen_panels_and_temperature_policy():
     assert [row[0] for row in PANELS] == [
         'mass_T_QK', 'mass_T_DSP', 'mass_T_2R', 'NH_rho',
         'halpha', 'hi21', 'cii', 'co10', 'co21',
+        *HIGH_ION_LINES,
     ]
     temperatures = {key: temp for key, temp, _ in PANELS}
     assert temperatures['cii'] == 'mixed'
     assert temperatures['co10'] == temperatures['co21'] == 'DESPOTIC'
+    assert all(temperatures[key] == 'QUOKKA' for key in HIGH_ION_LINES)
+    # Each transition retains its own luminosity scale, rather than summing
+    # the C III multiplet or C IV doublet into a combined panel.
+    groups = {key: group for key, _, group in PANELS}
+    assert all(groups[key] == key for key in HIGH_ION_LINES)
 
 
 def test_model_selection_at_3000_and_co_all_temperatures():
@@ -61,13 +70,20 @@ def _accepted_phase_chunk():
     tq = np.array([100., 2999., 3000., 1e6])
     td = np.array([21., 5000., 33., np.nan])
     column = np.array([1e18, 1e19, 1e20, 1e21])
-    # Deliberately different order from PANELS, and an unplotted line.
-    keys = ('co21', 'hi21', 'ciii_977', 'cii', 'halpha', 'co10')
-    epsilon = np.arange(1., 25.).reshape(6, 4)
+    # Deliberately different order from PANELS; every transition is distinct.
+    keys = ('civ_1551', 'co21', 'ciii_1907', 'hi21', 'ciii_977',
+            'cii', 'civ_1548', 'halpha', 'ciii_1909', 'co10')
+    epsilon = np.arange(1., 41.).reshape(10, 4)
     epsilon[:, -1] = np.nan
-    temperature = np.tile([21., 5000., 3000., np.nan], (6, 1))
+    temperature = np.tile([21., 5000., 3000., np.nan], (10, 1))
     for key in ('co10', 'co21'):
         temperature[keys.index(key)] = td
+    for key in HIGH_ION_LINES:
+        index = keys.index(key)
+        epsilon[index, :2] = 0.
+        # Canonical atomic temperatures remain mixed even for the zeroed
+        # cold high-ion entries; only hot cells contribute luminosity.
+        temperature[index] = [21., 5000., 3000., np.nan]
     emission = SimpleNamespace(line_keys=keys, emissivity_erg_s_cm3=epsilon,
         thermal_temperature_K=temperature, valid=np.array([True, True, True, False]),
         excluded=np.array([False, False, False, True]))
@@ -116,6 +132,41 @@ def test_adopted_chunk_uses_supplied_emission_and_per_line_temperatures():
         temperature = td[valid] if key.startswith('co') else [21., 5000., 3000.]
         _assert_panel_points(histograms[key], rho[valid], temperature,
                             emission.emissivity_erg_s_cm3[index, valid] * volume[valid])
+    for key in HIGH_ION_LINES:
+        index = emission.line_keys.index(key)
+        _assert_panel_points(histograms[key], rho[valid], [21., 5000., 3000.],
+                            emission.emissivity_erg_s_cm3[index, valid] * volume[valid])
+
+
+def test_high_ions_keep_separate_hot_luminosities_and_zero_cold_contribution():
+    chunk = _accepted_phase_chunk()
+    rho, tq, td, _, emission = chunk
+    histograms = _phase_histograms()
+    volume = np.array([2., 3., 4., 5.])
+    add_adopted_phase_chunk(histograms, *chunk, volume)
+    # The second cell has TD > 3000 K but TQ < 3000 K: it must not create
+    # C III/C IV emission. Conversely, the boundary cell has TQ = 3000 K
+    # and TD = 33 K, and its luminosity belongs at TQ, not TD.
+    assert tq[1] < 3000. < td[1]
+    assert td[2] < 3000. == tq[2]
+    totals = []
+    for key in HIGH_ION_LINES:
+        index = emission.line_keys.index(key)
+        panel = histograms[key].result()
+        hot_luminosity = emission.emissivity_erg_s_cm3[index, 2] * volume[2]
+        np.testing.assert_allclose(panel['H'].sum(), hot_luminosity, rtol=1e-14)
+        assert np.count_nonzero(panel['H']) == 1
+        occupied = np.argwhere(panel['H'] > 0)[0]
+        xlo, xhi = panel['x_edges'][occupied[0]:occupied[0] + 2]
+        ylo, yhi = panel['y_edges'][occupied[1]:occupied[1] + 2]
+        assert xlo <= np.log10(rho[2]) < xhi
+        assert ylo <= np.log10(tq[2]) < yhi
+        assert not ylo <= np.log10(td[2]) < yhi
+        # Zero weights still count as retained cells; all panels use the
+        # same selection rather than changing the mass/line sample.
+        assert histograms[key].count == emission.valid.sum() == 3
+        totals.append(histograms[key].total)
+    assert len(set(totals)) == len(HIGH_ION_LINES)
 
 
 def test_adopted_chunk_raw_mass_policy_keeps_only_raw_panels_all_cell():

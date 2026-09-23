@@ -14,6 +14,18 @@ PANELS = (
     ('cii', 'mixed', 'cii'),
     ('co10', 'DESPOTIC', 'co10'),
     ('co21', 'DESPOTIC', 'co21'),
+    ('ciii_977', 'QUOKKA', 'ciii_977'),
+    ('ciii_1907', 'QUOKKA', 'ciii_1907'),
+    ('ciii_1909', 'QUOKKA', 'ciii_1909'),
+    ('civ_1548', 'QUOKKA', 'civ_1548'),
+    ('civ_1551', 'QUOKKA', 'civ_1551'),
+)
+
+# Keep the complete numerical bundle; select one transition per species for
+# the manuscript figure. The first four panels describe the gas distribution.
+DISPLAY_PANEL_KEYS = (
+    'mass_T_QK', 'mass_T_DSP', 'mass_T_2R', 'NH_rho',
+    'halpha', 'hi21', 'cii', 'ciii_977', 'civ_1548', 'co21',
 )
 
 
@@ -35,7 +47,7 @@ def select_emissivities(t_quokka, despotic, cloudy):
 
 def add_adopted_phase_chunk(histograms, rho, tq, td, column, emission, volume,
                             *, raw_mass_all_cells=False):
-    """Accumulate the nine panels from the accepted emission calculation.
+    """Accumulate the phase panels from the accepted emission calculation.
 
     Emission and DESPOTIC-dependent panels include only ``emission.valid``.
     With ``raw_mass_all_cells=True``, the raw QUOKKA-temperature and column
@@ -149,29 +161,36 @@ class DexHistogram:
 
 
 def plot_panels(panels, png, pdf):
-    """Nine panels, original absolute-bin coloring, with a shared mass scale."""
+    """Ten selected panels, original absolute-bin coloring and mass scale."""
     import matplotlib.pyplot as plt
     from matplotlib.colors import Normalize
     from .phase_combined_plot import _unit_latex, COLORBAR_DYNAMIC_RANGE
 
+    definitions = {panel[0]: panel for panel in PANELS}
+    displayed = tuple(definitions[key] for key in DISPLAY_PANEL_KEYS)
     maxima = {}
-    for key, _, group in PANELS:
+    for key, _, group in displayed:
         maxima[group] = max(maxima.get(group, 0.0), float(panels[key]['H'].max()))
     norms = {group: Normalize(np.log10(value) - np.log10(COLORBAR_DYNAMIC_RANGE),
                               np.log10(value))
              for group, value in maxima.items() if value > 0}
-    temp_panels = [panels[key] for key, _, _ in PANELS if key != 'NH_rho']
+    temp_panels = [panels[key] for key, _, _ in displayed if key != 'NH_rho']
     rho_lim = (min(p['x_edges'][0] for p in temp_panels),
                max(p['x_edges'][-1] for p in temp_panels))
     temp_lim = (min(p['y_edges'][0] for p in temp_panels),
                 max(p['y_edges'][-1] for p in temp_panels))
     titles = {'co10': 'CO(1-0)', 'co21': 'CO(2-1)', 'cii': 'C II',
-              'halpha': r'H$\alpha$', 'hi21': 'H I 21 cm'}
-    fig = plt.figure(figsize=(12.8, 12.3))
-    grid = fig.add_gridspec(3, 3, left=.085, right=.985, bottom=.06,
-                            top=.96, wspace=.32, hspace=.42)
-    for index, (key, temperature, group) in enumerate(PANELS):
-        inner = grid[index // 3, index % 3].subgridspec(2, 1,
+              'halpha': r'H$\alpha$', 'hi21': 'H I 21 cm',
+              'ciii_977': r'C III 977.020 $\AA$',
+              'ciii_1907': r'C III 1906.68 $\AA$',
+              'ciii_1909': r'C III 1908.73 $\AA$',
+              'civ_1548': r'C IV 1548.19 $\AA$',
+              'civ_1551': r'C IV 1550.78 $\AA$'}
+    fig = plt.figure(figsize=(9.3, 15.5))
+    grid = fig.add_gridspec(5, 2, left=.085, right=.985, bottom=.04,
+                            top=.955, wspace=.32, hspace=.42)
+    for index, (key, temperature, group) in enumerate(displayed):
+        inner = grid[index // 2, index % 2].subgridspec(2, 1,
                       height_ratios=[.055, 1], hspace=.07)
         cax, ax = fig.add_subplot(inner[0]), fig.add_subplot(inner[1])
         panel = panels[key]
