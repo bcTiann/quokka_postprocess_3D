@@ -111,8 +111,10 @@ class EmissionPlotTests(unittest.TestCase):
                                            allow_partial=True)
             self.assertTrue(all(path.stem.endswith("_partial_diagnostic")
                                 for path in paths["images"] + paths["spectra"]))
+            config = root / "plot.yaml"
+            config.write_text("products: .\noutput_dir: cli\n", encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "allow_partial=True"):
-                main(["--products", str(root), "--output-dir", str(root / "cli")])
+                main(["--config", str(config)])
 
 
 if __name__ == "__main__":

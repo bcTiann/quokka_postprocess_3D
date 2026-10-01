@@ -2,7 +2,7 @@
 
 The plotting stage reads only ``images.npz`` and ``spectra.npz``. It never
 opens a simulation snapshot or recalculates an emissivity or line profile.
-Run it with ``python -m quokka2s.emission_plots --products DIR --output-dir DIR``.
+Run it with ``quokka2s plot --config emission_plot.yaml``.
 """
 from __future__ import annotations
 
@@ -11,6 +11,8 @@ from pathlib import Path
 import re
 
 import numpy as np
+
+from .emission_config import load_plot_config
 
 VARIANT_KEYS = ("intrinsic", "attenuated")
 SHORT_VELOCITY_LIMITS_KMS = (-50.0, 50.0)
@@ -236,14 +238,13 @@ def plot_emission_products(
 
 def main(argv=None) -> None:
     parser = argparse.ArgumentParser(prog='quokka2s plot', description=__doc__)
-    parser.add_argument("--products", required=True, type=Path,
-                        help="Directory containing images.npz and spectra.npz")
-    parser.add_argument("--output-dir", required=True, type=Path)
-    parser.add_argument("--raw-luminosity", action="store_true",
-                        help="Plot dL/dv instead of dividing by projected area")
-    parser.add_argument("--allow-partial", action="store_true",
-                        help="Allow partial diagnostic products and mark output filenames")
-    args = parser.parse_args(argv)
+    parser.add_argument('--config', required=True, type=Path,
+                        help='YAML file containing the saved-products and figure paths')
+    config_path = parser.parse_args(argv).config
+    try:
+        args = load_plot_config(config_path)
+    except (ValueError, OSError) as exc:
+        parser.error(str(exc))
     plot_emission_products(args.products, args.output_dir,
                            per_projected_area=not args.raw_luminosity,
                            allow_partial=args.allow_partial)

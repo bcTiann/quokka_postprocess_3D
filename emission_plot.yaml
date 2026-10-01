@@ -1,0 +1,4 @@
+# Plot downloaded numerical products. Paths are relative to this file.
+# Copy the complete emission_products_full directory here, or edit products.
+products: output/emission_products_full
+output_dir: output/emission_products_full_figures

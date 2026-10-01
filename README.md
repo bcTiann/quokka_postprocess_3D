@@ -8,24 +8,30 @@ chemistry/cooling table plus an HM2012 shielded Cloudy atomic-line table.
 
 ### Current accepted emission workflow
 
-After installing the package with `pip install -e .`, run the numerical stage
-on the machine holding the QUOKKA snapshot and the accepted lookup tables:
+Install the package once in the Python environment on each machine with
+`python -m pip install -e .`. The `-e` means the checked-out source code is
+used directly. On Setonix, edit `emission_process.yaml` so its five paths
+point to the transferred inputs and a new output directory, then run:
 
 ```bash
-quokka2s process \
-  --dataset /path/to/plt0655228 \
-  --accepted-despotic /path/to/accepted_table.json \
-  --cloudy-table /path/to/cloudy_table.npz \
-  --cloudy-audit /path/to/cloudy_reuse_coverage.json \
-  --output-dir /path/to/processed_emission
+quokka2s process --config emission_process.yaml
 ```
+
+The five process settings are: `dataset` (QUOKKA snapshot),
+`accepted_despotic` (manifest identifying the accepted DESPOTIC table and
+excluded cells), `cloudy_table` (precomputed Cloudy emissivities),
+`cloudy_audit` (the prior hot-cell coverage check), and `output_dir` (a new
+directory for numerical products). Relative paths in the YAML file are
+resolved relative to that file, not the terminal's working directory. The
+default run processes all 32 eight-cell slabs; do not set `max_slabs` for the
+full snapshot.
 
 Keep the accepted DESPOTIC table, `excluded_cells.npz`, and
 `snapshot_coverage.json` next to `accepted_table.json` after transferring them
 to another machine. The processor verifies their recorded hashes and cell
-inventory; `--despotic-table`, `--excluded-cells`, and `--coverage-report` can
-specify other locations. It uses the pinned Draine dust table in `vendor/draine`
-and performs no plotting.
+inventory. If they are stored separately, set `despotic_table`,
+`excluded_cells`, and `coverage_report` in the YAML file. It uses the pinned
+Draine dust table in `vendor/draine` and performs no plotting.
 
 The numerical stage saves `images.npz` (intrinsic and dust-attenuated line
 luminosity images, shape `variant × line × 128 × 128`, erg/s), `spectra.npz`
@@ -34,17 +40,18 @@ luminosity images, shape `variant × line × 128 × 128`, erg/s), `spectra.npz`
 erg/s/(km/s), plus one full-box line dispersion per variant), and
 `emission_report.json`. Each 128×128 image pixel sums its original 2×2
 sightlines; spectral calculations use every retained cell at native resolution.
-Copy these files to the plotting machine and run:
+Copy this output directory to the plotting machine. Edit
+`emission_plot.yaml` so `products` points to the copied directory and
+`output_dir` names the desired figure directory, then run:
 
 ```bash
-quokka2s plot --products /path/to/processed_emission \
-  --output-dir /path/to/figures
+quokka2s plot --config emission_plot.yaml
 ```
 
 The plot command reads only the saved numerical products. A diagnostic run can
-use `process --max-slabs 1`; its report marks it as partial. Plotting a partial
-run requires `plot --allow-partial`, and the figure filenames include
-`partial_diagnostic` so they cannot be mistaken for full-box results. The
+set `max_slabs: 1` in a separate process YAML file; its report marks it as
+partial. Plotting partial products requires `allow_partial: true` in the plot
+YAML, and figure filenames include `partial_diagnostic`. The
 current installation method is an editable checkout (`pip install -e .`),
 because the processor verifies source files and reads the pinned dust table
 from the repository.

@@ -19,10 +19,11 @@ ROOT = Path(__file__).resolve().parents[2]
 from quokka2s.cloudy_cell_queries import prepare_cloudy_cell_queries
 from quokka2s.cloudy_sixline_lookup import CloudySixLineLookup
 from quokka2s.dust_attenuation import (
-    DEFAULT_DRAINE_TABLE, LINE_WAVELENGTH_MICRON, attenuate_emissivities,
+    LINE_WAVELENGTH_MICRON, attenuate_emissivities,
     extinction_cross_sections, load_draine_extinction,
     observer_side_hydrogen_column,
 )
+from quokka2s.emission_config import load_process_config
 from quokka2s.emission_product_accumulator import (
     LineLuminosityImageAccumulator, VARIANT_KEYS,
 )
@@ -210,21 +211,13 @@ def combine_spectral_variants(variant_payloads, projected_area_cm2):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(prog='quokka2s process', description=__doc__)
-    for name in ('accepted-despotic', 'cloudy-table', 'cloudy-audit', 'dataset', 'output-dir'):
-        parser.add_argument('--' + name, type=Path, required=True)
-    parser.add_argument('--despotic-table', type=Path,
-                        help='Relocated accepted DESPOTIC table, checked by SHA-256')
-    parser.add_argument('--excluded-cells', type=Path,
-                        help='Relocated accepted exclusion list, checked by SHA-256')
-    parser.add_argument('--coverage-report', type=Path,
-                        help='Relocated accepted coverage report')
-    parser.add_argument('--slab-nx', type=int, default=8)
-    parser.add_argument('--query-chunk', type=int, default=100000)
-    parser.add_argument('--spectral-workers', type=int, default=6)
-    parser.add_argument('--dust-opacity-table', type=Path, default=DEFAULT_DRAINE_TABLE,
-        help='Pinned Draine MW R_V=3.1 table used for the saved dust variant')
-    parser.add_argument('--max-slabs', type=int, help='Diagnostic subset; never labelled full snapshot')
-    args = parser.parse_args(argv)
+    parser.add_argument('--config', required=True, type=Path,
+                        help='YAML file containing the processing input and output paths')
+    config_path = parser.parse_args(argv).config
+    try:
+        args = load_process_config(config_path)
+    except (ValueError, OSError) as exc:
+        parser.error(str(exc))
     if min(args.slab_nx, args.query_chunk, args.spectral_workers) <= 0 or (
             args.max_slabs is not None and args.max_slabs <= 0):
         parser.error('Numerical sizes must be positive')
