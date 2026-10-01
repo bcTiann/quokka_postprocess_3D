@@ -4,9 +4,52 @@ Post-processing for [QUOKKA](https://github.com/quokka-astro/quokka) radiation-M
 snapshots: turns a simulation `plt*` output into **synthetic line emission and
 multi-phase ISM diagnostics**, so simulations can be compared against real
 observations. Line emissivities use a pre-built [DESPOTIC](https://despotic.readthedocs.io)
-chemistry/cooling table plus an HM2012 shielded Cloudy [C II] table.
+chemistry/cooling table plus an HM2012 shielded Cloudy atomic-line table.
 
-### What it produces
+### Current accepted emission workflow
+
+After installing the package with `pip install -e .`, run the numerical stage
+on the machine holding the QUOKKA snapshot and the accepted lookup tables:
+
+```bash
+quokka2s process \
+  --dataset /path/to/plt0655228 \
+  --accepted-despotic /path/to/accepted_table.json \
+  --cloudy-table /path/to/cloudy_table.npz \
+  --cloudy-audit /path/to/cloudy_reuse_coverage.json \
+  --output-dir /path/to/processed_emission
+```
+
+Keep the accepted DESPOTIC table, `excluded_cells.npz`, and
+`snapshot_coverage.json` next to `accepted_table.json` after transferring them
+to another machine. The processor verifies their recorded hashes and cell
+inventory; `--despotic-table`, `--excluded-cells`, and `--coverage-report` can
+specify other locations. It uses the pinned Draine dust table in `vendor/draine`
+and performs no plotting.
+
+The numerical stage saves `images.npz` (intrinsic and dust-attenuated line
+luminosity images, shape `variant × line × 128 × 128`, erg/s), `spectra.npz`
+(intrinsic and dust-attenuated full-box spectra, shape
+`variant × line × temperature regime × 400 velocity channels`,
+erg/s/(km/s), plus one full-box line dispersion per variant), and
+`emission_report.json`. Each 128×128 image pixel sums its original 2×2
+sightlines; spectral calculations use every retained cell at native resolution.
+Copy these files to the plotting machine and run:
+
+```bash
+quokka2s plot --products /path/to/processed_emission \
+  --output-dir /path/to/figures
+```
+
+The plot command reads only the saved numerical products. A diagnostic run can
+use `process --max-slabs 1`; its report marks it as partial. Plotting a partial
+run requires `plot --allow-partial`, and the figure filenames include
+`partial_diagnostic` so they cannot be mistaken for full-box results. The
+current installation method is an editable checkout (`pip install -e .`),
+because the processor verifies source files and reads the pinned dust table
+from the repository.
+
+### Other repository outputs
 
 - **Synthetic line emission** — CO J=1–0 and J=2–1, [C II] 158 µm, Hα,
   and H I 21 cm:

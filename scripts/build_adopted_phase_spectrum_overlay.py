@@ -24,7 +24,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if __package__ in (None, ''):
     sys.path.insert(0, str(ROOT))
 
-from scripts.build_default_emission_products import validate_accepted_inputs, check_exclusion_queries
+from quokka2s.emission_processing import validate_accepted_inputs, check_exclusion_queries
 from scripts.check_despotic_snapshot_coverage import slab_windows, _validate_scan_provenance, _sha256
 from quokka2s.adopted_phase_overlay import accepted_display_profiles, plot_phase_spectrum_overlay, PHASE_ORDER, LINE_ORDER
 from quokka2s.adopted_velocity_phases import AdoptedVelocityPhaseAccumulator
@@ -130,7 +130,7 @@ def main():
     accumulator = AdoptedVelocityPhaseAccumulator(spectra['velocity_edges_kms'])
     code_paths = (Path(__file__), Path(physics.__file__), ROOT/'src/quokka2s/pipeline/utils.py',
         ROOT/'src/quokka2s/adopted_velocity_phases.py', ROOT/'src/quokka2s/adopted_phase_overlay.py',
-        ROOT/'scripts/build_default_emission_products.py', ROOT/'scripts/check_despotic_snapshot_coverage.py',
+        ROOT/'src/quokka2s/emission_processing.py', ROOT/'scripts/check_despotic_snapshot_coverage.py',
         ROOT/'src/quokka2s/tables/lookup.py')
     code_hashes = {str(p.resolve()): _sha256(p) for p in code_paths}
     counts = dict(all=0, cold=0, hot=0, excluded=0, excluded_cold=0, retained=0)

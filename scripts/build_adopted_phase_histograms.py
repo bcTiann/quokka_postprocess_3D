@@ -2,7 +2,7 @@
 """Build phase histograms and render ten selected manuscript panels.
 
 The table provenance, exact exclusions, fresh snapshot queries and emissivities
-are shared with build_default_emission_products.py. Existing axes, 0.2-dex bins,
+are shared with quokka2s.emission_processing. Existing axes, 0.2-dex bins,
 absolute mass/luminosity weights are preserved. All ten line arrays are saved;
 the figure displays one transition per species alongside four gas panels.
 """
@@ -28,7 +28,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if __package__ in (None, ''):
     sys.path.insert(0, str(ROOT))
 
-from scripts.build_default_emission_products import validate_accepted_inputs, check_exclusion_queries
+from quokka2s.emission_processing import validate_accepted_inputs, check_exclusion_queries
 from scripts.check_despotic_snapshot_coverage import slab_windows, _validate_scan_provenance, _sha256
 from quokka2s.adopted_cell_emission import compute_adopted_cell_emission
 from quokka2s.cloudy_cell_queries import prepare_cloudy_cell_queries
@@ -109,7 +109,7 @@ def main():
     widths = ds.domain_width/ds.domain_dimensions
     volume = float(np.prod(widths.to('cm').value))
     code_files = (Path(__file__), Path(physics.__file__),
-        ROOT/'scripts/build_default_emission_products.py', ROOT/'scripts/check_despotic_snapshot_coverage.py',
+        ROOT/'src/quokka2s/emission_processing.py', ROOT/'scripts/check_despotic_snapshot_coverage.py',
         ROOT/'src/quokka2s/pipeline/tasks/adopted_phase_hist.py',
         ROOT/'src/quokka2s/pipeline/tasks/phase_combined_plot.py',
         ROOT/'src/quokka2s/cloudy_cell_queries.py', ROOT/'src/quokka2s/cloudy_hot_emission.py',

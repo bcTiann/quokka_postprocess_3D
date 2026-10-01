@@ -30,6 +30,9 @@ dependencies = [
     "pyyaml>=6",              # yt's QuokkaDataset parses metadata.yaml
 ]
 
+[project.scripts]
+quokka2s = "quokka2s.__main__:main"
+
 [project.optional-dependencies]
 # Only needed to (re)build the DESPOTIC tables — NOT for running the pipeline,
 # which reads a prebuilt despotic_table.npz.  Install with:  pip install -e ".[tables]"

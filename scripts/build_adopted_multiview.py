@@ -23,7 +23,7 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 if __package__ in (None, ''):
     sys.path.insert(0, str(ROOT))
-from scripts.build_default_emission_products import validate_accepted_inputs
+from quokka2s.emission_processing import validate_accepted_inputs
 from scripts.check_despotic_snapshot_coverage import slab_windows, _validate_scan_provenance, _sha256
 from quokka2s.adopted_multiview import MultiviewAccumulator
 from quokka2s.tables.io import load_table
