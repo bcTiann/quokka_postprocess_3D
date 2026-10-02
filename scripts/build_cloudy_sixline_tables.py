@@ -12,7 +12,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import runpy
 import shutil
 import subprocess
 import sys
@@ -20,38 +19,22 @@ from pathlib import Path
 
 import numpy as np
 
-ROOT = Path(__file__).resolve().parents[1]
-# Read the shared constants without importing DESPOTIC table dependencies.
-QUOKKA_MASS_FRACTIONS = runpy.run_path(
-    str(ROOT / "src/quokka2s/tables/abundances.py")
-)["QUOKKA_MASS_FRACTIONS"]
+from quokka2s.cloudy_eightline_spec import (
+    HM12_LOG_NH,
+    JEANS_CAP_CLOUDY,
+    LINES as LINE_SPEC,
+    LOG_NH_DENSITY,
+    N_T,
+    SED_DIRECTORY_NAME,
+    STEM,
+    T_MAX_CLOUDY,
+    T_MIN_CLOUDY,
+)
+from quokka2s.tables.abundances import QUOKKA_MASS_FRACTIONS
 
 
-STEM = "hm2012_attgrid_ism_nh21_cmb_cr_defaultabund_eightline_jeans"
-SED_DIRECTORY_NAME = "HM12_ATTENUATION_ISM_NH21"
-HM12_LOG_NH = (18.0, 18.5, 19.0, 19.5, 20.0, 20.5, 21.0)
-LOG_NH_DENSITY = (
-    -4.71428571428571,
-    -3.52380952380952,
-    -2.33333333333333,
-    -1.14285714285714,
-    0.0476190476190476,
-    1.23809523809524,
-    2.42857142857143,
-    3.61904761904762,
-    4.80952380952381,
-    6.0,
-)
-LINES = (
-    "C  2 157.636m",
-    "H  1 6562.81A",
-    "H  1 21.1207c",
-    "C  3 977.020A",
-    "C  3 1906.68A",
-    "C  3 1908.73A",
-    "C  4 1548.19A",
-    "C  4 1550.78A",
-)
+# Retain the existing public script constant used by build-workflow checks.
+LINES = tuple(line[1] for line in LINE_SPEC)
 
 
 def _require_file(path: Path, description: str) -> Path:
@@ -90,13 +73,13 @@ def _write_parameter_file(
         "test = 0",
         "cloudyRunMode = 4",
         *(f"lineMapLine = {line}" for line in LINES),
-        f"coolingMapTmin = {'1e5' if smoke else '3.6'}",
-        f"coolingMapTmax = {'1e5' if smoke else '1e9'}",
-        f"coolingMapTpoints = {1 if smoke else 21}",
+        f"coolingMapTmin = {'1e5' if smoke else T_MIN_CLOUDY}",
+        f"coolingMapTmax = {'1e5' if smoke else T_MAX_CLOUDY}",
+        f"coolingMapTpoints = {1 if smoke else N_T}",
         "coolingScaleFactor = 1",
         "coolingMapUseJeansLength = 1",
         f"coolingMapHydrogenMassFraction = {QUOKKA_MASS_FRACTIONS['X']!r}",
-        "coolingMapMaximumJeansLength = 3.086e20",
+        f"coolingMapMaximumJeansLength = {JEANS_CAP_CLOUDY}",
         "command iterate to convergence",
         "command stop temperature off",
         "command cosmic rays rate -16.698970",

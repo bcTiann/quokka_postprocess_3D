@@ -28,7 +28,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if __package__ in (None, ''):
     sys.path.insert(0, str(ROOT))
 
-from quokka2s.emission_processing import validate_accepted_inputs, check_exclusion_queries
+from quokka2s.legacy_emission_validation import validate_accepted_inputs, check_exclusion_queries
 from scripts.check_despotic_snapshot_coverage import slab_windows, _validate_scan_provenance, _sha256
 from quokka2s.adopted_cell_emission import compute_adopted_cell_emission
 from quokka2s.cloudy_cell_queries import prepare_cloudy_cell_queries

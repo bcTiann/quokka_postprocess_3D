@@ -1,7 +1,7 @@
 """The output runner must use exactly the accepted unavailable-cell mask."""
 import unittest
 import numpy as np
-from quokka2s.emission_processing import check_exclusion_queries
+from quokka2s.legacy_emission_validation import check_exclusion_queries
 
 
 class AcceptedExclusionTests(unittest.TestCase):

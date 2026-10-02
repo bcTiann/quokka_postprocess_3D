@@ -14,7 +14,7 @@ used directly. Copy the snapshot and tables into the ignored `inputs/`
 directory, then run:
 
 ```bash
-quokka2s process --config emission_process.yaml
+python -m quokka2s process --config emission_process.yaml
 ```
 
 The four process settings are: `dataset` (QUOKKA snapshot), `despotic_table`
@@ -45,7 +45,7 @@ Copy this `processed` directory to the plotting machine. Edit
 `output_dir` names the desired figure directory, then run:
 
 ```bash
-quokka2s plot --config emission_plot.yaml
+python -m quokka2s plot --config emission_plot.yaml
 ```
 
 The plot command reads only the saved numerical products. A diagnostic run can
@@ -73,6 +73,37 @@ Only the snapshot, interpolated DESPOTIC table, and Cloudy table are read by
 was derived. Snapshot/table files must be copied separately to Setonix after
 cloning the code. Historical build logs and intermediate caches are not needed
 for an emission run.
+
+To rebuild the DESPOTIC table for this snapshot, use the following commands
+from the repository root. The DESPOTIC solve is the expensive step; completed
+node checkpoints can be resumed with the same command. The interpolation
+targets failed or otherwise unavailable solver nodes inside the finite-data
+convex hull and retains the raw table separately.
+
+```bash
+python -m pip install -e ".[tables]"
+python scripts/apply_despotic_gow_patch.py
+python scripts/apply_despotic_chemistry_patch.py
+python scripts/measure_despotic_snapshot_domain.py
+python -m quokka2s.tables.build_table \
+  --snapshot-domain output/plt0655228/table_build/snapshot_domain.json \
+  --checkpoint-dir output/plt0655228/table_build/checkpoints \
+  --workers 1
+python -m quokka2s.tables.interpolate_failed
+```
+
+Set `--workers` to the CPUs allocated to the build job. For Cloudy, use a
+separately installed Cloudy 17.02 executable. The builder writes its raw maps
+and logs under `runtime/cloudy_eightline/` and the final NPZ directly under
+`inputs/tables/cloudy/`:
+
+```bash
+python scripts/build_cloudy_sixline_tables.py \
+  --cloudy-exe /absolute/path/to/cloudy.exe --workers 1
+```
+
+Both builders refuse to replace an existing final table unless `--force` is
+passed. `process` reads the resulting files through `emission_process.yaml`.
 
 ### Other repository outputs
 
@@ -265,7 +296,7 @@ outside the velocity window instead of redistributing it into the boundary
 channels. Cloudy local escape and DESPOTIC LVG treatments are retained;
 no foreground dust or intercell transfer is added by this output runner.
 
-### Previous six-line Cloudy table workflow
+### Eight-line Cloudy table workflow
 
 The portable Cloudy workflow is independent of the QUOKKA snapshot pipeline.
 It requires a separately compiled Cloudy 17.02 executable. From a fresh clone:
@@ -284,8 +315,9 @@ python scripts/build_cloudy_sixline_tables.py \
 
 The command uses the tracked `vendor/cloudy_cooling_tools/CIAOLoop_lines` and
 generates the required CIAOLoop `.par` files directly from the fixed scientific
-configuration in the top-level builder. Generated runtime files go to
-`runtime/cloudy_sixline/`; final NPZ tables go to `data/`. See
+configuration in the shared eight-line specification. Generated runtime files
+go to `runtime/cloudy_eightline/`; final NPZ tables go to
+`inputs/tables/cloudy/`. See
 [`CLOUDY_HM12_FILTERED_ISM_WORKFLOW.md`](CLOUDY_HM12_FILTERED_ISM_WORKFLOW.md)
 for the radiation field, physical settings, axes, failure policy, and exact
 artifact chain.

@@ -25,7 +25,11 @@ class DespoticInterpolationTests(unittest.TestCase):
             "cv_values": mu * 2,
             "Eint_values": mu * 3,
             "CO_abundance": mu / 10,
+            "CO_intIntensity": mu * 4,
+            "CO_intTB": mu * 4,
             "CO_lumPerH": mu * 4,
+            "CO_tau": mu * 4,
+            "CO_tauDust": mu * 4,
             "energy::signed": np.where(np.indices(shape)[0] == 0, -1.0, 1.0),
         }
         source_fields["energy::signed"][failure] = np.nan
@@ -40,6 +44,9 @@ class DespoticInterpolationTests(unittest.TestCase):
                 col_density_values=np.geomspace(1e18, 1e21, 4),
                 dVdr_values=np.geomspace(1e-16, 1e-13, 4),
                 failure_mask=failure,
+                species_names=np.array(["CO"], dtype=object),
+                species_is_emitter=np.array([True]),
+                energy_term_names=np.array(["signed"], dtype=object),
                 CO_freq=frequency,
                 **source_fields,
             )
@@ -60,6 +67,19 @@ class DespoticInterpolationTests(unittest.TestCase):
                 self.assertTrue(np.all(result["CO_freq"] == 115e9))
             with self.assertRaises(FileExistsError):
                 interpolate_table(raw, filled)
+
+            with np.load(raw, allow_pickle=True) as blob:
+                payload = {key: blob[key] for key in blob.files}
+            payload["new_cell_field"] = np.ones(shape)
+            np.savez_compressed(raw, **payload)
+            with self.assertRaisesRegex(ValueError, "Unknown raw-table fields"):
+                interpolate_table(raw, filled, force=True)
+
+            del payload["new_cell_field"]
+            payload["CO_lumPerH"] = np.ones((3, 4, 4))
+            np.savez_compressed(raw, **payload)
+            with self.assertRaisesRegex(ValueError, "CO_lumPerH has shape"):
+                interpolate_table(raw, filled, force=True)
 
 
 if __name__ == "__main__":

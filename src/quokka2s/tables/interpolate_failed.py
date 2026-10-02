@@ -19,9 +19,14 @@ from scipy.interpolate import griddata
 ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_SOURCE = ROOT / "inputs" / "tables" / "despotic" / "raw.npz"
 DEFAULT_OUTPUT = ROOT / "inputs" / "tables" / "despotic" / "interpolated.npz"
-_CELL_SUFFIXES = (
-    "_abundance", "_lumPerH", "_intIntensity", "_intTB", "_tau", "_tauDust"
-)
+CORE_FIELDS = ("tg_final", "mu_values", "cv_values", "Eint_values")
+LINE_VALUE_FIELDS = ("intIntensity", "intTB", "lumPerH", "tau", "tauDust")
+METADATA_FIELDS = {
+    "version", "chemistry_network", "escape_geometry", "temperature_mode",
+    "nH_values", "col_density_values", "dVdr_values", "species_names",
+    "species_is_emitter", "attempts", "failure_mask", "build_metadata_json",
+    "energy_term_names",
+}
 
 
 def _sha256(path: Path) -> str:
@@ -51,14 +56,37 @@ def _fill_in_hull(values: np.ndarray, log_axes: tuple[np.ndarray, ...]) -> np.nd
     return 10 ** filled if use_log else filled
 
 
-def _physical_fields(data: dict[str, np.ndarray], shape: tuple[int, ...]) -> list[str]:
-    fields = ["tg_final", "mu_values", "cv_values", "Eint_values"]
-    fields.extend(
-        key for key, value in data.items()
-        if (key.startswith("energy::") or key.endswith(_CELL_SUFFIXES))
-        and value.shape == shape
-    )
-    return fields
+def _table_fields(
+    data: dict[str, np.ndarray], shape: tuple[int, ...]
+) -> tuple[list[str], list[str]]:
+    """List each solver field explicitly and reject incomplete/new table schemas."""
+    species = [str(name) for name in data["species_names"]]
+    emitters = np.asarray(data["species_is_emitter"], dtype=bool)
+    if len(species) != len(emitters) or len(set(species)) != len(species):
+        raise ValueError("Invalid species_names/species_is_emitter metadata")
+
+    fields = list(CORE_FIELDS)
+    frequencies: list[str] = []
+    for name, is_emitter in zip(species, emitters):
+        fields.append(f"{name}_abundance")
+        if is_emitter:
+            frequencies.append(f"{name}_freq")
+            fields.extend(f"{name}_{field}" for field in LINE_VALUE_FIELDS)
+    if "energy_term_names" in data:
+        fields.extend(f"energy::{name}" for name in data["energy_term_names"])
+
+    expected = set(fields + frequencies) | METADATA_FIELDS
+    unexpected = set(data) - expected
+    if unexpected:
+        raise ValueError(f"Unknown raw-table fields: {sorted(unexpected)}")
+    if len(set(fields + frequencies)) != len(fields + frequencies):
+        raise ValueError("Duplicate physical field in raw-table metadata")
+    for key in fields + frequencies:
+        if key not in data:
+            raise ValueError(f"Missing raw-table field: {key}")
+        if data[key].shape != shape:
+            raise ValueError(f"Raw-table field {key} has shape {data[key].shape}, expected {shape}")
+    return fields, frequencies
 
 
 def interpolate_table(source: Path, output: Path, *, force: bool = False) -> dict[str, int]:
@@ -80,7 +108,7 @@ def interpolate_table(source: Path, output: Path, *, force: bool = False) -> dic
     target = failure | ~np.isfinite(data["tg_final"]) | ~np.isfinite(data["mu_values"])
     log_axes = tuple(np.log10(data[key]) for key in
                      ("nH_values", "col_density_values", "dVdr_values"))
-    fields = _physical_fields(data, shape)
+    fields, frequencies = _table_fields(data, shape)
     for index, key in enumerate(fields, start=1):
         original = np.asarray(data[key], dtype=float)
         if not np.isfinite(original[~target]).all():
@@ -93,8 +121,6 @@ def interpolate_table(source: Path, output: Path, *, force: bool = False) -> dic
         if index == 1 or index % 10 == 0 or index == len(fields):
             print(f"[interpolate_failed] fields {index}/{len(fields)}", flush=True)
 
-    frequencies = [key for key, value in data.items()
-                   if key.endswith("_freq") and value.shape == shape]
     for key in frequencies:
         frequency = np.asarray(data[key], dtype=float).copy()
         known = np.isfinite(frequency)
@@ -106,7 +132,7 @@ def interpolate_table(source: Path, output: Path, *, force: bool = False) -> dic
         frequency[~known] = reference
         data[key] = frequency
 
-    for key in ("tg_final", "mu_values", "cv_values", "Eint_values"):
+    for key in CORE_FIELDS:
         finite = np.isfinite(data[key])
         if not np.all(data[key][finite] > 0):
             raise ValueError(f"Nonpositive finite values in {key}")

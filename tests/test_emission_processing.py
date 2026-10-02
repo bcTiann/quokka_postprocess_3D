@@ -3,15 +3,17 @@ from pathlib import Path
 from types import SimpleNamespace
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 
 from quokka2s.cloudy_cell_queries import CloudyCellQueries
 from quokka2s.cloudy_sixline_lookup import CloudyFailureTouchError
 from quokka2s.emission_processing import (
-    _accepted_file, _compute_with_cloudy_failure_exclusions,
+    _compute_with_cloudy_failure_exclusions,
     combine_spectral_variants, slab_windows,
 )
+from quokka2s.legacy_emission_validation import _accepted_file
 
 
 class EmissionProcessingTests(unittest.TestCase):
@@ -49,8 +51,10 @@ class EmissionProcessingTests(unittest.TestCase):
             return SimpleNamespace(valid=~current.excluded,
                                    emissivity_erg_s_cm3=emissivity)
 
-        selected, emission, excluded_cloudy = _compute_with_cloudy_failure_exclusions(
-            queries, np.ones(4), object(), Lookup(), compute)
+        with patch('quokka2s.emission_processing.compute_adopted_cell_emission',
+                   side_effect=compute):
+            selected, emission, excluded_cloudy = _compute_with_cloudy_failure_exclusions(
+                queries, np.ones(4), object(), Lookup())
         np.testing.assert_array_equal(calls, [[False, False, False, True],
                                               [False, False, True, True]])
         np.testing.assert_array_equal(excluded_cloudy, [False, False, True, False])
@@ -69,16 +73,20 @@ class EmissionProcessingTests(unittest.TestCase):
             raise CloudyFailureTouchError('not explained by a failed node')
 
         with self.assertRaisesRegex(CloudyFailureTouchError, 'not explained'):
-            _compute_with_cloudy_failure_exclusions(
-                self.cloudy_queries(), np.ones(4), object(), Lookup(), compute)
+            with patch('quokka2s.emission_processing.compute_adopted_cell_emission',
+                       side_effect=compute):
+                _compute_with_cloudy_failure_exclusions(
+                    self.cloudy_queries(), np.ones(4), object(), Lookup())
 
     def test_non_cloudy_failure_is_not_swallowed(self):
         def compute(*args, **kwargs):
             raise ValueError('unexpected emissivity failure')
 
         with self.assertRaisesRegex(ValueError, 'unexpected emissivity failure'):
-            _compute_with_cloudy_failure_exclusions(
-                self.cloudy_queries(), np.ones(4), object(), object(), compute)
+            with patch('quokka2s.emission_processing.compute_adopted_cell_emission',
+                       side_effect=compute):
+                _compute_with_cloudy_failure_exclusions(
+                    self.cloudy_queries(), np.ones(4), object(), object())
 
     def test_two_variant_moments_use_full_box_channel_luminosity(self):
         edges = np.array([-2., 0., 2.])

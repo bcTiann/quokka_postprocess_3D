@@ -16,24 +16,18 @@ from pathlib import Path
 
 import numpy as np
 
-
-LINES = (
-    ("cii", "C  2 157.636m", "C_2_157.636m"),
-    ("halpha", "H  1 6562.81A", "H_1_6562.81A"),
-    ("hi21", "H  1 21.1207c", "H_1_21.1207c"),
-    ("ciii_977", "C  3 977.020A", "C_3_977.020A"),
-    ("ciii_1907", "C  3 1906.68A", "C_3_1906.68A"),
-    ("ciii_1909", "C  3 1908.73A", "C_3_1908.73A"),
-    ("civ_1548", "C  4 1548.19A", "C_4_1548.19A"),
-    ("civ_1551", "C  4 1550.78A", "C_4_1550.78A"),
+from quokka2s.cloudy_eightline_spec import (
+    HM12_LOG_NH,
+    JEANS_CAP_CM,
+    LINES,
+    N_DENSITY,
+    N_T,
+    STEM,
+    T_MAX_K,
+    T_MIN_K,
 )
-N_DENSITY = 10
-N_T = 21
-T_MIN_K = 3.6
-T_MAX_K = 1.0e9
 ZERO_LIMIT = -90.0
 T_TOLERANCE_DEX = 5.1e-4
-JEANS_CAP_CM = 3.086e20
 RUN_RE = re.compile(r"_run([1-9][0-9]*)\.dat$")
 HDEN_RE = re.compile(r"^#\s*hden\s+(.+?)\s*$")
 INIT_RE = re.compile(
@@ -216,7 +210,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--stem",
-        default="hm2012_attgrid_ism_nh21_cmb_cr_defaultabund_eightline_jeans",
+        default=STEM,
     )
     parser.add_argument(
         "--runtime-grackle-dir",
@@ -231,7 +225,7 @@ def main() -> None:
         "--hm12-log-nh",
         type=float,
         nargs="+",
-        default=(18.0, 18.5, 19.0, 19.5, 20.0, 20.5, 21.0),
+        default=HM12_LOG_NH,
     )
     args = parser.parse_args()
 

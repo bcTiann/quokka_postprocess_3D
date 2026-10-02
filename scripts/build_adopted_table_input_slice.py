@@ -23,7 +23,7 @@ matplotlib.use('Agg')
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from quokka2s.emission_processing import validate_accepted_inputs, check_exclusion_queries
+from quokka2s.legacy_emission_validation import validate_accepted_inputs, check_exclusion_queries
 from scripts.check_despotic_snapshot_coverage import _validate_scan_provenance, _sha256
 from quokka2s.tables.io import load_table
 from quokka2s.tables.lookup import TableLookup
