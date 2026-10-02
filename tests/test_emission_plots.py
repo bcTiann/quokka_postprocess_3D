@@ -30,7 +30,7 @@ class EmissionPlotTests(unittest.TestCase):
             total_luminosity_erg_s=image_total,
             x_edges_kpc=np.linspace(0.0, 1.0, 129),
             y_edges_kpc=np.linspace(-0.5, 0.5, 129),
-            source_manifest_sha256=np.asarray("a" * 64),
+            input_fingerprint_sha256=np.asarray("a" * 64),
             full_snapshot=np.asarray(full_snapshot),
         )
         edges = np.linspace(-190.0 if wrong_velocity_range else -200.0, 200.0, 401)
@@ -51,7 +51,7 @@ class EmissionPlotTests(unittest.TestCase):
             velocity_kms=(edges[:-1] + edges[1:]) / 2,
             dL_dv_erg_s_per_kms=spectra, projected_area_cm2=np.asarray(1e44),
             input_luminosity_erg_s=input_luminosity,
-            source_manifest_sha256=np.asarray(("b" if wrong_manifest else "a") * 64),
+            input_fingerprint_sha256=np.asarray(("b" if wrong_manifest else "a") * 64),
             full_snapshot=np.asarray(full_snapshot),
         )
 

@@ -10,10 +10,9 @@ from quokka2s.emission_config import load_plot_config, load_process_config
 
 
 PROCESS_MINIMUM = {
-    "dataset": "plt0655228",
-    "accepted_despotic": "tables/accepted_table.json",
+    "dataset": "inputs/snapshots/plt0655228",
+    "despotic_table": "inputs/tables/despotic/interpolated.npz",
     "cloudy_table": "tables/cloudy.npz",
-    "cloudy_audit": "tables/cloudy_coverage.json",
     "output_dir": "results/processed",
 }
 
@@ -31,25 +30,19 @@ class EmissionConfigTests(unittest.TestCase):
 
     def test_process_minimum_resolves_paths_and_uses_defaults(self):
         args = load_process_config(self.write(PROCESS_MINIMUM))
-        self.assertEqual(args.dataset, self.directory / "plt0655228")
-        self.assertEqual(args.accepted_despotic, self.directory / "tables/accepted_table.json")
+        self.assertEqual(args.dataset, self.directory / "inputs/snapshots/plt0655228")
+        self.assertEqual(args.despotic_table, self.directory / "inputs/tables/despotic/interpolated.npz")
         self.assertEqual(args.cloudy_table, self.directory / "tables/cloudy.npz")
-        self.assertEqual(args.cloudy_audit, self.directory / "tables/cloudy_coverage.json")
         self.assertEqual(args.output_dir, self.directory / "results/processed")
         self.assertEqual(args.dust_opacity_table, DEFAULT_DRAINE_TABLE.resolve())
         self.assertEqual((args.slab_nx, args.query_chunk, args.spectral_workers),
                          (8, 100000, 6))
         self.assertIsNone(args.max_slabs)
-        self.assertIsNone(args.despotic_table)
-        self.assertIsNone(args.excluded_cells)
-        self.assertIsNone(args.coverage_report)
 
     def test_process_optional_settings_and_absolute_path(self):
         values = {
             **PROCESS_MINIMUM, "dataset": str(self.directory / "other/plt"),
             "despotic_table": "tables/interpolated.npz",
-            "excluded_cells": "tables/excluded.npz",
-            "coverage_report": "tables/coverage.json",
             "dust_opacity_table": "tables/dust.all",
             "slab_nx": 4, "query_chunk": 50000, "spectral_workers": 2,
             "max_slabs": 1,
@@ -57,8 +50,6 @@ class EmissionConfigTests(unittest.TestCase):
         args = load_process_config(self.write(values))
         self.assertEqual(args.dataset, self.directory / "other/plt")
         self.assertEqual(args.despotic_table, self.directory / "tables/interpolated.npz")
-        self.assertEqual(args.excluded_cells, self.directory / "tables/excluded.npz")
-        self.assertEqual(args.coverage_report, self.directory / "tables/coverage.json")
         self.assertEqual(args.dust_opacity_table, self.directory / "tables/dust.all")
         self.assertEqual((args.slab_nx, args.query_chunk, args.spectral_workers, args.max_slabs),
                          (4, 50000, 2, 1))

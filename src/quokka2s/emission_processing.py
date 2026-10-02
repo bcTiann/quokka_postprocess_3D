@@ -6,6 +6,7 @@ numerical products. Plotting reads those products in a separate command.
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -17,7 +18,7 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[2]
 
 from quokka2s.cloudy_cell_queries import prepare_cloudy_cell_queries
-from quokka2s.cloudy_sixline_lookup import CloudySixLineLookup
+from quokka2s.cloudy_sixline_lookup import CloudyFailureTouchError, CloudySixLineLookup
 from quokka2s.dust_attenuation import (
     LINE_WAVELENGTH_MICRON, attenuate_emissivities,
     extinction_cross_sections, load_draine_extinction,
@@ -209,6 +210,27 @@ def combine_spectral_variants(variant_payloads, projected_area_cm2):
     }
 
 
+def _compute_with_cloudy_failure_exclusions(queries, dvdr, despotic, cloudy,
+                                            compute_emission):
+    """Omit hot cells that touch any unavailable Cloudy line node, then retry."""
+    excluded_cloudy = np.zeros(queries.excluded.shape, dtype=bool)
+    try:
+        emission = compute_emission(queries, dvdr, despotic, cloudy,
+                                    allow_capped_legacy_jeans=True)
+    except CloudyFailureTouchError:
+        hot_query = ~queries.state.cold_mask & ~queries.excluded
+        diagnostic = cloudy.diagnose(
+            queries.state.temperature_K[hot_query], queries.n_H_cm3[hot_query],
+            queries.column_density_H_cm2[hot_query])
+        excluded_cloudy[hot_query] = diagnostic.failure_touched.any(axis=0)
+        if not excluded_cloudy.any():
+            raise
+        queries = replace(queries, excluded=queries.excluded | excluded_cloudy)
+        emission = compute_emission(queries, dvdr, despotic, cloudy,
+                                    allow_capped_legacy_jeans=True)
+    return queries, emission, excluded_cloudy
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(prog='quokka2s process', description=__doc__)
     parser.add_argument('--config', required=True, type=Path,
@@ -225,10 +247,15 @@ def main(argv=None):
         parser.error('Query batches must contain at most 100000 cells')
     if args.output_dir.exists():
         raise FileExistsError('Choose a new output directory')
-    manifest, coverage, excluded_ids, table_path, inputs, hashes = validate_accepted_inputs(
-        args.accepted_despotic, args.cloudy_table, args.cloudy_audit, args.dataset,
-        table_override=args.despotic_table, exclusions_override=args.excluded_cells,
-        coverage_override=args.coverage_report)
+    for name in ('dataset', 'despotic_table', 'cloudy_table', 'dust_opacity_table'):
+        if not getattr(args, name).exists():
+            raise FileNotFoundError(f'{name}: {getattr(args, name)}')
+    inputs = (args.despotic_table, args.cloudy_table, args.dust_opacity_table)
+    hashes = {str(path.resolve()): _sha256(path) for path in inputs}
+    snapshot_header = args.dataset / 'Header'
+    if not snapshot_header.is_file():
+        raise FileNotFoundError(f'Snapshot Header: {snapshot_header}')
+    snapshot_header_sha = _sha256(snapshot_header)
     import yt
     from yt.units import gravitational_constant
     from quokka2s.pipeline.prep import physics_fields as physics, config as cfg
@@ -237,9 +264,9 @@ def main(argv=None):
 
     ds = yt.load(str(args.dataset.resolve()))
     shape = tuple(int(x) for x in ds.domain_dimensions)
-    if shape != tuple(manifest['snapshot_shape']) or ds.max_level != 0 or cfg.DOWNSAMPLE_FACTOR != 1:
-        raise ValueError('Expected the complete accepted uniform snapshot')
-    dsp = TableLookup(load_table(table_path))
+    if ds.max_level != 0 or cfg.DOWNSAMPLE_FACTOR != 1:
+        raise ValueError('Expected the complete uniform snapshot at native resolution')
+    dsp = TableLookup(load_table(args.despotic_table))
     if dsp.table.build_metadata['composition']['setup'] != 'cloudy_c17_02_default_gow_default_v2':
         raise ValueError('Expected native default DESPOTIC abundances')
     domain = _validate_scan_provenance(dsp.table, shape, cfg, physics)
@@ -255,8 +282,6 @@ def main(argv=None):
     keys = tuple(cloudy.line_keys) + ('co10', 'co21')
     dust_wavelengths, dust_extinction = load_draine_extinction(args.dust_opacity_table)
     dust_sigma = extinction_cross_sections(keys, dust_wavelengths, dust_extinction)
-    inputs += (args.dust_opacity_table,)
-    hashes[str(args.dust_opacity_table.resolve())] = _sha256(args.dust_opacity_table)
     velocity_edges = np.linspace(-VELOCITY_RANGE_KMS, VELOCITY_RANGE_KMS,
                                  VELOCITY_CHANNELS + 1)
     spectra = {
@@ -266,15 +291,25 @@ def main(argv=None):
     }
     images = LineLuminosityImageAccumulator(keys, shape[:2])
     args.output_dir.mkdir(parents=True, exist_ok=False)
-    code_files = (Path(__file__), Path(physics.__file__), ROOT/'src/quokka2s/cloudy_cell_queries.py',
+    code_files = (Path(__file__), Path(cfg.__file__), Path(physics.__file__), ROOT/'src/quokka2s/cloudy_cell_queries.py',
         ROOT/'src/quokka2s/cloudy_hot_emission.py', ROOT/'src/quokka2s/adopted_cell_emission.py',
         ROOT/'src/quokka2s/adopted_spectral_products.py', ROOT/'src/quokka2s/cloudy_sixline_lookup.py',
         ROOT/'src/quokka2s/tables/lookup.py', ROOT/'src/quokka2s/tables/model_depth.py',
         ROOT/'src/quokka2s/dust_attenuation.py',
         ROOT/'src/quokka2s/emission_product_accumulator.py')
     code_hashes = {str(p.resolve()): _sha256(p) for p in code_files}
+    total_cells = int(np.prod(shape))
+    input_hashes = {name: hashes[str(getattr(args, name).resolve())]
+                    for name in ('despotic_table', 'cloudy_table', 'dust_opacity_table')}
+    input_fingerprint = hashlib.sha256(json.dumps({
+        'snapshot_header_sha256': snapshot_header_sha,
+        'shape': shape,
+        'input_sha256': input_hashes,
+        'code_sha256': sorted(code_hashes.values()),
+    }, sort_keys=True).encode()).hexdigest()
     began = time.monotonic()
-    counts = dict(all=0, cold=0, hot=0, excluded=0, excluded_cold=0, retained=0)
+    counts = dict(all=0, cold=0, hot=0, excluded=0, excluded_cold=0,
+                  excluded_despotic=0, excluded_cloudy=0, retained=0)
     mass = {key: 0. for key in ('all', 'cold', 'hot', 'excluded')}
     luminosity = np.zeros((len(keys), 2))
     transmitted_luminosity = np.zeros_like(luminosity)
@@ -320,14 +355,16 @@ def main(argv=None):
                 for name, values, axis in zip(('nH', 'NH', 'dVdr'), raw, axes):
                     if (not np.isfinite(values).all() or np.any(values <= 0) or
                             np.any(values < axis[0]) or np.any(values > axis[-1])):
-                        raise ValueError(f'Fresh DESPOTIC {name} outside accepted snapshot domain')
+                        raise ValueError(f'DESPOTIC {name} outside the table domain')
                 td = dsp.temperature(*physics._clip_to_table_domain(dsp, *raw))
-                excluded = check_exclusion_queries(ids, excluded_ids, td)
+                excluded_despotic = ~np.isfinite(td) | (td <= 0)
                 # Legacy energy/mu arguments are unused by the fixed-mu Jeans estimate.
                 queries = prepare_cloudy_cell_queries(rho[sl], column[sl], tq[sl], np.nan, td, np.nan,
-                    authorized_excluded=excluded, allow_hot_missing_despotic_exclusions=True, **constants)
-                emission = compute_adopted_cell_emission(queries, dvdr[sl], dsp, cloudy,
-                    allow_capped_legacy_jeans=True)
+                    authorized_excluded=excluded_despotic,
+                    allow_hot_missing_despotic_exclusions=True, **constants)
+                queries, emission, excluded_cloudy = _compute_with_cloudy_failure_exclusions(
+                    queries, dvdr[sl], dsp, cloudy, compute_adopted_cell_emission)
+                excluded = queries.excluded
                 cold = tq[sl] < 3000
                 for key, flag in emission.despotic_clipped.items():
                     clipped[key] += int(flag.sum())
@@ -359,25 +396,24 @@ def main(argv=None):
                     mass[name] += float(rho[sl][selected].sum()*volume)
                 counts['retained'] += int(use.sum())
                 counts['excluded_cold'] += int(np.count_nonzero(excluded & cold))
+                counts['excluded_despotic'] += int(np.count_nonzero(excluded_despotic))
+                counts['excluded_cloudy'] += int(np.count_nonzero(excluded_cloudy))
             status('running', completed_slabs=slab+1)
-            print(f'Emission: {counts["all"]}/{manifest["total_cells"]} cells; '
+            print(f'Emission: {counts["all"]}/{total_cells} cells; '
                   f'{time.monotonic()-began:.1f} s', flush=True)
-        full = counts['all'] == manifest['total_cells']
-        if full:
-            expected = dict(cold=coverage['groups']['T_QUOKKA_lt_3000_K']['cell_count'],
-                excluded=manifest['excluded_cell_count'], excluded_cold=manifest['excluded_cold_cell_count'],
-                retained=manifest['retained_cells'])
-            if any(counts[key] != value for key, value in expected.items()):
-                raise ValueError('Final counts differ from accepted coverage')
-            for group, old in (('all', 'all_cells'), ('cold', 'T_QUOKKA_lt_3000_K')):
-                if not np.isclose(mass[group], coverage['groups'][old]['total_valid_mass_g'], rtol=1e-12, atol=0):
-                    raise ValueError(f'{group} mass differs from accepted snapshot')
-            if not np.isclose(mass['excluded']/mass['all'], manifest['excluded_mass_fraction'], rtol=1e-12, atol=0):
-                raise ValueError('Excluded mass differs from acceptance')
+        full = counts['all'] == total_cells
+        if (counts['cold'] + counts['hot'] != counts['all'] or
+                counts['retained'] + counts['excluded'] != counts['all'] or
+                counts['excluded_despotic'] + counts['excluded_cloudy'] != counts['excluded']):
+            raise ValueError('Cell-selection counts are inconsistent')
+        if not np.isclose(mass['cold'] + mass['hot'], mass['all'], rtol=1e-12, atol=0):
+            raise ValueError('Temperature-regime masses do not sum to the processed mass')
         for mapping in (hashes, code_hashes):
             for path, digest in mapping.items():
                 if _sha256(path) != digest:
                     raise ValueError(f'Input changed during run: {path}')
+        if _sha256(snapshot_header) != snapshot_header_sha:
+            raise ValueError(f'Snapshot Header changed during run: {snapshot_header}')
         if any(luminosity[keys.index(key), 0] != 0 for key in COLD_OMITTED_LINES):
             raise ValueError('Cold CIII/CIV must be exactly zero')
         if np.any(transmitted_luminosity > luminosity*(1+1e-12)):
@@ -404,10 +440,9 @@ def main(argv=None):
                 or not np.array_equal(spectrum_payload['dL_dv_erg_s_per_kms'][0, keys.index('hi21')],
                                       spectrum_payload['dL_dv_erg_s_per_kms'][1, keys.index('hi21')])):
             raise ValueError('H I 21 cm must be unchanged by the adopted dust approximation')
-        source_manifest_sha = hashes[str(args.accepted_despotic.resolve())]
         for product in (image_payload, spectrum_payload):
             product.update(full_snapshot=np.asarray(full),
-                           source_manifest_sha256=np.asarray(source_manifest_sha),
+                           input_fingerprint_sha256=np.asarray(input_fingerprint),
                            dust_sigma_ext_cm2_H=dust_sigma.copy(),
                            dust_rest_wavelength_micron=np.asarray(
                                [LINE_WAVELENGTH_MICRON[key] for key in keys]),
@@ -433,18 +468,20 @@ def main(argv=None):
             transmitted_luminosity_erg_s=transmitted_luminosity.tolist(),
             line_sigma_kms=line_sigma,
             despotic_coordinate_clipped_cells=clipped, cloudy_attenuation_coordinate_clipped_cells=foreground_clipped,
-            source_sha256=hashes, code_sha256=code_hashes, snapshot_domain=domain, constants=constants,
+            input_sha256=input_hashes, snapshot_header_sha256=snapshot_header_sha,
+            input_fingerprint_sha256=input_fingerprint,
+            code_sha256=code_hashes, snapshot_domain=domain, constants=constants,
             dataset=str(args.dataset.resolve()),
-            manifest_recorded_dataset=manifest['snapshot'],
+            excluded_mass_fraction=mass['excluded']/mass['all'],
             cell_volume_cm3=volume, spectral_report=spectral_report,
             cold_CIII_CIV='Omitted by the adopted prescription; hot contributions only',
-            exclusions='Exact shared cell mask from accepted DESPOTIC manifest; excluded entries are not physical zero emission',
+            exclusions='Cells with unavailable required table results are omitted from every line product; omitted entries are not zero emission',
             interpretation=('Local volume emission with inherited Cloudy escape treatment and DESPOTIC LVG; '
                 'one-sided -z foreground Draine extinction applied before image and spectrum accumulation; '
                 'no scattered-in light.'),
             dust_attenuation=dict(model='Draine MW R_V=3.1 total extinction',
                 opacity_table=str(args.dust_opacity_table.resolve()),
-                opacity_sha256=hashes[str(args.dust_opacity_table.resolve())],
+                opacity_sha256=input_hashes['dust_opacity_table'],
                 observer='outer -z boundary face for each (x,y) sightline',
                 interpolation='linear in log(wavelength), log(C_ext/H)',
                 sigma_ext_cm2_H=dict(zip(keys, dust_sigma.tolist())),

@@ -15,16 +15,11 @@ from .dust_attenuation import DEFAULT_DRAINE_TABLE
 
 
 _PROCESS_REQUIRED_PATHS = (
-    "dataset", "accepted_despotic", "cloudy_table", "cloudy_audit", "output_dir",
+    "dataset", "despotic_table", "cloudy_table", "output_dir",
 )
-_PROCESS_OPTIONAL_PATHS = (
-    "despotic_table", "excluded_cells", "coverage_report", "dust_opacity_table",
-)
+_PROCESS_OPTIONAL_PATHS = ("dust_opacity_table",)
 _PROCESS_INTEGERS = ("slab_nx", "query_chunk", "spectral_workers", "max_slabs")
 _PROCESS_DEFAULTS = {
-    "despotic_table": None,
-    "excluded_cells": None,
-    "coverage_report": None,
     "dust_opacity_table": str(DEFAULT_DRAINE_TABLE),
     "slab_nx": 8,
     "query_chunk": 100000,
@@ -81,10 +76,7 @@ def load_process_config(path: str | Path) -> Namespace:
     for name in _PROCESS_REQUIRED_PATHS:
         values[name] = _path_value(name, values[name], config_path.parent)
     for name in _PROCESS_OPTIONAL_PATHS:
-        values[name] = _path_value(
-            name, values[name], config_path.parent,
-            nullable=name != "dust_opacity_table",
-        )
+        values[name] = _path_value(name, values[name], config_path.parent)
     for name in _PROCESS_INTEGERS:
         values[name] = _positive_int(name, values[name], nullable=name == "max_slabs")
     if values["query_chunk"] > 100000:

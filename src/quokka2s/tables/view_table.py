@@ -19,8 +19,7 @@ from .plotting import plot_table_overview
 
 DEFAULT_TABLE = (
     Path(__file__).resolve().parents[3]
-    / "output_tables_3D_GOW_LVG"
-    / "despotic_table_co10_co21_clean.npz"
+    / "inputs" / "tables" / "despotic" / "interpolated.npz"
 )
 
 

@@ -1,7 +1,6 @@
 # Process the complete QUOKKA snapshot. Paths are relative to this file.
-# On Setonix, edit these paths if the transferred inputs are elsewhere.
-dataset: plt0655228
-accepted_despotic: output/despotic_default_parallel_20260918/interpolated/accepted_table.json
-cloudy_table: data/cloudy_hm2012_attgrid_ism_nh21_cmb_cr_defaultabund_eightline_jeans_7x10x21.npz
-cloudy_audit: output/default_table_reuse_20260918/cloudy_reuse_coverage.json
-output_dir: output/emission_products_full
+# Copy the snapshot and the two lookup tables into inputs/ after cloning.
+dataset: inputs/snapshots/plt0655228
+despotic_table: inputs/tables/despotic/interpolated.npz
+cloudy_table: inputs/tables/cloudy/cloudy_hm2012_attgrid_ism_nh21_cmb_cr_defaultabund_eightline_jeans_7x10x21.npz
+output_dir: output/plt0655228/processed

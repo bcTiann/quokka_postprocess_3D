@@ -59,16 +59,15 @@ def main():
     table = load_table(table_path)
     nH_v, col_v, dv_v = table.nH_values, table.col_density_values, table.dVdr_values
 
-    # 3D bad-cell mask = failure_mask ∪ (Tg is NaN) ∪ (Tg > 1e6 garbage)
+    # Show source solver failures and nodes with unavailable temperature.
     fm_orig = table.failure_mask if table.failure_mask is not None \
               else np.zeros(table.tg_final.shape, dtype=bool)
-    nan_mask = np.isnan(table.tg_final)
-    garbage_mask = np.isfinite(table.tg_final) & (table.tg_final > 1e6)
-    fm = fm_orig | nan_mask | garbage_mask                  # (nH, NH, dVdr)
+    nan_mask = ~np.isfinite(table.tg_final)
+    fm = fm_orig | nan_mask                               # (nH, NH, dVdr)
     n_dv = len(dv_v)
     print(f'table grid: nH={nH_v.size}, NH={col_v.size}, dVdr={n_dv}')
-    print(f'  failure_mask: {int(fm_orig.sum())}  NaN: {int(nan_mask.sum())}  '
-          f'garbage(Tg>1e6): {int(garbage_mask.sum())}  combined bad: {int(fm.sum())}')
+    print(f'  failure_mask: {int(fm_orig.sum())}  unavailable Tg: {int(nan_mask.sum())}  '
+          f'combined: {int(fm.sum())}')
 
     ds = yt.load(cfg.YT_DATASET_PATH)
     if cfg.DOWNSAMPLE_FACTOR > 1:

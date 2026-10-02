@@ -10,6 +10,8 @@ build/
 
 
 # --- Simulation & Data (Token Saving) ---
+# Canonical local inputs; copy them separately after cloning on another machine.
+/inputs/
 # 截屏3中那個巨大的目錄
 TablePlots/        
 TablePlots*/      

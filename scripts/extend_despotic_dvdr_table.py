@@ -3,14 +3,12 @@
 
 The existing 35 dV/dr nodes are copied bit-for-bit.  Only nodes below
 1e-19 s^-1 and above 1e-12 s^-1 are solved, after which the two tables are
-merged and the existing convex-hull-only cleaner is run on the result.
+merged and the failed-node convex-hull interpolator is run on the result.
 """
 from __future__ import annotations
 
 import argparse
 import json
-import subprocess
-import sys
 import time
 from dataclasses import replace
 from pathlib import Path
@@ -23,6 +21,7 @@ from quokka2s.tables.dvdr_domain import (
     extended_dvdr_values,
     legacy_dvdr_values,
 )
+from quokka2s.tables.interpolate_failed import interpolate_table
 from quokka2s.tables.models import (
     AttemptRecord,
     DespoticTable,
@@ -401,11 +400,7 @@ def main() -> None:
     print(f"[saved raw] {output}")
 
     if not args.skip_clean:
-        cleaner = ROOT / "scripts" / "fill_table_convex_hull_only.py"
-        subprocess.run(
-            [sys.executable, str(cleaner), str(output), str(clean_output)],
-            check=True,
-        )
+        interpolate_table(output, clean_output)
         print(f"[saved clean] {clean_output}")
 
     report = {

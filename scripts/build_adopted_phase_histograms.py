@@ -43,7 +43,7 @@ from quokka2s.tables.lookup import TableLookup
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     defaults = {
-        'dataset': ROOT/'plt0655228',
+        'dataset': ROOT/'inputs/snapshots/plt0655228',
         'accepted-despotic': ROOT/'output/despotic_default_parallel_20260918/interpolated/accepted_table.json',
         'cloudy-table': ROOT/'data/cloudy_hm2012_attgrid_ism_nh21_cmb_cr_defaultabund_eightline_jeans_7x10x21.npz',
         'cloudy-audit': ROOT/'output/default_table_reuse_20260918/cloudy_reuse_coverage.json',

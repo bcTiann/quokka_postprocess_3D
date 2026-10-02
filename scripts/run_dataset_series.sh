@@ -13,7 +13,7 @@
 # slices) each get a fresh process; light tasks share one process.
 #
 # Usage:
-#   scripts/run_dataset_series.sh [plt0655228 plt0857000 ...]   # datasets under $ROOT
+#   scripts/run_dataset_series.sh [plt0655228 plt0857000 ...]   # under inputs/snapshots/
 #
 # Env:
 #   LEXT_KPC  (default 15)   RUN_TAG  (default: none)
@@ -81,7 +81,7 @@ echo "[$(date)] === datasets: ${DATASETS[*]}  L_ext=$LEXT_KPC  tag=$RUN_TAG  MOD
 OVERALL_RC=0
 
 for D in "${DATASETS[@]}"; do
-  DPATH=$ROOT/$D
+  DPATH=$ROOT/inputs/snapshots/$D
   if [ ! -e "$DPATH" ]; then
     echo "[$(date)] [$D] ERROR — not found at $DPATH" | tee -a "$MASTER"
     OVERALL_RC=1

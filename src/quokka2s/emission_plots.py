@@ -53,30 +53,30 @@ def load_emission_products(products_dir: str | Path) -> tuple[dict, dict]:
     images = _read_npz(directory / "images.npz", (
         "line_keys", "variant_keys", "line_luminosity_image_erg_s",
         "total_luminosity_erg_s", "x_edges_kpc", "y_edges_kpc",
-        "source_manifest_sha256", "full_snapshot",
+        "input_fingerprint_sha256", "full_snapshot",
     ))
     spectra = _read_npz(directory / "spectra.npz", (
         "line_keys", "variant_keys", "regime_keys", "velocity_edges_kms",
         "velocity_kms", "dL_dv_erg_s_per_kms", "projected_area_cm2",
-        "input_luminosity_erg_s", "source_manifest_sha256", "full_snapshot",
+        "input_luminosity_erg_s", "input_fingerprint_sha256", "full_snapshot",
     ))
     image_keys = _strings(images["line_keys"], "image line_keys")
     spectrum_keys = _strings(spectra["line_keys"], "spectrum line_keys")
     if image_keys != spectrum_keys:
         raise ValueError("Image and spectrum line keys must have the same order")
     for name, bundle in (("image", images), ("spectrum", spectra)):
-        digest = bundle["source_manifest_sha256"]
+        digest = bundle["input_fingerprint_sha256"]
         full = bundle["full_snapshot"]
         if digest.shape != () or digest.dtype.kind not in ("U", "S"):
-            raise ValueError(f"{name} source_manifest_sha256 must be a SHA-256 digest")
+            raise ValueError(f"{name} input_fingerprint_sha256 must be a SHA-256 digest")
         digest_text = digest.item()
         if isinstance(digest_text, bytes):
             digest_text = digest_text.decode()
         if re.fullmatch(r"[0-9a-fA-F]{64}", str(digest_text)) is None:
-            raise ValueError(f"{name} source_manifest_sha256 must be a SHA-256 digest")
+            raise ValueError(f"{name} input_fingerprint_sha256 must be a SHA-256 digest")
         if full.shape != () or full.dtype.kind != "b":
             raise ValueError(f"{name} full_snapshot must be a Boolean scalar")
-    if (not np.array_equal(images["source_manifest_sha256"], spectra["source_manifest_sha256"])
+    if (not np.array_equal(images["input_fingerprint_sha256"], spectra["input_fingerprint_sha256"])
             or not np.array_equal(images["full_snapshot"], spectra["full_snapshot"])):
         raise ValueError("Image and spectrum products have different provenance")
     for name, bundle in (("image", images), ("spectrum", spectra)):

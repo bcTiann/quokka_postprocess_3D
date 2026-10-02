@@ -134,32 +134,32 @@ the class name + init args.
 
 ## Tables (DESPOTIC chemistry)
 
-`build_table.py` is the single production entry point. It fixes the chemistry
-to GOW, escape geometry to LVG, and runs
-`setChemEq(evolveTemp='iterateDust')` independently over a 35×35×35 grid of
-`(n_H, N_H, dV/dr)`. The pipeline interpolates this table via
-`tables/lookup.py`.
+`build_table.py` fixes the chemistry to GOW and escape geometry to LVG, and
+runs `setChemEq(evolveTemp='iterateDust')` independently at each table node.
+The measured full-snapshot bounds give a 35×35×53 grid of
+`(n_H, N_H, dV/dr)`. The two table files live under `inputs/tables/despotic/`:
+`raw.npz` retains direct solver results, and `interpolated.npz` fills failed
+nodes inside the finite-support convex hull. The pipeline queries the latter.
 
 ```bash
-# Build a table (slow — hours).
-python -m quokka2s.tables.build_table
-python scripts/fill_table_convex_hull_only.py \
-  output_tables_3D_GOW_LVG/despotic_table_co10_co21.npz \
-  output_tables_3D_GOW_LVG/despotic_table_co10_co21_clean.npz
-
-# Or add CO(2-1) to the existing raw/clean tables without rerunning chemistry.
-python -m quokka2s.tables.augment_co21 --workers -1
-
-# Stress-test DESPOTIC convergence on a sparse grid (minutes).
-python check_convergence_sparse.py --points 10
+# Measure the full-resolution snapshot domain, then build the raw table (slow).
+python scripts/measure_despotic_snapshot_domain.py
+python -m quokka2s.tables.build_table \
+  --snapshot-domain output/plt0655228/table_build/snapshot_domain.json \
+  --checkpoint-dir output/plt0655228/table_build/checkpoints \
+  --workers -1
+python -m quokka2s.tables.interpolate_failed
 
 # Plot the table on (n_H, N_H) slices at several dV/dr values.
 python -m quokka2s.tables.view_table -n 5
 ```
 
-Use `--output`, `--workers`, and `--force` to control the destination,
-parallelism, and overwrite protection. Chemistry and geometry are deliberately
-not command-line options.
+The builder defaults to `inputs/tables/despotic/raw.npz`; the interpolation
+command reads that file and writes `inputs/tables/despotic/interpolated.npz`.
+Its `failure_mask` still describes the original solver failures, including
+nodes now filled. The `remaining_unavailable_*` masks describe numerical
+availability after interpolation. Both commands refuse to overwrite an
+existing table unless `--force` is passed. Chemistry and geometry are fixed.
 
 ---
 

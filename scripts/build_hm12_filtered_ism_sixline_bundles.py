@@ -221,9 +221,11 @@ def main() -> None:
     parser.add_argument(
         "--runtime-grackle-dir",
         type=Path,
-        default=root / "runtime/cloudy_sixline/examples/grackle",
+        default=root / "runtime/cloudy_eightline/examples/grackle",
     )
-    parser.add_argument("--output-dir", type=Path, default=root / "data")
+    parser.add_argument(
+        "--output-dir", type=Path, default=root / "inputs/tables/cloudy"
+    )
     parser.add_argument("--parameter-file", type=Path, required=True)
     parser.add_argument(
         "--hm12-log-nh",

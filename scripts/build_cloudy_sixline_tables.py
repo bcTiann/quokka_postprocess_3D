@@ -208,7 +208,9 @@ def main() -> None:
     parser.add_argument(
         "--runtime-dir", type=Path, default=root / "runtime/cloudy_eightline"
     )
-    parser.add_argument("--output-dir", type=Path, default=root / "data")
+    parser.add_argument(
+        "--output-dir", type=Path, default=root / "inputs/tables/cloudy"
+    )
     parser.add_argument(
         "--smoke-only",
         action="store_true",

@@ -12,13 +12,18 @@ import yt
 from quokka2s.pipeline.prep import config as cfg
 from quokka2s.pipeline.prep import physics_fields as physics
 
+ROOT = Path(__file__).resolve().parents[1]
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--dataset', type=Path, default=Path(cfg.YT_DATASET_PATH))
-    parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--output', type=Path,
+                        help='JSON destination (default: output/<dataset>/table_build/snapshot_domain.json)')
     parser.add_argument('--slab-nx', type=int, default=16)
     args = parser.parse_args()
+    if args.output is None:
+        args.output = ROOT / 'output' / args.dataset.name / 'table_build' / 'snapshot_domain.json'
     if args.output.exists() or args.slab_nx < 1:
         raise ValueError('Output must be new and slab size positive')
     ds = yt.load(str(args.dataset.resolve()))

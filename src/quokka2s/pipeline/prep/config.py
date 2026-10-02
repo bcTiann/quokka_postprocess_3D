@@ -33,7 +33,7 @@ _PROJECT_ROOT = Path(os.environ.get("QUOKKA_ROOT", Path(__file__).resolve().pare
 # lands in its own output dir and its own field-cache root — no collisions.
 # Known snapshots on disk: plt263168 (old), plt0655228 (8GB), plt0857000.
 YT_DATASET_PATH = os.environ.get(
-    "YT_DATASET", str(_PROJECT_ROOT / "plt0655228"))  # default: plt0655228 (8GB)
+    "YT_DATASET", str(_PROJECT_ROOT / "inputs/snapshots/plt0655228"))
 
 # Cleaned self-consistent 3D GOW/LVG table (failed/NaN/outlier cells filled
 # only inside the valid-data convex hull). Set DESPOTIC_TABLE only when a

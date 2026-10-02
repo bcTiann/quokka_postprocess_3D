@@ -70,7 +70,7 @@ def main():
         return
     if output.exists():
         raise FileExistsError('Use a new output directory or --plot-only')
-    dataset = ROOT/'plt0655228'
+    dataset = ROOT/'inputs/snapshots/plt0655228'
     manifest_path = ROOT/'output/despotic_default_parallel_20260918/interpolated/accepted_table.json'
     cloudy = ROOT/'data/cloudy_hm2012_attgrid_ism_nh21_cmb_cr_defaultabund_eightline_jeans_7x10x21.npz'
     audit = ROOT/'output/default_table_reuse_20260918/cloudy_reuse_coverage.json'

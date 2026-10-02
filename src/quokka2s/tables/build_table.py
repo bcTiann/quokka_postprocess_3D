@@ -25,8 +25,7 @@ COL_DEN_RANGE = (1e15, 1e24)
 GRID_POINTS = 35
 DEFAULT_OUTPUT = (
     Path(__file__).resolve().parents[3]
-    / "output_tables_3D_GOW_LVG"
-    / "despotic_table_co10_co21_dvdr_fullrange.npz"
+    / "inputs" / "tables" / "despotic" / "raw.npz"
 )
 
 
