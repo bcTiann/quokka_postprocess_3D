@@ -1,7 +1,8 @@
 # Current emission physics and products
 
-The current entry points are `python -m quokka2s.process_snapshot --config ...` and
-`python -m quokka2s.plot_emission_results --config ...`. Use the [root README](../README.md) for
+The current entry points are `quokka2s-process` and `quokka2s-plot`.
+Each uses its default YAML in `configs/`; `--config PATH` selects another file.
+Use the [root README](../README.md) for
 commands and [code walkthrough](code_walkthrough.md) to follow the code.
 This reference describes the adopted scientific choices for that route.
 

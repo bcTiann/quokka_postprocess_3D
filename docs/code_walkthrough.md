@@ -5,11 +5,14 @@ Read what each call receives and returns before opening the function itself.
 Process and plot have independent entry points:
 
 ```bash
-python -m quokka2s.process_snapshot --config configs/emission_process.yaml
-python -m quokka2s.plot_emission_results --config configs/emission_plot.yaml
+python -m quokka2s.process_snapshot
+python -m quokka2s.plot_emission_results
 ```
 
-Each reads its own YAML settings and runs directly; there is no shared dispatcher.
+From the repository root, each reads its own default YAML:
+`configs/emission_process.yaml` or `configs/emission_plot.yaml`.
+Use `--config PATH` to select another file. Each runs directly;
+there is no shared dispatcher.
 
 The two commands and table-build instructions are in the
 [root README](../README.md). The scientific choices are in the

@@ -253,18 +253,20 @@ def process_snapshot(config, snapshot, emission_calculator, products, began):
 
 
 def main(argv=None):
-    """Process a snapshot using --config PATH and save checked numerical products.
+    """Process a snapshot and save checked numerical products.
 
-    argv is a sequence of command arguments, or None for sys.argv[1:]."""
+    argv is a sequence of command arguments, or None for sys.argv[1:].
+    From the repository root, the default is configs/emission_process.yaml;
+    --config PATH selects another YAML file."""
     parser = argparse.ArgumentParser(
         prog='quokka2s-process',
         description=__doc__,
     )
     parser.add_argument(
         '--config',
-        required=True,
+        default=Path('configs/emission_process.yaml'),
         type=Path,
-        help='YAML file containing the processing input and output paths',
+        help='Processing YAML file (default: configs/emission_process.yaml)',
     )
     config_path = parser.parse_args(argv).config
     try:

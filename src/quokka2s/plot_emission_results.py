@@ -9,19 +9,20 @@ from quokka2s.figures.emission_results import draw_emission_products, load_plot_
 
 
 def main(argv=None) -> None:
-    """Plot saved products using --config PATH.
+    """Plot saved products from the plotting YAML settings.
 
     argv is a sequence of command arguments, or None for sys.argv[1:].
-    The YAML supplies the product directory and one or two figure directories."""
+    From the repository root, the default is configs/emission_plot.yaml;
+    --config PATH selects another YAML file."""
     parser = argparse.ArgumentParser(
         prog='quokka2s-plot',
         description=__doc__,
     )
     parser.add_argument(
         '--config',
-        required=True,
+        default=Path('configs/emission_plot.yaml'),
         type=Path,
-        help='YAML file containing the saved-products and figure paths',
+        help='Plotting YAML file (default: configs/emission_plot.yaml)',
     )
     config_path = parser.parse_args(argv).config
     try:

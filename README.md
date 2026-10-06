@@ -127,8 +127,14 @@ modification times, following
 On a local machine, with the environment active:
 
 ```bash
-python -m quokka2s.process_snapshot --config configs/emission_process.yaml
+python -m quokka2s.process_snapshot
 ```
+
+Run these commands from the repository root. Processing uses
+`configs/emission_process.yaml` by default, and plotting uses
+`configs/emission_plot.yaml`. Use `--config path/to/settings.yaml` to select
+another configuration. After installing the package, the equivalent short
+commands are `quokka2s-process` and `quokka2s-plot`.
 
 On Setonix, first request an interactive CPU allocation. This example uses
 one task and eight CPUs for the supplied two query workers and three
@@ -154,7 +160,7 @@ export NUMEXPR_NUM_THREADS=1
 
 srun --nodes=1 --ntasks=1 --cpus-per-task=8 \
   --distribution=block:block:block --cpu-bind=cores \
-  python -u -m quokka2s.process_snapshot --config configs/emission_process.yaml
+  python -u -m quokka2s.process_snapshot
 ```
 
 `salloc` reserves resources; `srun` launches the process using them.
@@ -177,7 +183,7 @@ Set `products: ../output/plt0655228/processed_setonix` in
 [configs/emission_plot.yaml](configs/emission_plot.yaml), then run:
 
 ```bash
-python -m quokka2s.plot_emission_results --config configs/emission_plot.yaml
+python -m quokka2s.plot_emission_results
 ```
 
 Plotting reads the downloaded products and does not reopen the snapshot or
