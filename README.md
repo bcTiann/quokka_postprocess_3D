@@ -63,5 +63,30 @@ The default `products` path reads `output/plt0655228/processed/`.
 Figures: `output/plt0655228/figures/` and
 `output/plt0655228/figures_titled/`, each with `png/` and `pdf/` subdirectories.
 
+## Example outputs
+
+Hα luminosity images for the complete `plt0655228` snapshot, viewed along
+the z axis. Both images use the same colour scale.
+
+| Intrinsic | Dust attenuated |
+|---|---|
+| ![Intrinsic Halpha luminosity image](docs/examples/line_luminosity_halpha_intrinsic.png) | ![Dust-attenuated Halpha luminosity image](docs/examples/line_luminosity_halpha_attenuated.png) |
+
+Integrated Hα spectrum before and after dust attenuation:
+
+![Integrated Halpha spectrum](docs/examples/spectrum_halpha.png)
+
+## Repository structure
+
+```text
+configs/       Process and plot settings
+src/quokka2s/  Snapshot reading, emission calculations and plotting
+inputs/        Simulation snapshots and lookup tables
+output/        Processed data and generated figures
+tools/         Table-building tools and additional figures
+vendor/        External code and reference data
+docs/          Usage, methods, code guide and example images
+```
+
 [Detailed usage](docs/usage.md) · [Methods](docs/emission_method.md) ·
 [Code guide](docs/code_walkthrough.md)

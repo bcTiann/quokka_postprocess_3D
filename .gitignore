@@ -46,3 +46,8 @@
 # Fixed prebuilt emission tables are supplied with a normal Git clone.
 !/inputs/tables/cloudy/emission.npz
 !/inputs/tables/despotic/interpolated.npz
+
+# Selected README examples; other generated figures remain local.
+!/docs/examples/line_luminosity_halpha_intrinsic.png
+!/docs/examples/line_luminosity_halpha_attenuated.png
+!/docs/examples/spectrum_halpha.png
