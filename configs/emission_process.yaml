@@ -1,0 +1,9 @@
+# Process the complete QUOKKA snapshot. Paths are relative to this file.
+# Copy the snapshot and the two lookup tables into inputs/ after cloning.
+dataset: ../inputs/snapshots/plt0655228
+despotic_table: ../inputs/tables/despotic/interpolated.npz
+cloudy_table: ../inputs/tables/cloudy/emission.npz
+query_chunk: 1000000
+chunk_workers: 2
+spectral_workers: 3  # Per chunk: at most 2 x 3 spectral threads.
+output_dir: ../output/plt0655228/processed
