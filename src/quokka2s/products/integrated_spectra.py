@@ -21,7 +21,6 @@ REGIME_KEYS = ("T_QUOKKA_lt_3000K", "T_QUOKKA_ge_3000K")
 SPECTRUM_LUMINOSITY_RTOL = 1e-10
 # Bound temporary (velocity channel, emitting cell) arrays per integration task.
 # This controls memory and task size, not the physical Gaussian calculation.
-# Measurements: docs/validation/spectral_cell_chunks_20261006.md.
 DEFAULT_SPECTRAL_CELL_CHUNK = 8192
 LINE_MASSES_AMU = {
     "cii": 12.01, "halpha": 1.00794, "hi21": 1.00794,

@@ -1,9 +1,7 @@
 # Molecular and atomic transition data
 
-`LAMDA/` contains the five data files already used by this checkout:
+`LAMDA/` contains five transition-data files:
 `c+.dat`, `catom.dat`, `co.dat`, `hco+.dat`, and `oatom.dat`.
-They were moved here from the former repository-root `LAMDA/` directory
-without changing their contents.
 
 Each file lists energy levels, radiative transitions and collision partners
 in the LAMDA format. Transition and collision references are recorded in the

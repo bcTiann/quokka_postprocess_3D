@@ -121,8 +121,3 @@ attenuated total Halpha/HI/CII/CO and hot CIII/CIV profiles. Its gas
 histogram bin centres are connected without additional smoothing. CO's WIM/HIM
 curves are faint. Display limits of ±50 km/s do not change saved products or
 moment calculations.
-
-The [archive index](../archive/README.md) preserves the previous
-manifest-based runner, validation records, depth-axis experiments, and old
-no-dust/300-channel instructions. Those documents describe their original
-outputs; they are not the current run instructions.

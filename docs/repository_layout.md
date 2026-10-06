@@ -14,17 +14,11 @@ tools and additional paper figures have their own commands.
 | `tools/despotic/` | Install required GOW corrections, measure table axes, check coverage | Yes |
 | `tools/figures/` | Additional slice, phase, gas-projection, dust and radiation figures | Yes |
 | `tests/` | Current calculation and rendering tests; a small frozen numerical fixture | Yes |
-| `docs/` | Current instructions, physics, code walkthrough, validation records | Yes |
+| `docs/` | Usage instructions, physical methods and code walkthrough | Yes |
 | `vendor/` | Pinned external source, dust table, molecular data and their notes | Yes |
 | `inputs/` | QUOKKA snapshots and final lookup tables | No; transfer separately |
-| `output/` | Processed products, figures, manuscripts and run evidence | No |
+| `output/` | Processed numerical products and figures | No |
 | `runtime/` | Cloudy build parameters, `.inc` exports, raw outputs and logs | No |
-| `archive/code/`, `archive/documents/` | Compressed historical source and notes | Yes |
-| `archive/local/` | Old large caches, experiments, results and transfer files | No |
-
-There is no active `scripts/`, `notebook/`, `documentation/`, `data/`, or
-intermediate-cache directory at the repository root. Archived Python files are
-inside compressed files, outside the import path.
 
 ## Start reading the current pipeline
 
@@ -56,10 +50,6 @@ current scientific rules.
 | `products/` | `line_luminosity_images.py`, `integrated_spectra.py`, `line_velocity_moments.py`, `gas_phase_velocity.py`: numerical accumulation |
 | `figures/` | `emission_results.py`, `gas_phase_spectra.py`, `line_labels.py` and the additional figure modules: rendering |
 
-The former `io.py`, `models.py`, `solver.py`, `builder.py`, `plotting.py` and
-`products/accumulation.py` names were replaced by the specific names above.
-Callers use the new names directly; old-name wrappers were not added.
-
 ## Data and results
 
 ```text
@@ -80,29 +70,6 @@ output/plt0655228/
   figures_titled/
 ```
 
-The shorter Cloudy filename is the existing table with unchanged bytes, not
-a rebuilt table. The current manuscript directories remain in `output/` so
-their open source files and figure paths continue to work.
-
-Processing writes a new directory per run. Plotting may redraw from it many
-times. Raw Cloudy calculation files belong in `runtime/`; neither process nor
-plot searches historical results or caches in `archive/`.
-
-## Cleanup and verification plan
-
-The 2026-10-06 cleanup follows these steps:
-
-1. Freeze the dirty working tree, completed numerical products and figures.
-2. Audit actual source imports, tool callers, tests and current manuscript
-   figure tools; retain code with a current job.
-3. Move active files and update all callers/configurations/instructions.
-4. Pack obsolete Saha/CII, CIE, old temperature masks, fixed-axis migration,
-   old single-line table and plotting experiments into recoverable archives.
-5. Compare real cells at both periodic x boundaries and the middle of the box.
-6. Run the current test suite and the complete process/plot commands; compare
-   every saved numerical field and rendered figure with the frozen baseline.
-
-The [archive index](../archive/README.md) records what was retired and where
-old local data went. The [completed validation record](validation/repository_reorganization_validation.md)
-reports exact numerical and image comparisons, including the separately excluded
-pre-existing checkpoint-interruption test.
+Processing writes a new directory per run. Plotting may redraw from the saved
+products many times. Raw Cloudy calculation files belong in `runtime/`;
+process and plot read only the paths specified in their configuration files.

@@ -25,11 +25,6 @@ The package has five purpose-specific folders:
 | `products/` | Numerical image, spectrum, gas-phase, and projection accumulation |
 | `figures/` | Draw figures from already calculated numerical arrays |
 
-The former Task/Context registry, intermediate-cache manager, yt field
-registration layer, and their historical callers are archived outside the
-package. Useful calculations were extracted as ordinary functions; there
-are no compatibility wrappers. See the [archive inventory](../archive/README.md).
-
 ## 1. Follow the seven stages in `main()`
 
 | Stage | Function | What it produces |

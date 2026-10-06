@@ -14,8 +14,12 @@
 /inputs/
 /output/
 /runtime/
-/archive/local/
+/archive/
 /yt-env/
+
+# Personal audit and experiment records are not public documentation.
+/docs/validation/
+/.venv/
 
 # Numerical/figure files generated outside the standard output directories.
 *.npy
