@@ -1,68 +1,32 @@
-# --- Python & Build ---
+# Generated Python files and local editor settings.
 **/__pycache__/
-*.pyc
-*.pyo
-*.pyd
+*.py[cod]
 *.egg-info/
-dist/
-build/
+/build/
+/dist/
 .ipynb_checkpoints/
+.DS_Store
+.vscode/
+.claude/
 
-
-# --- Simulation & Data (Token Saving) ---
-# Canonical local inputs; copy them separately after cloning on another machine.
+# Large local inputs, generated products, and table-building workspaces.
+# Transfer these separately from the source repository.
 /inputs/
-# 截屏3中那個巨大的目錄
-TablePlots/        
-TablePlots*/      
-# 測試數據與物理數據庫
-examples/          
-!vendor/cloudy_cooling_tools/examples/
-!vendor/cloudy_cooling_tools/examples/grackle/
-!vendor/cloudy_cooling_tools/examples/grackle/*.par
-!vendor/cloudy_cooling_tools/examples/grackle/*.par.in
-LAMDA/             
-plt*/
-output*/
-output_tables_*/
+/output/
+/runtime/
+/archive/local/
+/yt-env/
+
+# Numerical/figure files generated outside the standard output directories.
 *.npy
 *.npz
-*.dat
-*.csv
-
-# --- Visualization ---
 *.png
 *.pdf
 *.svg
-plots/
-plots*/
-
-# --- Environment & Tools ---
-yt-env/
-.vscode/
-.claude/
-.DS_Store
-
-
+*.csv
+*.dat
 *.ipynb
 
-# --- Runtime logs ---
-logs/
-
-# --- Local notes (not published to GitHub) ---
-docs/
-
-# --- Local transfer/sync workspace ---
-/to-baochen/
-
-# Local Cloudy checkouts and generated runs.  The small reproducibility
-# snapshot that belongs in Git lives under vendor/cloudy_cooling_tools/.
-/work/
-
-# Generated Cloudy/CHIANTI lookup tables and failure manifests.  These are
-# rebuilt by the checked-in scripts and are not source files.
-/data/
-
-# Portable Cloudy reproduction workspace.  It contains rendered parameter
-# files, the generated incident SED, raw CIAOLoop maps, and logs.
-/runtime/
+# Small scientific fixtures and pinned molecular data belong with the code.
+!tests/data/velocity_kernel_reference.npz
+!vendor/molecular_data/LAMDA/*.dat

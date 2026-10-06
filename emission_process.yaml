@@ -1,6 +1,0 @@
-# Process the complete QUOKKA snapshot. Paths are relative to this file.
-# Copy the snapshot and the two lookup tables into inputs/ after cloning.
-dataset: inputs/snapshots/plt0655228
-despotic_table: inputs/tables/despotic/interpolated.npz
-cloudy_table: inputs/tables/cloudy/cloudy_hm2012_attgrid_ism_nh21_cmb_cr_defaultabund_eightline_jeans_7x10x21.npz
-output_dir: output/plt0655228/processed

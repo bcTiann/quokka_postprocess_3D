@@ -1,0 +1,53 @@
+"""Plot saved numerical products; no snapshot reading or emission calculation."""
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+
+from quokka2s.run_settings import load_plot_config
+from quokka2s.figures.emission_results import draw_emission_products, load_plot_products
+
+
+def main(argv=None) -> None:
+    """Plot saved products using --config PATH.
+
+    argv is a sequence of command arguments, or None for sys.argv[1:].
+    The YAML supplies the product directory and one or two figure directories."""
+    parser = argparse.ArgumentParser(
+        prog='quokka2s-plot',
+        description=__doc__,
+    )
+    parser.add_argument(
+        '--config',
+        required=True,
+        type=Path,
+        help='YAML file containing the saved-products and figure paths',
+    )
+    config_path = parser.parse_args(argv).config
+    try:
+        config = load_plot_config(config_path)
+    except (ValueError, OSError) as exc:
+        parser.error(str(exc))
+    products = load_plot_products(config.products)
+    # raw_luminosity selects erg/s/(km/s) instead of dividing by projected area.
+    # It does not select intrinsic versus dust-attenuated emission.
+    draw_emission_products(
+        products=products,
+        output_dir=config.output_dir,
+        per_projected_area=not config.raw_luminosity,
+        allow_partial=config.allow_partial,
+        image_downsample_factor=config.image_downsample_factor,
+    )
+    if config.titled_output_dir is not None:
+        draw_emission_products(
+            products=products,
+            output_dir=config.titled_output_dir,
+            per_projected_area=not config.raw_luminosity,
+            allow_partial=config.allow_partial,
+            titled=True,
+            image_downsample_factor=config.image_downsample_factor,
+        )
+
+
+if __name__ == "__main__":
+    main()

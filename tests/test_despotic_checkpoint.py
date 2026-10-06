@@ -12,16 +12,16 @@ import numpy as np
 import tempfile
 import unittest
 
-from quokka2s.tables import builder
-from quokka2s.tables.checkpoint import PointCheckpoints
-from quokka2s.tables.io import save_table
-from quokka2s.tables.models import AttemptRecord, ExplicitGrid, LineLumResult
+from quokka2s.despotic import table_builder
+from quokka2s.despotic.checkpoint import PointCheckpoints
+from quokka2s.despotic.table_files import save_table
+from quokka2s.despotic.table_data import AttemptRecord, ExplicitGrid, LineLumResult
 
 
 GRIDS = (ExplicitGrid((1.0, 2.0)), ExplicitGrid((10.0, 20.0)), ExplicitGrid((0.1,)))
 METADATA = {"composition": {"xHe": 0.09296}, "solver": "mock-v1"}
 CONTEXT = {"snapshot_domain": {"dataset": "test-snapshot"}}
-SPECS = (builder.SpeciesSpec("CO", True), builder.SpeciesSpec("H2", False))
+SPECS = (table_builder.SpeciesSpec("CO", True), table_builder.SpeciesSpec("H2", False))
 
 
 def _point(**kwargs):
@@ -44,10 +44,10 @@ def _point(**kwargs):
 
 def _build(directory=None, *, solver=_point, grids=GRIDS, context=CONTEXT,
            metadata=METADATA, source="mock-source-v1", workers=1):
-    with (patch.object(builder, "validated_solver_metadata", return_value=metadata),
-          patch.object(builder, "source_metadata", return_value={"mock": source}),
-          patch.object(builder, "solve_gow_lvg_point", new=solver)):
-        return builder.build_gow_lvg_table(
+    with (patch.object(table_builder, "validated_solver_metadata", return_value=metadata),
+          patch.object(table_builder, "source_metadata", return_value={"mock": source}),
+          patch.object(table_builder, "solve_gow_lvg_point", new=solver)):
+        return table_builder.build_gow_lvg_table(
             *grids, species_specs=SPECS, workers=workers, show_progress=False,
             checkpoint_dir=directory, checkpoint_context=context,
         )
@@ -226,7 +226,7 @@ class CheckpointTests(unittest.TestCase):
         grids = (ExplicitGrid((1.0,)), ExplicitGrid(tuple(range(10, 30))),
                  ExplicitGrid((0.1,)))
         # Interrupt result consumption while other points remain in flight.
-        with patch.object(builder, "tqdm") as progress:
+        with patch.object(table_builder, "tqdm") as progress:
             progress.return_value.__enter__.return_value.update.side_effect = [None, RuntimeError("interrupted")]
             with self.assertWarns(UserWarning):
                 with self.assertRaisesRegex(RuntimeError, "interrupted"):

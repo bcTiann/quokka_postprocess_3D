@@ -3,28 +3,29 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import Mock, patch
 
 import numpy as np
 from scipy.interpolate import RegularGridInterpolator
 
-from quokka2s.cloudy_sixline_lookup import (
-    CloudyFailureTouchError,
-    CloudySixLineLookup,
-    DEPTH_AXIS_ORDER,
-    EXPECTED_AXIS_ORDER,
-    TOUCH_EPS,
-)
+from quokka2s.cloudy.lookup import CloudyFailureTouchError, CloudyLookup, EXPECTED_AXIS_ORDER, TOUCH_EPS
 
 
-def legacy_corner_sample(lookup, temperature, density, column, *, depth=None):
+def legacy_corner_sample(lookup, temperature, density, column):
     """Frozen value/support arithmetic from the sampler before the RGI change.
 
-    Query validation retains its existing four-value interface. The numerical
+    Query preparation uses the named coordinate result. The numerical
     reference deliberately does not invoke either of the SciPy interpolators.
     """
-    original_shape, below, above, brackets = lookup._prepare_query(
-        temperature, density, column, depth
+    prepared = lookup.prepare_interpolation_coordinates(
+        temperature_K=temperature,
+        hydrogen_density_cm3=density,
+        shielding_NH_cm2=column,
     )
+    original_shape = prepared.shape
+    below = prepared.below_column
+    above = prepared.above_column
+    brackets = prepared.brackets
     shape = (len(lookup.line_keys), below.size)
     linear_sum = np.zeros(shape)
     log_sum = np.zeros(shape)
@@ -40,8 +41,8 @@ def legacy_corner_sample(lookup, temperature, density, column, *, depth=None):
             log_sum[:] += np.where(
                 np.isfinite(local_log), local_log, 0.0
             ) * local_weight
-            zero_support[:] |= lookup.zero_mask[index] & (local_weight > TOUCH_EPS)
-            failure_weight[:] += lookup.failure_mask[index] * local_weight
+            zero_support[:] |= lookup.zero_emission_table_nodes[index] & (local_weight > TOUCH_EPS)
+            failure_weight[:] += lookup.failed_table_nodes[index] * local_weight
             return
         lower, upper, fraction = brackets[axis_number]
         visit(axis_number + 1, indices + [lower], weight * (1.0 - fraction))
@@ -80,7 +81,7 @@ class CloudyRGIEquivalenceTests(unittest.TestCase):
         valid = ~failure & ~zero
         linear_values[valid] = np.power(10.0, log_values[valid])
         payload = dict(
-            axis_order=np.array(DEPTH_AXIS_ORDER if len(axes) == 4 else EXPECTED_AXIS_ORDER),
+            axis_order=np.array(EXPECTED_AXIS_ORDER),
             line_keys=np.array([f"line{i}" for i in range(log_values.shape[0])]),
             log_NH_attenuation=axes[0],
             log_nH=axes[1],
@@ -90,16 +91,18 @@ class CloudyRGIEquivalenceTests(unittest.TestCase):
             failure_mask=failure,
             zero_mask=zero,
         )
-        if len(axes) == 4:
-            payload["log_L_model_pc"] = axes[3]
         np.savez_compressed(self.path, **payload)
-        return CloudySixLineLookup(self.path)
+        return CloudyLookup(self.path)
 
-    def assert_matches_legacy(self, lookup, temperature, density, column, *, depth=None):
+    def assert_matches_legacy(self, lookup, temperature, density, column):
         expected, below, above, zero_support = legacy_corner_sample(
-            lookup, temperature, density, column, depth=depth
+            lookup, temperature, density, column
         )
-        actual = lookup.sample(temperature, density, column, model_depth_pc=depth)
+        actual = lookup.sample(
+            temperature_K=temperature,
+            hydrogen_density_cm3=density,
+            shielding_NH_cm2=column,
+        )
         self.assertEqual(actual.emissivity_per_nH2.shape, expected.shape)
         # The same multilinear sum may differ only by floating-point rounding.
         np.testing.assert_allclose(
@@ -109,70 +112,61 @@ class CloudyRGIEquivalenceTests(unittest.TestCase):
         np.testing.assert_array_equal(actual.attenuation_column_above_table, above)
         return actual, zero_support
 
-    def test_random_irregular_three_and_four_dimensional_tables(self):
+    def test_random_irregular_three_dimensional_tables(self):
         rng = np.random.default_rng(23491)
-        for dimension in (3, 4):
-            with self.subTest(dimension=dimension):
-                axes = [
-                    np.array((18.0, 18.35, 19.8, 21.0)),
-                    np.array((-4.0, -1.25, 0.1, 4.0)),
-                    np.array((2.0, 3.4771, 4.23, 7.0)),
-                ]
-                if dimension == 4:
-                    axes.append(np.array((-2.0, -0.4, 1.1, 2.0)))
-                shape = (3, *(axis.size for axis in axes))
-                logs = rng.uniform(-55.0, -18.0, size=shape)
-                zeros = [
-                    (line, *index)
-                    for line in (1, 2)
-                    for index in np.ndindex(shape[1:])
-                    if rng.random() < 0.15
-                ]
-                lookup = self.write_table(axes, logs, zeros=zeros)
-                self.assertIsInstance(lookup._linear_interpolator, RegularGridInterpolator)
-                self.assertIsInstance(lookup._log_interpolator, RegularGridInterpolator)
-                cache_ids = (id(lookup._linear_interpolator), id(lookup._log_interpolator))
-                coordinates = [rng.uniform(axis[0], axis[-1], size=701) for axis in axes]
-                coordinates[0][:2] = (axes[0][0] - 1, axes[0][-1] + 1)
-                actual, zero_support = self.assert_matches_legacy(
-                    lookup, 10.0**coordinates[2], 10.0**coordinates[1],
-                    10.0**coordinates[0],
-                    depth=None if dimension == 3 else 10.0**coordinates[3],
-                )
-                self.assertFalse(zero_support[0].any())
-                self.assertTrue(zero_support[1:].any())
-                self.assertTrue((~zero_support[1:]).any())
-                self.assertTrue(np.isfinite(actual.emissivity_per_nH2).all())
-                self.assertEqual(
-                    cache_ids, (id(lookup._linear_interpolator), id(lookup._log_interpolator))
-                )
-                # Every outer and internal node; mixed zeros also exercise the
-                # exact-zero weights assigned to the other corners.
-                nodes = np.meshgrid(*axes, indexing="ij")
-                self.assert_matches_legacy(
-                    lookup, 10.0**nodes[2], 10.0**nodes[1], 10.0**nodes[0],
-                    depth=None if dimension == 3 else 10.0**nodes[3],
-                )
+        axes = [
+            np.array((18.0, 18.35, 19.8, 21.0)),
+            np.array((-4.0, -1.25, 0.1, 4.0)),
+            np.array((2.0, 3.4771, 4.23, 7.0)),
+        ]
+        shape = (3, *(axis.size for axis in axes))
+        logs = rng.uniform(-55.0, -18.0, size=shape)
+        zeros = [
+            (line, *index)
+            for line in (1, 2)
+            for index in np.ndindex(shape[1:])
+            if rng.random() < 0.15
+        ]
+        lookup = self.write_table(axes, logs, zeros=zeros)
+        self.assertIsInstance(lookup._linear_interpolator, RegularGridInterpolator)
+        self.assertIsInstance(lookup._log_interpolator, RegularGridInterpolator)
+        cache_ids = (id(lookup._linear_interpolator), id(lookup._log_interpolator))
+        coordinates = [rng.uniform(axis[0], axis[-1], size=701) for axis in axes]
+        coordinates[0][:2] = (axes[0][0] - 1, axes[0][-1] + 1)
+        actual, zero_support = self.assert_matches_legacy(
+            lookup, 10.0**coordinates[2], 10.0**coordinates[1],
+            10.0**coordinates[0],
+        )
+        self.assertFalse(zero_support[0].any())
+        self.assertTrue(zero_support[1:].any())
+        self.assertTrue((~zero_support[1:]).any())
+        self.assertTrue(np.isfinite(actual.emissivity_per_nH2).all())
+        self.assertEqual(
+            cache_ids, (id(lookup._linear_interpolator), id(lookup._log_interpolator))
+        )
+        # Every outer and internal node; mixed zeros also exercise the
+        # exact-zero weights assigned to the other corners.
+        nodes = np.meshgrid(*axes, indexing="ij")
+        self.assert_matches_legacy(
+            lookup, 10.0**nodes[2], 10.0**nodes[1], 10.0**nodes[0],
+        )
 
     def test_scalar_broadcast_and_empty_query_shapes(self):
-        for dimension in (3, 4):
-            with self.subTest(dimension=dimension):
-                axes = [np.array((0.0, 1.0, 2.0)) for _ in range(dimension)]
-                logs = np.arange(2 * 3**dimension).reshape((2,) + (3,) * dimension) / 7 - 30
-                lookup = self.write_table(axes, logs)
-                depth = None if dimension == 3 else 10.0
-                scalar, _ = self.assert_matches_legacy(lookup, 10.0, 10.0, 10.0, depth=depth)
-                self.assertEqual(scalar.emissivity_per_nH2.shape, (2,))
-                broadcast, _ = self.assert_matches_legacy(
-                    lookup, np.array((1.0, 10.0, 100.0))[None, :],
-                    np.array((2.0, 30.0))[:, None], 10.0, depth=depth,
-                )
-                self.assertEqual(broadcast.emissivity_per_nH2.shape, (2, 2, 3))
-                empty, _ = self.assert_matches_legacy(
-                    lookup, np.empty((2, 0)), 10.0, 10.0, depth=depth,
-                )
-                self.assertEqual(empty.emissivity_per_nH2.shape, (2, 2, 0))
-                self.assertEqual(empty.attenuation_column_below_table.shape, (2, 0))
+        axes = [np.array((0.0, 1.0, 2.0)) for _ in range(3)]
+        logs = np.arange(2 * 3**3).reshape((2,) + (3,) * 3) / 7 - 30
+        lookup = self.write_table(axes, logs)
+        scalar, _ = self.assert_matches_legacy(lookup, 10.0, 10.0, 10.0)
+        self.assertEqual(scalar.emissivity_per_nH2.shape, (2,))
+        broadcast, _ = self.assert_matches_legacy(
+            lookup, np.array((1.0, 10.0, 100.0))[None, :],
+            np.array((2.0, 30.0))[:, None], 10.0,
+        )
+        self.assertEqual(broadcast.emissivity_per_nH2.shape, (2, 2, 3))
+        empty, _ = self.assert_matches_legacy(
+            lookup, np.empty((2, 0)), 10.0, 10.0,
+        )
+        self.assertEqual(empty.emissivity_per_nH2.shape, (2, 2, 0))
+        self.assertEqual(empty.attenuation_column_below_table.shape, (2, 0))
 
     def test_zero_threshold_is_per_corner_not_sum_and_is_per_line(self):
         axes = [np.array((0.0, 1.0)) for _ in range(3)]
@@ -194,6 +188,85 @@ class CloudyRGIEquivalenceTests(unittest.TestCase):
                     self.assertGreater(actual.emissivity_per_nH2[0], 4e-21)
                 else:
                     self.assertLess(actual.emissivity_per_nH2[0], 2e-22)
+
+    def test_uniform_support_skips_the_unused_interpolator(self):
+        axes = [np.array((0.0, 1.0)) for _ in range(3)]
+        logs = np.arange(2 ** (3 + 1)).reshape((2,) * (3 + 1)) / 7 - 30
+        for all_zero in (False, True):
+            with self.subTest(all_zero=all_zero):
+                zeros = tuple(np.ndindex(logs.shape)) if all_zero else ()
+                lookup = self.write_table(axes, logs, zeros=zeros)
+                unused_name = "_log_interpolator" if all_zero else "_linear_interpolator"
+                used_name = "_linear_interpolator" if all_zero else "_log_interpolator"
+                unused = Mock(side_effect=AssertionError("unused RGI was evaluated"))
+                used = Mock(wraps=getattr(lookup, used_name))
+                with patch.object(lookup, unused_name, unused), patch.object(
+                    lookup, used_name, used
+                ):
+                    actual, _ = self.assert_matches_legacy(
+                        lookup, 10.0**np.array((0.2, 0.7)), 10.0**0.3, 10.0**0.4,
+                    )
+                unused.assert_not_called()
+                used.assert_called_once()
+                self.assertEqual(used.call_args.args[0].shape, (2, 3))
+                if all_zero:
+                    np.testing.assert_array_equal(actual.emissivity_per_nH2, 0.0)
+
+    def test_mixed_support_evaluates_only_needed_points_and_selects_per_line(self):
+        axes = [np.array((0.0, 1.0, 2.0)) for _ in range(3)]
+        logs = np.arange(2 * 3**3).reshape((2,) + (3,) * 3) / 11 - 30
+        # The three column planes are positive for both lines, zero
+        # for line 0 only, and zero for both lines, respectively.
+        zeros = [index for index in np.ndindex(logs.shape)
+                 if index[1] == 2 or (index[0] == 0 and index[1] == 1)]
+        lookup = self.write_table(axes, logs, zeros=zeros)
+        temperature, density, column = 10.0**0.3, 10.0**0.7, np.array((1.0, 10.0, 100.0))
+        prepared = lookup.prepare_interpolation_coordinates(
+            temperature, density, column
+        )
+        points = prepared.points
+        expected_support = np.array(((False, True, True), (False, False, True)))
+        # Freeze the eager-RGI result before installing the call spies.
+        expected = np.where(
+            expected_support, lookup._linear_interpolator(points).T,
+            np.power(10.0, lookup._log_interpolator(points).T),
+        )
+        with patch.object(
+            lookup, "_linear_interpolator", wraps=lookup._linear_interpolator
+        ) as linear, patch.object(
+            lookup, "_log_interpolator", wraps=lookup._log_interpolator
+        ) as logarithmic:
+            actual, support = self.assert_matches_legacy(
+                lookup, temperature, density, column
+            )
+        np.testing.assert_array_equal(support, expected_support)
+        np.testing.assert_array_equal(actual.emissivity_per_nH2, expected)
+        linear.assert_called_once()
+        logarithmic.assert_called_once()
+        np.testing.assert_array_equal(linear.call_args.args[0], points[[1, 2]])
+        np.testing.assert_array_equal(logarithmic.call_args.args[0], points[[0, 1]])
+
+    def test_empty_queries_and_failed_support_skip_both_interpolators(self):
+        axes = [np.array((0.0, 1.0)) for _ in range(3)]
+        logs = np.full((2,) * (3 + 1), -24.0)
+        for failed in (False, True):
+            with self.subTest(failed=failed):
+                failures = ((0,) * (3 + 1),) if failed else ()
+                lookup = self.write_table(axes, logs, failures=failures)
+                linear = Mock(side_effect=AssertionError("linear RGI was evaluated"))
+                logarithmic = Mock(side_effect=AssertionError("log RGI was evaluated"))
+                with patch.object(lookup, "_linear_interpolator", linear), patch.object(
+                    lookup, "_log_interpolator", logarithmic
+                ):
+                    if failed:
+                        with self.assertRaises(CloudyFailureTouchError):
+                            lookup.sample(10.0**0.5, 10.0**0.5, 10.0**0.5)
+                    else:
+                        self.assert_matches_legacy(
+                            lookup, np.empty((2, 0)), 10.0**0.5, 10.0**0.5
+                        )
+                linear.assert_not_called()
+                logarithmic.assert_not_called()
 
     def test_failure_threshold_uses_sum_and_zero_weight_failures_do_not_propagate(self):
         axes = [np.array((0.0, 1.0)) for _ in range(3)]

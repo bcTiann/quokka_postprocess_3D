@@ -1,18 +1,21 @@
 from dataclasses import replace
+from contextlib import redirect_stdout
+from io import StringIO
 import importlib.util
 import json
 from pathlib import Path
 import tempfile
-from types import SimpleNamespace
 import unittest
 
 import numpy as np
 
-from quokka2s.tables.lookup import TableLookup
-from quokka2s.tables.models import DespoticTable
+from quokka2s.despotic.lookup import DespoticLookup
+from quokka2s.despotic.table_data import DespoticTable
+from quokka2s.constants import HYDROGEN_MASS_G
+from quokka2s.snapshot_reader import SlabArrays
 
 
-SCRIPT = Path(__file__).resolve().parents[1] / "scripts/check_despotic_snapshot_coverage.py"
+SCRIPT = Path(__file__).resolve().parents[1] / "tools/despotic/check_snapshot_coverage.py"
 SPEC = importlib.util.spec_from_file_location("snapshot_coverage_diagnostic", SCRIPT)
 coverage = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(coverage)
@@ -29,12 +32,11 @@ def make_table(size=2):
 
 
 def clip_inputs(lookup, *values):
-    return tuple(np.clip(value, axis.min(), axis.max()) for value, axis in zip(values, (
-        lookup.table.nH_values, lookup.table.col_density_values, lookup.table.dVdr_values)))
+    return lookup.clip_coordinates(*values)
 
 
 def classify(table, points):
-    return coverage.classify_queries(TableLookup(table), *np.asarray(points).T,
+    return coverage.classify_queries(DespoticLookup(table), *np.asarray(points).T,
                                      clip_inputs=clip_inputs)
 
 
@@ -69,7 +71,7 @@ class SnapshotCoverageTests(unittest.TestCase):
             return clip_inputs(lookup, *values)
         nH = np.array([0., -1., np.nan, np.inf, .1, 100., 2.])
         original = nH.copy()
-        flags = coverage.classify_queries(TableLookup(table), nH, 2., 2.,
+        flags = coverage.classify_queries(DespoticLookup(table), nH, 2., 2.,
                                           clip_inputs=recording_clip)
         np.testing.assert_array_equal(flags["invalid_input"], [True] * 4 + [False] * 3)
         np.testing.assert_array_equal(flags["raw_below_nH"], [False] * 4 + [True, False, False])
@@ -127,17 +129,57 @@ class SnapshotCoverageTests(unittest.TestCase):
         self.assertEqual(full.result(), chunked.result())
         self.assertIsNone(full.result()["T_QUOKKA_lt_3000_K"]["flags"]["valid_input"]["cell_fraction"])
 
-    def test_halo_scan_preserves_full_cube_gradient_and_covers_every_cell_once(self):
-        cube = np.arange(7 * 3 * 5, dtype=float).reshape(7, 3, 5) ** 2
-        expected = np.gradient(cube, axis=0)
+    def test_slab_windows_cover_every_cell_once(self):
+        # Neighbour reads now belong to Snapshot.read_slab(); this diagnostic
+        # receives only the non-overlapping x bounds it needs to scan.
         for slab_nx in (1, 2, 3, 20):
             counts = np.zeros(7, dtype=int)
-            pieces = []
-            for ix, end, lo, hi, core in coverage.slab_windows(7, slab_nx):
-                counts[ix:end] += 1
-                pieces.append(np.gradient(cube[lo:hi], axis=0)[core])
-            np.testing.assert_array_equal(np.concatenate(pieces), expected)
+            for x_start, x_stop in coverage.slab_windows(7, slab_nx):
+                counts[x_start:x_stop] += 1
             np.testing.assert_array_equal(counts, 1)
+
+    def test_snapshot_scan_batches_preserve_cell_selection_and_coverage_counts(self):
+        nH = np.array([1., 2., 20., 0., 3., 4., 5., 6., 7., 8., 9., 10.])
+        rho = nH * HYDROGEN_MASS_G / coverage.settings.X_H
+        TQ = np.array([100., 3000., 4000., np.nan] * 3)
+
+        class Snapshot:
+            shape = (3, 2, 2)
+            cell_count = 12
+
+            def read_slab(self, x_start, x_stop):
+                selection = slice(x_start * 4, x_stop * 4)
+                count = (x_stop - x_start) * 4
+                return SlabArrays(
+                    density_g_cm3=rho[selection],
+                    foreground_NH_cm2=np.ones(count),
+                    temperature_QUOKKA_K=TQ[selection],
+                    shielding_NH_cm2=np.full(count, 2.),
+                    velocity_gradient_s=np.full(count, 3.),
+                    velocity_z_kms=np.zeros(count),
+                    x_start=x_start,
+                    shape=(x_stop - x_start, 2, 2),
+                    cell_volume_cm3=4.,
+                )
+
+        lookup = DespoticLookup(make_table())
+        with redirect_stdout(StringIO()):
+            totals, scanned, extrema = coverage.scan_snapshot_coverage(
+                snapshot=Snapshot(),
+                lookup=lookup,
+                slab_nx=2,
+                query_chunk=3,
+            )
+        result = totals.result()
+        self.assertEqual(scanned, 12)
+        self.assertEqual(result["all_cells"]["cell_count"], 12)
+        self.assertEqual(result["T_QUOKKA_lt_3000_K"]["cell_count"], 3)
+        self.assertEqual(result["all_cells"]["flags"]["invalid_input"]["cell_count"], 1)
+        self.assertEqual(result["all_cells"]["flags"]["raw_above_nH"]["cell_count"], 1)
+        self.assertAlmostEqual(extrema["nH"]["minimum"], 1.)
+        self.assertAlmostEqual(extrema["nH"]["maximum"], 20.)
+        self.assertEqual(extrema["NH"], dict(minimum=2., maximum=2.))
+        self.assertEqual(extrema["dVdr"], dict(minimum=3., maximum=3.))
 
     def test_missing_failure_provenance_or_bad_axes_rejected(self):
         with self.assertRaisesRegex(ValueError, "failure_mask"):
@@ -151,22 +193,32 @@ class SnapshotCoverageTests(unittest.TestCase):
             with self.assertRaisesRegex(FileNotFoundError, "not complete or is missing"):
                 coverage.main(["--table", str(missing), "--output", str(Path(directory)/"report.json")])
 
-    def test_provenance_checks_dataset_shape_physics_and_table_endpoints(self):
+    def test_provenance_checks_physical_setup_and_table_endpoints_without_hash_dependency(self):
         table = make_table()
-        cfg = SimpleNamespace(X_H=.7, COLUMN_DENSITY_MEAN="harmonic", COLUMN_DENSITY_DIRECTIONS="z")
-        physics = SimpleNamespace(__file__=str(SCRIPT))
-        dataset = Path("/tmp/test_snapshot").resolve()
-        domain = dict(selection="all simulation cells", dataset=str(dataset), shape=[2, 2, 2],
-                      total_cells=8, X_H=.7, column_mean="harmonic", column_directions="z",
-                      physics_source_sha256=coverage._sha256(SCRIPT),
-                      axes={name: dict(minimum=1., maximum=10.) for name in coverage.AXIS_NAMES})
+        domain = dict(
+            selection="all simulation cells",
+            dataset="/old/machine/snapshot",
+            shape=[2, 2, 2],
+            total_cells=8,
+            X_H=coverage.settings.X_H,
+            column_mean="harmonic",
+            column_directions="z",
+            physics_source_sha256="old-source-hash-before-refactor",
+            axes={name: dict(minimum=1., maximum=10.) for name in coverage.AXIS_NAMES},
+        )
         table = replace(table, build_metadata={"snapshot_domain": domain})
-        self.assertEqual(coverage._validate_scan_provenance(table, dataset, (2, 2, 2), cfg, physics), domain)
+        # A source-code refactor or relocating the files does not alter physics.
+        self.assertEqual(coverage._validate_scan_provenance(table, (2, 2, 2)), domain)
         with self.assertRaisesRegex(ValueError, "shape"):
-            coverage._validate_scan_provenance(table, dataset, (2, 2, 3), cfg, physics)
+            coverage._validate_scan_provenance(table, (2, 2, 3))
+        original_XH = domain["X_H"]
+        domain["X_H"] = .5
+        with self.assertRaisesRegex(ValueError, "X_H"):
+            coverage._validate_scan_provenance(table, (2, 2, 2))
+        domain["X_H"] = original_XH
         domain["axes"]["NH"]["maximum"] = 11.
         with self.assertRaisesRegex(ValueError, "bounds differ"):
-            coverage._validate_scan_provenance(table, dataset, (2, 2, 2), cfg, physics)
+            coverage._validate_scan_provenance(table, (2, 2, 2))
 
 
 if __name__ == "__main__":

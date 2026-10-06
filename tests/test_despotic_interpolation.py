@@ -5,7 +5,7 @@ import unittest
 
 import numpy as np
 
-from quokka2s.tables.interpolate_failed import interpolate_table
+from quokka2s.despotic.interpolate_failed import interpolate_table
 
 
 class DespoticInterpolationTests(unittest.TestCase):

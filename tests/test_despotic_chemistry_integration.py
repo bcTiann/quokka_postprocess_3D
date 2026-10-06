@@ -12,7 +12,7 @@ import numpy as np
 
 
 _ROOT = Path(__file__).resolve().parents[1]
-_INSTALLER = _ROOT / "scripts" / "apply_despotic_chemistry_patch.py"
+_INSTALLER = _ROOT / "tools/despotic/install_checked_gow_integration.py"
 
 
 class CheckedGOWIntegrationTests(unittest.TestCase):

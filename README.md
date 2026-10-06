@@ -1,668 +1,262 @@
-# quokka2s — QUOKKA post-processing pipeline
+# quokka2s — QUOKKA emission post-processing
 
-Post-processing for [QUOKKA](https://github.com/quokka-astro/quokka) radiation-MHD
-snapshots: turns a simulation `plt*` output into **synthetic line emission and
-multi-phase ISM diagnostics**, so simulations can be compared against real
-observations. Line emissivities use a pre-built [DESPOTIC](https://despotic.readthedocs.io)
-chemistry/cooling table plus an HM2012 shielded Cloudy atomic-line table.
+`quokka2s` reads a QUOKKA simulation snapshot, uses prebuilt DESPOTIC and
+Cloudy tables to calculate line emission, and saves numerical products.
+A separate command draws figures from those products.
 
-### Current accepted emission workflow
-
-Install the package once in the Python environment on each machine with
-`python -m pip install -e .`. The `-e` means the checked-out source code is
-used directly. Copy the snapshot and tables into the ignored `inputs/`
-directory, then run:
-
-```bash
-python -m quokka2s process --config emission_process.yaml
+```text
+snapshot + tables → process → numerical files → plot → PNG/PDF
 ```
 
-The four process settings are: `dataset` (QUOKKA snapshot), `despotic_table`
-(the convex-hull-filled DESPOTIC table), `cloudy_table` (the eight-line Cloudy
-table), and `output_dir` (a new directory for numerical products). The raw
-DESPOTIC table is retained in `inputs/tables/despotic/raw.npz` for provenance;
-the emission run does not query it. Relative paths in YAML are resolved from
-the YAML file's directory. The default run processes all 32 eight-cell slabs;
-do not set `max_slabs` for the full snapshot.
+## Repository layout
 
-The processor checks table metadata and lookup availability while processing.
-Cells with unavailable DESPOTIC temperature or a contributing failed Cloudy
-line node are omitted consistently from every line product, and their count
-and mass fraction are written to `emission_report.json`. Invalid values are
-never treated as physical zero emission. The report also records table-file
-hashes and the snapshot Header hash. The pinned Draine dust table is in
-`vendor/draine`; processing performs no plotting.
-
-The numerical stage saves `images.npz` (intrinsic and dust-attenuated line
-luminosity images, shape `variant × line × 128 × 128`, erg/s), `spectra.npz`
-(intrinsic and dust-attenuated full-box spectra, shape
-`variant × line × temperature regime × 400 velocity channels`,
-erg/s/(km/s), plus one full-box line dispersion per variant), and
-`emission_report.json`. Each 128×128 image pixel sums its original 2×2
-sightlines; spectral calculations use every retained cell at native resolution.
-Copy this `processed` directory to the plotting machine. Edit
-`emission_plot.yaml` so `products` points to the copied directory and
-`output_dir` names the desired figure directory, then run:
-
-```bash
-python -m quokka2s plot --config emission_plot.yaml
+```text
+configs/       process and plot YAML settings
+src/quokka2s/  reusable calculations and the two main entry points
+tools/         table-building and additional manuscript-figure commands
+tests/         tests for the current workflow
+docs/          current method, code walkthrough, and validation records
+vendor/        pinned external source and physical data
+inputs/        snapshots and final lookup tables (local, outside Git)
+output/        processed products, figures, and manuscripts (local)
+runtime/       intermediate Cloudy build files and logs (local)
+archive/       inactive code/notes; old large local data in archive/local/
 ```
 
-The plot command reads only the saved numerical products. A diagnostic run can
-set `max_slabs: 1` in a separate process YAML file; its report marks it as
-partial. Plotting partial products requires `allow_partial: true` in the plot
-YAML, and figure filenames include `partial_diagnostic`. The
-current installation method is an editable checkout (`pip install -e .`),
-because the processor verifies source files and reads the pinned dust table
-from the repository.
+See the [directory guide](docs/repository_layout.md) for individual files and
+where historical material was moved. The [cleanup validation](docs/validation/repository_reorganization_validation.md)
+records complete numerical and figure comparisons.
 
-Canonical local data layout (the entire `inputs/` directory is ignored by Git):
+The current workflow makes LOS-z images, whole-box spectra, and gas-phase
+velocity distributions. It keeps all native simulation cells during processing.
+Images may be binned later for plotting.
+
+## Run with existing tables
+
+From the repository root, install once in the chosen Python environment:
+
+```bash
+python -m pip install -r requirements.txt
+python -m pip install -e .
+```
+
+Use Python 3.11 for this pinned environment. `requirements.txt` includes the exact
+yt source commit used to read QUOKKA
+snapshots. The editable install (`-e`) uses this checkout directly; keep the
+checkout because processing also reads the pinned dust-opacity file in
+`vendor/draine/`. DESPOTIC itself and a Cloudy executable are needed only to
+build tables, not to process an existing pair of tables.
+
+For running processing on Setonix and plotting on the laptop, follow the
+[Setonix guide](docs/setonix_process.md). The
+[batch script](tools/setonix/run_process.sbatch) runs the same process command
+with the existing tables; it does not build tables or draw figures.
+
+Copy the snapshot and tables separately from the code. They are not in Git:
 
 ```text
 inputs/
   snapshots/plt0655228/
   tables/despotic/raw.npz
   tables/despotic/interpolated.npz
-  tables/cloudy/cloudy_hm2012_attgrid_ism_nh21_cmb_cr_defaultabund_eightline_jeans_7x10x21.npz
-output/plt0655228/processed/   # numerical products from process
-output/plt0655228/figures/     # figures from plot
+  tables/cloudy/emission.npz
 ```
 
-Only the snapshot, interpolated DESPOTIC table, and Cloudy table are read by
-`process`; the raw DESPOTIC table is kept to show how the interpolated table
-was derived. Snapshot/table files must be copied separately to Setonix after
-cloning the code. Historical build logs and intermediate caches are not needed
-for an emission run.
+The raw DESPOTIC table preserves the solver results. `process` queries
+`interpolated.npz`, which fills unavailable nodes only inside the finite-data
+convex hull. The emission run reads only the interpolated DESPOTIC table.
 
-To rebuild the DESPOTIC table for this snapshot, use the following commands
-from the repository root. The DESPOTIC solve is the expensive step; completed
-node checkpoints can be resumed with the same command. The interpolation
-targets failed or otherwise unavailable solver nodes inside the finite-data
-convex hull and retains the raw table separately.
+1. Edit [emission_process.yaml](configs/emission_process.yaml).
+2. Run processing:
+
+   ```bash
+   python -m quokka2s.process_snapshot --config configs/emission_process.yaml
+   ```
+
+3. Set `products` in [emission_plot.yaml](configs/emission_plot.yaml) to the completed
+   process output directory. Run plotting:
+
+   ```bash
+   python -m quokka2s.plot_emission_results --config configs/emission_plot.yaml
+   ```
+
+The process YAML specifies these input and output paths:
+
+| Setting | Meaning |
+|---|---|
+| `dataset` | Complete QUOKKA snapshot directory |
+| `despotic_table` | Interpolated DESPOTIC table |
+| `cloudy_table` | Eight-line Cloudy table |
+| `output_dir` | New directory for the numerical products |
+
+Relative paths are resolved from the YAML file's directory. Processing refuses
+to overwrite an existing output directory; choose a new name for each run.
+An interrupted emission run starts again from the beginning in a new directory.
+Table-building checkpoints are a separate mechanism.
+
+Optional execution settings control memory and concurrency, not the physics:
+
+| Setting | Meaning | Supplied YAML |
+|---|---|---|
+| `slab_nx` | Number of x cells read per slab, retaining full y and z | 8, by default |
+| `query_chunk` | Maximum cells in one table-query batch | 1,000,000 |
+| `chunk_workers` | Concurrent query batches within the loaded slab | 2 |
+| `spectral_workers` | Spectral-integration threads per query batch | 3 |
+
+The worker counts multiply: this configuration permits up to 2 × 3 spectral
+threads. Reading slabs remains sequential. More workers do not necessarily
+make a complete run faster; select them using end-to-end timing and memory
+measurements. `max_slabs: 1` in a separate YAML makes a labelled partial
+run for debugging. Omit it for the full snapshot.
+
+## What processing saves
+
+For the current 256 × 256 × 2048 snapshot and ten transitions:
+
+| File | Main contents | Shape and units |
+|---|---|---|
+| `images.npz` | Intrinsic and dust-attenuated LOS-z luminosity images | `(2, 10, 256, 256)`, erg/s per pixel |
+| `spectra.npz` | Whole-box spectra, cold/hot contributions, full-profile and window line moments | Spectra `(2, 10, 2, 400)`, erg/s/(km/s); full and window σ `(2, 10)`, km/s |
+| `phase_velocity.npz` | Mass velocity histograms and moments for five gas phases and all gas | Histograms `(6, 400)`, g per channel |
+| `emission_report.json` | Input paths, snapshot grid, physical settings, cell counts, omitted mass, and luminosity checks | Human-readable run record |
+| `status.json` | Running, failed, partial, or completed status | Progress and elapsed time |
+
+The two dust states are intrinsic and attenuated; the two regimes are selected
+by `T_QUOKKA < 3000 K` and `T_QUOKKA >= 3000 K`. Spectra have 400 channels
+covering −200 to +200 km/s. `line_sigma_full_kms` includes each cell's complete
+thermal Gaussian, including emission outside those channels.
+`line_sigma_window_kms` uses the saved channels only. Both are saved with their
+centroids; figure legends use the full-profile sigma. Luminosity outside the
+window is recorded separately.
+
+Processing reads one x slab at a time, queries table batches within it, and
+adds their luminosities to the image and spectrum arrays. It discards the
+cell arrays after each slab. No full-snapshot emissivity cube is saved.
+
+Each line omits only cells with unavailable results required by that line;
+image and spectrum use the same selection for that line. The processor reports
+the missing count and mass separately for each line. Failed lookups
+are not interpreted as physical zero emission. Before saving, it checks
+cell accounting, luminosity sums, channel integrals and full-profile moments. The report
+records the DESPOTIC, Cloudy, and dust table paths under `input_tables`, the
+grid shape and cell widths under `snapshot_grid`, and the density/column
+settings under `physical_settings`. See the
+[physics reference](docs/emission_method.md).
+
+## Plot locally or on another machine
+
+Copy the completed numerical-product directory to the laptop. Plotting needs
+those NPZ files and the package; it does not reopen the snapshot or tables.
+
+| Plot setting | Meaning |
+|---|---|
+| `products` | Directory containing the three NPZ products |
+| `output_dir` | Figures without titles, for manuscript captions |
+| `titled_output_dir` | Optional second directory of titled figures |
+| `image_downsample_factor` | Optional pixel binning factor; default 1 |
+
+A factor of 2 sums each 2 × 2 group of image pixels into one displayed pixel.
+It does not average luminosities or change the saved native-resolution data.
+Intrinsic and attenuated images of one line share a colour range from
+`vmax/1e5` to `vmax`, measured after any display binning.
+
+The command draws individual line images, intrinsic/dust spectrum comparisons,
+and gas-phase/line-profile comparisons as PNG and PDF. The displayed velocity
+range is −50 to +50 km/s; all saved channels remain intact. H I 21 cm appears
+once because this dust prescription leaves it unchanged. Set
+`allow_partial: true` only when intentionally plotting diagnostic subsets.
+
+## Build tables
+
+Table building is separate from snapshot processing. Install the optional
+DESPOTIC dependency, apply the checked patches, measure the snapshot's table
+coordinates, then build and interpolate:
 
 ```bash
 python -m pip install -e ".[tables]"
-python scripts/apply_despotic_gow_patch.py
-python scripts/apply_despotic_chemistry_patch.py
-python scripts/measure_despotic_snapshot_domain.py
-python -m quokka2s.tables.build_table \
+python tools/despotic/patch_gow_composition.py
+python tools/despotic/install_checked_gow_integration.py
+python tools/despotic/measure_snapshot_domain.py
+python -m quokka2s.despotic.build_table \
   --snapshot-domain output/plt0655228/table_build/snapshot_domain.json \
   --checkpoint-dir output/plt0655228/table_build/checkpoints \
   --workers 1
-python -m quokka2s.tables.interpolate_failed
+python -m quokka2s.despotic.interpolate_failed
 ```
 
-Set `--workers` to the CPUs allocated to the build job. For Cloudy, use a
-separately installed Cloudy 17.02 executable. The builder writes its raw maps
-and logs under `runtime/cloudy_eightline/` and the final NPZ directly under
-`inputs/tables/cloudy/`:
+`--snapshot-domain` is required: all three axis endpoints come from the
+snapshot measurement. The current builder uses 35 × 35 × 53 logarithmic
+nodes. The builder writes `inputs/tables/despotic/raw.npz`; interpolation writes
+`inputs/tables/despotic/interpolated.npz`. A failed solver node remains marked
+in the original `failure_mask` even if interpolation supplies a value.
+`remaining_unavailable_*` masks describe availability after filling. Finite
+high-temperature solutions are retained; there is no `10^6 K` deletion rule.
+
+Use the same build command and checkpoint directory to resume completed
+DESPOTIC nodes after an interruption. Inputs, solver settings, and source identity must match. Existing checkpoints
+made before a source reorganization may be rejected; use their archived source
+for a historical build, or start a new checkpoint directory for the current code.
+Set `--workers` to the CPUs allocated to the build job.
+
+Cloudy requires a separately installed Cloudy 17.02 executable:
 
 ```bash
-python scripts/build_cloudy_sixline_tables.py \
+python tools/cloudy/build_cloudy_emission_table.py \
   --cloudy-exe /absolute/path/to/cloudy.exe --workers 1
 ```
 
-Both builders refuse to replace an existing final table unless `--force` is
-passed. `process` reads the resulting files through `emission_process.yaml`.
+This builder handles eight atomic lines.
+Runtime inputs/logs go to `runtime/cloudy_eightline/`; the final table is
+`inputs/tables/cloudy/emission.npz`. Both table builders require `--force` to replace
+existing final tables. The [physics reference](docs/emission_method.md)
+summarizes the table-query rules used during emission processing.
 
-### Other repository outputs
+## Read the code
 
-- **Synthetic line emission** — CO J=1–0 and J=2–1, [C II] 158 µm, Hα,
-  and H I 21 cm:
-  spatially integrated 1D spectra (intrinsic + instrument-convolved) and
-  phase/line-profile overlays for all three lines of sight.
-- **Multi-phase ISM diagnostics** — mass- and luminosity-weighted histograms over
-  the five ISM phases (CNM/UNM/WNM/WIM/HIM), N_H–ρ phase planes, and per-phase
-  velocity dispersions σ_x/σ_y/σ_z.
-- **Field slices** — temperature, density, column density, dV/dr, … as multi-panel
-  figures.
-
-### Repository layout
-
-The `quokka2s process`/`plot` workflow and its canonical `inputs/` layout are
-described above. The numbered sections below document older analysis commands
-and table experiments; their paths are historical and are not inputs to the
-current emission run.
-
-```
-quokka_postprocess_3D/            ← repo root
-├── pyproject.toml  requirements.txt
-├── README.md
-├── scripts/                       run_dataset_series.sh + standalone scripts
-└── src/
-    └── quokka2s/                  the package (import name: quokka2s)
-        ├── pipeline/
-        │   ├── prep/      config.py, physics_fields.py, …
-        │   ├── services/  spectrum_service.py
-        │   └── tasks/     run_pipeline.py  +  Build_*/Plot_* tasks   ← entry point
-        ├── tables/        DESPOTIC table builder + lookup
-        ├── utils/
-        └── analysis.py  data_handling.py  plotting.py
-```
-
----
-
-# Reproducing from scratch
-
-The whole setup — fresh conda environment to final figures. This procedure was
-tested end-to-end in a clean clone on 2026-06-30 with Python 3.11.15.
-
-## 0. What you need
-
-- **`conda`/`mamba`** and a **C compiler** (yt builds Cython extensions from source —
-  on macOS install the Xcode Command Line Tools, on Linux `gcc`).
-- **At least 18 GB free disk** for the 8 GB snapshot, roughly 6 GB of
-  full-resolution (`down=1`) field caches, figures, and task results.
-- From the author: the dataset directory (e.g. `plt0655228/`) and the prebuilt
-  table `output_tables_3D_GOW_LVG/despotic_table_co10_co21_clean.npz`.
-  **You do not rebuild the table** — place both inputs as shown in step 4.
-
-## 1. Create the environment
-
-```bash
-conda create -n test-env python=3.11
-conda activate test-env
-```
-
-## 2. Install dependencies + the package
-
-`requirements.txt` pins the known-good versions **and** installs yt from git. The
-QUOKKA frontend needed by these `plt*` files is taken from yt's `main` branch;
-the stable yt release tested during this project had only a partial reader:
-
-```bash
-git clone https://github.com/bcTiann/quokka_postprocess_3D.git
-cd quokka_postprocess_3D
-
-pip install -r requirements.txt      # yt-from-git + numpy/scipy/astropy/h5py/…
-pip install -e .                      # the quokka2s package itself
-```
-
-> `despotic` is **not** installed — it's only needed to *rebuild* tables. If you
-> ever want to, run `python -m pip install -e ".[tables]"`. The extra installs a
-> pinned commit of the official DESPOTIC 2.2 source because 2.2 is not published
-> on PyPI (and PyPI 2.1 predates the GOW chemistry network used here).
-> Then run `python scripts/apply_despotic_gow_patch.py` to refresh `mu`, `muH`,
-> and `qIon` whenever GOW writes a new chemical composition, followed by
-> `python scripts/apply_despotic_chemistry_patch.py` to check chemical integration
-> success and retry failed segments from their original state. Run both after
-> reinstalling DESPOTIC. Both scripts check the source version and are safe to
-> rerun; use `--check` to verify either patch without modifying the package.
-
-Verify the install:
-
-```bash
-python -c "import quokka2s, yt; print('yt', yt.__version__); print('quokka2s', quokka2s.__file__)"
-```
-
-### Current settings (2026-09-18)
-
-Jeans length uses fixed `mu=1` in both temperature regimes, the actual cell
-mass density, and the existing 100 pc cap. Temperature selection remains
-DESPOTIC below `T_QUOKKA=3000 K` and QUOKKA otherwise. The legacy simulation
-conversion from mass density to `nH` is unchanged; it does not specify either
-table's composition.
-
-Cloudy uses unscaled C17.02 `default.abn`, including He/H=0.1. DESPOTIC uses
-GOW defaults: He/H=0.1, C/H=1.6e-4, O/H=3.2e-4, Si/H=1.7e-6.
-DESPOTIC's chemical-state refresh and checked-integration fixes still apply;
-its thermodynamic mean molecular weight is not fixed to one.
-
-The previously generated XYZ-corrected tables and their coverage/derived
-products are historical and need rebuilding/revalidation for this setup.
-Readers reject that recorded composition by default. For historical inspection
-only, `load_table` and `CloudySixLineLookup` accept
-`allow_superseded_composition=True`; this does not relabel or update the data.
-Tables lacking composition provenance remain unknown. New build checkpoints
-and manifests use a distinct composition identifier and cannot resume the old
-XYZ-corrected builds. No table recomputation is triggered by changing the code.
-
-### Historical candidate: four-dimensional Cloudy tables
-
-The completed local candidate (2026-09-12) is 7 incident columns × 10 hydrogen
-densities × 21 temperatures × 10 model depths: 14,700 states, with eight lines
-per state. It uses the shared composition and Cloudy 17.02 default internal
-zoning. The earlier 37-depth build was stopped. The builder supports 10, 19,
-or 37 depths; the commands below now build the same grid with the current default abundances.
-
-Full-snapshot coverage found no unavailable support or physical-axis misses
-in any of the 133,738,699 hot cells. Independent validation retains 1,051
-unavailable table states (952 raw failures plus 99 local-convergence issues).
-Forty-eight cold diagnostic Cloudy queries touch unavailable support. The
-adopted cold branches use DESPOTIC/analytic emission, with cold CIII/CIV
-explicitly omitted, so these queries are not used. This coverage result does
-not establish interpolation accuracy or replace existing emission products.
-
-Clone the working branch with:
-
-```bash
-git clone --branch codex/cloudy-emission-backup https://github.com/bcTiann/quokka_postprocess_3D.git
-cd quokka_postprocess_3D
-python -m pip install -e .
-```
-
-Cloudy 17.02 (including its data directory) must be installed separately on
-the target machine; the macOS executable cannot be used on Setonix.
-Perl is also required. Generated SEDs, tables, and simulation snapshots are
-not tracked in Git. To regenerate the incident fields and then build the
-candidate, use the following inside an allocated compute job, replacing
-the executable path and worker count with the actual allocation:
-
-```bash
-export CLOUDY_EXE=/absolute/path/to/cloudy/c17.02/source/cloudy.exe
-export CLOUDY_WORKERS=6
-python scripts/build_hm12_filtered_ism_sed.py \
-  --cloudy-exe "$CLOUDY_EXE" \
-  --output-dir runtime/cloudy_depth/HM12_ATTENUATION_ISM_NH21
-python scripts/build_cloudy_model_depth_tables.py \
-  --cloudy-exe "$CLOUDY_EXE" \
-  --sed-dir runtime/cloudy_depth/HM12_ATTENUATION_ISM_NH21 \
-  --output-dir output/cloudy_depth_10 \
-  --workers "$CLOUDY_WORKERS" --depth-points 10 --run
-```
-
-Use `--prepare-only` instead of `--run` to inspect the table inputs without
-launching the table build. Use a fresh output directory for a new run;
-interrupted directories are not a portable restart mechanism. Completion
-of the builder is not a convergence check. The separate
-`validate_cloudy_model_depth_maps.py`, `build_cloudy_model_depth_bundle.py`,
-and `check_cloudy_model_depth_coverage.py` scripts provide validation,
-packing, and snapshot coverage checks (see their `--help`). Coverage requires
-the separately transferred snapshot and accepted DESPOTIC checkpoint.
-
-The coverage checker also accepts `--evaluate-hot-emission`: it samples the
-independently checked four-dimensional table only for `T_QUOKKA >= 3000 K`
-and reports the intrinsic luminosity summed over those cells. This opt-in
-check exercises `sample_cloudy_hot_emission`, preserves failure exceptions,
-and does not silently replace unavailable cold emission with zero. The
-old production table and plotting entrypoints remain separate.
-
-`scripts/build_adopted_model_depth_products.py` is the new opt-in output
-entrypoint (see `--help`). It requires the checked Cloudy table, matching
-validation/coverage reports, accepted DESPOTIC checkpoint, and original
-full snapshot. It evaluates cold CII with DESPOTIC, cold Halpha/HI with the
-existing analytic expressions using DESPOTIC number densities, hot atomic
-lines with the four-dimensional Cloudy table, and both CO lines with
-DESPOTIC in both temperature regimes. Cold CIII/CIV is explicitly omitted
-by the confirmed manuscript prescription. Only the two recorded invalid
-DESPOTIC cells are excluded; other invalid output raises an error.
-
-Use `--emission-only` for full-cell emissivity checks and luminosity sums.
-Without it, the runner produces LOS-z spectra, defaulting to the previous
-±200 km/s range and 300 channels. `--spectral-workers` defaults to six;
-`--max-slabs` produces a clearly labelled diagnostic subset. Every run
-requires a new output directory. The spectrum report records luminosity
-outside the velocity window instead of redistributing it into the boundary
-channels. Cloudy local escape and DESPOTIC LVG treatments are retained;
-no foreground dust or intercell transfer is added by this output runner.
-
-### Eight-line Cloudy table workflow
-
-The portable Cloudy workflow is independent of the QUOKKA snapshot pipeline.
-It requires a separately compiled Cloudy 17.02 executable. From a fresh clone:
-
-```bash
-export CLOUDY_EXE=/path/to/cloudy/c17.02/source/cloudy.exe
-
-# Fast one-point validation first
-python scripts/build_cloudy_sixline_tables.py \
-  --cloudy-exe "$CLOUDY_EXE" --smoke-only
-
-# Full column-density and Jeans-length tables
-python scripts/build_cloudy_sixline_tables.py \
-  --cloudy-exe "$CLOUDY_EXE" --workers 11 --force
-```
-
-The command uses the tracked `vendor/cloudy_cooling_tools/CIAOLoop_lines` and
-generates the required CIAOLoop `.par` files directly from the fixed scientific
-configuration in the shared eight-line specification. Generated runtime files
-go to `runtime/cloudy_eightline/`; final NPZ tables go to
-`inputs/tables/cloudy/`. See
-[`CLOUDY_HM12_FILTERED_ISM_WORKFLOW.md`](CLOUDY_HM12_FILTERED_ISM_WORKFLOW.md)
-for the radiation field, physical settings, axes, failure policy, and exact
-artifact chain.
-
-## 3. Build the runtime Cloudy [C II] table
-
-The Cloudy 17.02 HM2012 runs are converted once into the compact runtime table.
-The 42 failed cells are filled linearly in
-`log10(T)–log10(epsilon_CII/n_H²)` while their original mask is retained:
-
-```bash
-PYTHONPATH=src python scripts/build_cloudy_cii_table.py
-```
-
-This writes `data/cloudy_cii_hm2012_z0_coarse.npz`. Override its runtime path
-with `CLOUDY_CII_TABLE=/absolute/path/to/table.npz` when needed.
-
-## 4. Put the snapshot and lookup tables in place
-
-Do this **before** running `MODE=compute`. The runner derives the repository root
-from its own location, so the standard local setup does not require editing
-`config.py` or setting absolute paths. Put the two non-Git inputs here:
+Start with the [step-by-step code guide](docs/code_walkthrough.md). The main files are:
 
 ```text
-quokka_postprocess_3D/
-├── plt0655228/                         # complete QUOKKA plotfile directory
-│   ├── metadata.yaml
-│   └── ...
-├── output_tables_3D_GOW_LVG/
-│   └── despotic_table_co10_co21_clean.npz  # precomputed 3D GOW/LVG lookup table
-├── data/
-│   └── cloudy_cii_hm2012_z0_coarse.npz      # HM2012 Cloudy [C II] lookup table
-├── scripts/
-└── src/
+src/quokka2s/
+  process_snapshot.py       runs the processing stages in order
+  plot_emission_results.py  runs plotting from saved products
+  run_settings.py           reads process/plot YAML settings
+  processing_inputs.py      opens the snapshot and emission tables
+  snapshot_reader.py        snapshot → slabs → cell batches
+  result_files.py            saves numerical products and reports
+  constants.py              physical constants in the chosen units
+  physics/                  derived fields, line emissivities, dust
+  cloudy/                   three-dimensional Cloudy lookup and cell queries
+  despotic/                 DESPOTIC building, interpolation and lookup
+  products/                 numerical images, spectra and gas statistics
+  figures/                  plotting functions
 ```
 
-Both input paths are ignored by Git and are not downloaded by `git clone`. Copy
-them from local storage, for example:
+Figure 1 and emission phase histograms are separate tools using the same
+snapshot reader and cell-emission functions:
 
 ```bash
-cd ~/quokka_postprocess_3D
-cp -a /path/to/plt0655228 ./
-mkdir -p output_tables_3D_GOW_LVG
-cp /path/to/despotic_table_co10_co21_clean.npz output_tables_3D_GOW_LVG/
+python tools/figures/build_table_input_slice.py --config configs/emission_process.yaml \
+  --output-dir output/plt0655228/table_input_slice --slice-index 216 --no-plot
+python tools/figures/build_emission_phase_histograms.py --config configs/emission_process.yaml \
+  --output-dir output/plt0655228/emission_phase_histograms --no-plot
 ```
 
-For a large snapshot, a symlink is also valid:
+Run either script again with the same `--output-dir` and `--plot-only` to draw
+its saved arrays. Gas projection maps use `tools/figures/build_gas_projection_maps.py`
+with the same config/output-dir/no-plot/plot-only pattern. These tools are
+independent of the old Task/Context and intermediate-cache framework, whose
+source is preserved in the [history archive](archive/README.md).
+
+
+Additional dust and radiation-field figures:
 
 ```bash
-ln -s /absolute/path/to/plt0655228 ./plt0655228
+python tools/figures/plot_dust_extinction.py
+python tools/figures/plot_radiation_components.py --components-only
+python tools/figures/plot_unattenuated_radiation.py
 ```
 
-To rebuild the canonical table, install the table extra, run the fixed GOW/LVG
-builder, then apply the conservative convex-hull cleaner. The production grid
-and physics are fixed; only output path, worker count, and overwrite permission
-are configurable:
-
-New builds use the native GOW He/C/O/Si abundances recorded in
-[`abundances.py`](src/quokka2s/tables/abundances.py), independently of Cloudy.
-They record composition and
-solver provenance in the NPZ file and require both DESPOTIC patches above. Existing
-tables retain their previous results; their missing provenance remains unknown,
-and the extension tool rejects mixing them with newly calculated nodes.
-
-Chemical integrations use `rtol=1e-8`, `atol=1e-12`, and `mxstep=10000` and must
-return complete, finite, successful output. A failed segment retries from the
-same initial state using local integration time. A thermal subsolve failure
-restarts the point on a fresh cloud with a 1000 K initial upper temperature
-bracket, expanded by decades until a valid sign change is found. This changes
-the numerical search while retaining the heating, cooling, and chemical model.
-
-Final checks require nonnegative species, conserved network hydrogen,
-consistent composition-derived quantities, the adopted metal/helium totals,
-converged LVG level populations, and gas/dust relative thermal
-residuals below `1e-4`. Line outputs reuse those checked populations. Failed raw
-points contain NaN physical outputs and retain diagnostic attempt records.
-
-As of 2026-09-08, 59 direct solver checks passed: five representative cells,
-27 interior grid points, and 27 points spanning the full grid boundaries.
-The maximum gas/dust relative thermal residuals were below `3.8e-5`.
-These checks are not a full replacement table; existing production tables and
-pipeline defaults have not been replaced.
-
-```bash
-python -m pip install -e ".[tables]"
-python scripts/apply_despotic_gow_patch.py
-python scripts/apply_despotic_chemistry_patch.py
-python scripts/measure_despotic_snapshot_domain.py \
-  --output output/despotic_candidate/snapshot_domain.json
-python -m quokka2s.tables.build_table \
-  --snapshot-domain output/despotic_candidate/snapshot_domain.json \
-  --output output/despotic_candidate/despotic_table.npz \
-  --checkpoint-dir output/despotic_candidate/checkpoints \
-  --workers -1
-```
-
-The snapshot-domain scan evaluates every cell at full resolution using the
-pipeline's hydrogen density, full z-direction column calculation, and velocity
-gradient (with halo cells at slab boundaries). The resulting extrema set all
-three table bounds with 35 x 35 x 53 logarithmic nodes. The NPZ records the
-snapshot domain. Omitting `--snapshot-domain` retains the older fixed ranges.
-
-With `--checkpoint-dir`, each completed point (including failed points and
-their diagnostic attempts) is saved atomically. Run the same command again
-after an interruption to reuse completed points. Grid, species, snapshot
-context, solver settings, source files, and collision data must still match;
-incompatible or corrupt saved results are rejected. Worker count may change.
-Without this option, results are saved only when the entire table completes.
-
-DESPOTIC builds use a persistent process pool that takes one grid point per
-task, instead of assigning an entire density layer to one worker. Finished
-points are assembled immediately by grid index, with diagnostics kept in
-canonical grid order. Progress counts completed points, including resumed
-points. Native-library thread limits are set to one in parallel workers;
-`--workers 1` executes directly in the calling process. On a cluster, pass
-the worker count appropriate to the CPUs allocated to this single-node job.
-The scheduling change preserves solver parameters and per-point checkpoints.
-Because checkpoint manifests include source hashes, builds made with the old
-scheduler need a separate checkpoint directory; incompatible manifests remain
-rejected.
-
-Keep the new raw table separate until the full simulation coverage check is
-reviewed. Table-node failures alone do not determine whether the table is
-usable: report actual interpolation failures for all simulation cells, the
-`T_QUOKKA < 3000 K` subset, and the affected mass fraction. Review those results
-before deciding whether failures can remain unresolved or need further work.
-Do not automatically fill failed nodes or replace the active table at this step.
-
-```bash
-python scripts/check_despotic_snapshot_coverage.py \
-  --table output/despotic_candidate/despotic_table.npz \
-  --output output/despotic_candidate/snapshot_coverage.json
-```
-
-The diagnostic uses fresh full-resolution snapshot fields and the actual
-`TableLookup` implementation. It counts both failed interpolation support and
-non-finite returned temperatures or mean molecular weights, including NaN
-propagation from zero-weight corners at grid boundaries.
-
-If the older raw and clean tables are already present, add CO(2–1) without
-repeating the expensive chemistry/thermal solve:
-
-```bash
-python -m quokka2s.tables.augment_co21 --workers -1
-```
-
-This writes `despotic_table_co10_co21.npz` and
-`despotic_table_co10_co21_clean.npz`. The legacy table token `CO` remains the
-CO(1–0) compatibility name; the added token is `CO21`.
-
-Check both inputs before starting the expensive run:
-
-```bash
-test -d plt0655228 && echo "snapshot: OK"
-test -f output_tables_3D_GOW_LVG/despotic_table_co10_co21_clean.npz && echo "table: OK"
-python -c "import numpy as np; p='output_tables_3D_GOW_LVG/despotic_table_co10_co21_clean.npz'; z=np.load(p, allow_pickle=True); print(p, len(z.files), 'arrays')"
-```
-
-To analyze a different plotfile stored under the repository root, pass its
-directory name to the runner, for example
-`scripts/run_dataset_series.sh plt0857000`. For inputs stored elsewhere, either
-symlink them into the layout above or use the direct module with
-`YT_DATASET=/absolute/path/to/plt...` and
-`DESPOTIC_TABLE=/absolute/path/to/despotic_table_co10_co21_clean.npz` and
-`CLOUDY_CII_TABLE=/absolute/path/to/cloudy_cii_hm2012_z0_coarse.npz`.
-
-## 5. Run the pipeline
-
-Activate the environment and run from the clone root. The driver resolves
-`python` from the active conda environment and runs each task group in its own
-process so memory is released between groups. The canonical setup is full
-resolution, `L_ext = 15 kpc`, and the GOW/LVG table:
-
-```bash
-conda activate test-env
-cd ~/quokka_postprocess_3D
-
-# heavy physics → caches the derived fields + per-task results
-MODE=compute LEXT_KPC=15 scripts/run_dataset_series.sh plt0655228
-
-# render all figures from the caches (fast)
-MODE=plot    LEXT_KPC=15 scripts/run_dataset_series.sh plt0655228
-```
-
-### Current manuscript phase histograms
-
-Run `python scripts/build_adopted_phase_histograms.py --output-dir NEW_DIRECTORY
---mass-selection retained` in the environment containing yt and DESPOTIC.
-The current ten-panel figure uses the same accepted DESPOTIC table, audited
-Cloudy table, exact exclusions and `compute_adopted_cell_emission` function as
-the current spectra. All panels use the same 134,197,901 retained cells.
-The September 6 outputs are historical and remain unchanged. Use `--plot-only`
-with the same output directory and mass selection to redraw completed bins.
-
-The 5-by-2 layout contains mass versus rho and T_QUOKKA / T_DESPOTIC in
-the first row, mixed-temperature mass / NH-rho mass in the second, Halpha /
-H I in the third, C II / C III 977.020 Angstrom in the fourth, and
-C IV 1548.19 Angstrom / CO(2-1) in the fifth. There is no explanatory panel.
-Mixed T uses T_DESPOTIC below T_QUOKKA=3000 K and T_QUOKKA otherwise.
-CO(2-1) uses T_DESPOTIC. C III and C IV use only the T_QUOKKA >= 3000 K
-Cloudy branch, with T_QUOKKA on their temperature axes. The numerical
-bundle retains all fourteen original panels; this selection changes only
-the rendered figure, preserving the retained panels' values and color scales.
-
-| Line | T_QUOKKA < 3000 K | T_QUOKKA >= 3000 K |
-|---|---|---|
-| C II | DESPOTIC emissivity | Cloudy emissivity |
-| Halpha | DESPOTIC T, ne, nH+ and analytic Case-B formula | Cloudy emissivity |
-| H I 21 cm | DESPOTIC nHI and analytic optically thin formula | Cloudy emissivity |
-| CO(1-0), CO(2-1) | DESPOTIC emissivity | DESPOTIC emissivity |
-| C III (three transitions), C IV (two transitions) | Omitted (zero) | Cloudy emissivity |
-
-The accepted inputs and their
-hashes are validated using the spectrum workflow; input overrides use
-`--accepted-despotic`, `--cloudy-table`, and `--cloudy-audit`. The +z/-z harmonic
-mean columns and velocity gradients are recalculated from full-z snapshot
-slabs with an x halo. No historical column or emission cache is used.
-
-All retained cells contribute, with no velocity cut. Each 0.2-dex bin stores absolute
-mass in g or luminosity in erg/s (`emissivity * cell volume`, summed), not a
-normalized fraction or luminosity per dex. Colors show six decades below the
-maximum; the three mass-temperature panels share a scale. The NPZ saves the
-histograms, the JSON records input paths and conservation checks, and the
-figure is saved as PNG and PDF. Existing outputs are not overwritten by a
-new calculation. Unit/model/bin tests can be run with
-`python tests/test_adopted_phase_hist.py`.
-
-Each full run checks the exact accepted cell counts and mass, histogram
-conservation, absence of DESPOTIC coordinate clipping, and agreement of all
-ten line totals with the current spectrum's input luminosities before its
-finite velocity window. The default reference is the September 20 RGI run.
-The accepted DESPOTIC table covers the complete snapshot coordinate range;
-the refreshed phase calculation rejects any DESPOTIC coordinate clipping.
-The old September 6 figure used density-boundary clipping for 958,296 cells
-and must not be used as the updated result.
-
-### Current gas-phase and line-profile comparison
-
-Run `python scripts/build_adopted_phase_spectrum_overlay.py --output-dir NEW_DIRECTORY
---phase-temperature mixed` with the same scientific environment. This reuses
-the accepted September 20 LOS-z spectra without recomputing emission, and
-streams the snapshot to rebuild gas mass velocity distributions using the
-same 134,197,901 retained cells and accepted DESPOTIC temperature table.
-Fresh NH and dV/dr queries check the exact accepted exclusion inventory.
-
-The confirmed mixed temperature uses DESPOTIC for T_QUOKKA < 3000 K and
-QUOKKA otherwise. The established phase boundaries are 200, 3000, 10^4,
-and 10^5.5 K (CNM, UNM, WNM, WIM, HIM). Gas histograms use the saved
-spectrum's 300 channels over -200 to +200 km/s, with mass = density * volume.
-Raw velocities are retained; each plotted curve is normalized to its own peak.
-Black profiles follow the adopted spectrum display: total Halpha/H I/C II,
-hot C III/C IV, and cold CO(1-0)/CO(2-1), with all ten transitions separate.
-
-Phase velocity dispersions use all retained cell velocities and the common
-mass-weighted gas mean, as in the Methods. The report separately retains
-each phase's own mean/internal dispersion, in-window moments, and mass and
-cell counts outside the plot window. No out-of-window velocities are clipped.
-Line dispersions are channel moments about each line's luminosity centroid
-within the saved window; gas curves do not include thermal broadening.
-
-The output NPZ stores the six mass histograms; JSON records statistics,
-source hashes, selected line branches, and conservation checks. `--plot-only`
-reuses completed bins after verifying their hashes. Each of the ten transitions
-is saved as a separate PNG/PDF with its line key appended to `--figure-stem`.
-Legends sit outside the axes; the emission profile is a black dashed curve
-labelled `Line`, with the existing gas-phase colours and styles retained.
-Numerical tests are `tests/test_adopted_velocity_phases.py` and
-`tests/test_adopted_phase_overlay.py`.
-
-### Historical standard-task products
-
-For the supplementary Halpha/H I comparison in both temperature regimes, run
-`python scripts/plot_hydrogen_analytic_cloudy_spectra.py`. It reuses the completed
-LOS-z spectral bundle: Cloudy in both regimes, analytic DESPOTIC-density emission
-below 3000 K, and analytic QUOKKA-mu emission above. Both models use T_DESPOTIC
-below the split and T_QUOKKA above. No emissivities are recomputed. PNG/PDF and
-provenance are written under `--output-root`; each pair shares its linear y-axis
-range, with analytic dashed lines above solid Cloudy lines in drawing order.
-
-The older standard-task C+ field uses `T_QUOKKA` as its model selector: cells below
-3000 K use the DESPOTIC GOW/LVG emissivity, while cells at or above 3000 K use
-the HM2012 shielded Cloudy table at `(T_QUOKKA, n_H, N_H)`. Temperatures above
-the intentionally truncated Cloudy grid return zero. The dedicated C+ split
-task plots the cold, hot, and channel-by-channel total spectra.
-
-The CO/C+ temperature policy is species-specific throughout their spectral
-products and phase panels: both CO lines use each cell's
-`temperature_despotic`, while C+ uses `temperature_quokka`. Their thermal-width fields and phase-histogram
-temperature axes follow the same mapping; neither uses
-`temperature_two_regime`.
-
-Hα retains its two-regime treatment. The main 2×4 phase figure also uses the
-two-regime H I result: DESPOTIC below 3000 K and the QUOKKA mean-molecular-weight
-method at and above 3000 K. For comparison, H I is additionally computed as two
-independent all-cell results. The pure-DESPOTIC result uses the table `n_HI` and
-`temperature_despotic` for every cell. The pure-QUOKKA result uses
-`temperature_quokka` in the mean-molecular-weight inversion for every cell,
-with `n_HI=(1-x_e)n_H` when `x_e<=1` and `n_HI=0` otherwise. Their spectra use
-matching thermal widths and are compared without peak normalization in the
-dedicated H I task.
-
-The first line printed by the runner includes the resolved Python executable.
-It should point into the active environment, not another hard-coded conda env.
-Detailed logs are written to `logs/dataset_series/`; each task group should end
-with `RC=0`. Do not start a second runner against the same dataset/output while
-one is active.
-
-## 6. Verify
-
-| Path | Contents |
-|---|---|
-| `output/<dataset>_down<N>_Lext<L>kpc<_tag>/` | the figures (PNG) |
-| `output/<…>/task_intermediates/` | per-task results (HDF5) — for quantitative diffs |
-| `<dataset_parent>/intermediates/<dataset>/fields/` | cached derived fields (HDF5) |
-| `logs/dataset_series/` | master and per-task-group logs |
-
-With the standard layout, the field cache is therefore
-`intermediates/plt0655228/fields/`. The 2026-06-30 clean test produced 30 PNGs,
-including `PhaseSpectrumOverlay_*_los{x,y,z}_*.png`, `PhaseSigmaV_*.png`, the
-integrated spectra, the 2×4 `phase_combined.png`, the dedicated
-`HI_phase_comparison.png`, `HI_spectrum_DESPOTIC_Rinf.png`,
-`HI_spectrum_QUOKKA_Rinf.png`, and `HI_spectrum_overlay_Rinf.png`, and ten
-multi-field slices. The `*.h5`
-under `task_intermediates/` hold the underlying numbers for a precise comparison.
-
-```bash
-# no output means no recorded traceback/error/non-zero task return code
-rg 'Traceback|ERROR|RC=[1-9]' logs/dataset_series
-```
-
----
-
-## Dependencies & citation
-
-Built on the scientific-Python ecosystem and these tools — please cite them if you
-publish results based on this pipeline:
-
-- **[QUOKKA](https://github.com/quokka-astro/quokka)** — the R-MHD code producing the
-  data (Wibking & Krumholz 2022; He et al. 2024a,b).
-- **[yt](https://yt-project.org/)** — data loading/handling (Turk et al. 2011);
-  used here from the `main` branch for the QUOKKA frontend.
-- **[DESPOTIC](https://despotic.readthedocs.io)** — chemistry/cooling and line
-  luminosities (Krumholz 2014).
-- **Cloudy 17.02** — HM2012 shielded [C II] 158 µm emissivity grid.
-
-## License
-
-[MIT](LICENSE).
+The radiation tools read Cloudy `.inc` exports from `runtime/cloudy_eightline/sed/`.
+The unattenuated and wider-column exports used in the manuscript are preserved
+there locally; they are separate from the production emission grid. These files
+are needed only for the additional radiation figures, not emission processing.

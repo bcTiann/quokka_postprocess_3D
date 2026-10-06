@@ -4,10 +4,9 @@
 #     pip install -r requirements.txt
 #     pip install -e .
 #
-# yt MUST come from git — the QUOKKA frontend that reads plt* datasets is only
-# complete on main, NOT in the pip-stable release.  main HEAD reads the data
-# identically (verified 2026-06); pin a commit (…/yt@<sha>) for byte-exactness.
-git+https://github.com/yt-project/yt
+# Use the exact yt source installed in the validated Python 3.11 environment.
+# This commit supplies the QUOKKA frontend used to read our snapshots.
+yt @ git+https://github.com/yt-project/yt@fd4cf99963cdebcd0c578dc2e5ab8dea77be6437
 
 numpy==2.2.6
 scipy==1.16.3

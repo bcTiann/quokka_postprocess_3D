@@ -12,7 +12,7 @@ import subprocess
 import tempfile
 import unittest
 
-from quokka2s.tables.abundances import QUOKKA_MASS_FRACTIONS
+from quokka2s.physics.composition import QUOKKA_MASS_FRACTIONS
 
 
 SOURCE = (

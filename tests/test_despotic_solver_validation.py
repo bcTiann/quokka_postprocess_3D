@@ -7,9 +7,10 @@ from unittest.mock import patch
 
 import numpy as np
 
-from quokka2s.tables import ExplicitGrid, LineLumResult, build_gow_lvg_table
-from quokka2s.tables.abundances import GOW_ELEMENTAL_ABUNDANCES
-from quokka2s.tables.solver import _validate_final_state, solve_gow_lvg_point
+from quokka2s.despotic.table_data import ExplicitGrid, LineLumResult
+from quokka2s.despotic.table_builder import build_gow_lvg_table
+from quokka2s.physics.composition import GOW_ELEMENTAL_ABUNDANCES
+from quokka2s.despotic.cell_solver import _validate_final_state, solve_gow_lvg_point
 
 
 class _Composition:
@@ -144,8 +145,8 @@ class FinalStateValidationTests(unittest.TestCase):
                 "despotic": SimpleNamespace(cloud=lambda: cell),
                 "despotic.chemistry": SimpleNamespace(GOW=object()),
             }),
-            patch("quokka2s.tables.solver._configure_despotic_home"),
-            patch("quokka2s.tables.solver._make_despotic_cloud", return_value=cell),
+            patch("quokka2s.despotic.cell_solver._configure_despotic_home"),
+            patch("quokka2s.despotic.cell_solver._make_despotic_cloud", return_value=cell),
         ):
             result = solve_gow_lvg_point(
                 100.0, 1e20, 1e-14, species=("CO",),
@@ -184,8 +185,8 @@ class FinalStateValidationTests(unittest.TestCase):
             2.0, 1.5, 75.0, 50.0, {"GammaCR": 1.0}, True,
         )
         with (
-            patch("quokka2s.tables.builder.validated_solver_metadata", return_value={}),
-            patch("quokka2s.tables.builder.solve_gow_lvg_point", return_value=invalid_result),
+            patch("quokka2s.despotic.table_builder.validated_solver_metadata", return_value={}),
+            patch("quokka2s.despotic.table_builder.solve_gow_lvg_point", return_value=invalid_result),
         ):
             table = build_gow_lvg_table(
                 ExplicitGrid((100.0,)), ExplicitGrid((1e20,)), ExplicitGrid((1e-14,)),

@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 import numpy as np
 
-from scripts import build_hm12_filtered_ism_sixline_bundles as bundles
+from tools.cloudy import package_emission_table as bundles
 
 
 VALUE_KEY = "jeans_length_hydrogen_mass_fraction"

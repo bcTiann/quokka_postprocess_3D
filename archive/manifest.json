@@ -1,0 +1,1008 @@
+{
+  "date": "2026-10-06",
+  "source": "Frozen dirty working tree, not Git HEAD; vendor parameters frozen immediately before archival.",
+  "archive": "archive/code/retired_experiments_20261006.tar.gz",
+  "archived_file_count": 87,
+  "archived_vendor_parameter_count": 34,
+  "historical_function_sources": [
+    "src/quokka2s/figures/emission_results.py",
+    "src/quokka2s/products/emission_phase_histograms.py",
+    "tests/test_emission_phase_histograms.py"
+  ],
+  "retired_files": [
+    {
+      "path": "check_convergence_sparse.py",
+      "reason": "Unused sparse-grid experiment imports the removed quokka2s.tables package.",
+      "sha256": "b1727aa88833c10c2d609ba87f6b80804e48cf570e5b0f0950d39e17e4077d34"
+    },
+    {
+      "path": "dataset.gitignore",
+      "reason": "Obsolete snapshot-specific ignore list; canonical inputs are covered by .gitignore.",
+      "sha256": "b4d8882ac94ecdc4a449e33b820a0c344f0e35b6f582eb1fff2f7f38c7520299"
+    },
+    {
+      "path": "scripts/analyze_cloudy_cii_zero_scan.py",
+      "reason": "Historical scientific diagnostic without a current operational or manuscript caller.",
+      "sha256": "f152f6a769b094431b5642c56ccfcf194a5f3fb4bac5562b40d2f1c19157c62a"
+    },
+    {
+      "path": "scripts/build_cloudy_atomic_ct_state.py",
+      "reason": "Historical single-line, radiation-state, or ablation table experiment; the canonical build creates the current eight-line table.",
+      "sha256": "cf296ccb8487d99874bb7610e36e4d7992588349691dff3f55bdb617fda05854"
+    },
+    {
+      "path": "scripts/build_cloudy_atomic_radiation_tables.py",
+      "reason": "Historical single-line, radiation-state, or ablation table experiment; the canonical build creates the current eight-line table.",
+      "sha256": "d6b68b29b67591702e97c154c275adae31ac705c995617e70e8c8bd029328fc2"
+    },
+    {
+      "path": "scripts/build_cloudy_cii_column_single_state.py",
+      "reason": "Historical single-line, radiation-state, or ablation table experiment; the canonical build creates the current eight-line table.",
+      "sha256": "1ea7c479917045214a2c42d4d5f123d7921ff43055e449443b6914bc5c4b1770"
+    },
+    {
+      "path": "scripts/build_cloudy_cii_full_table.py",
+      "reason": "Historical single-line, radiation-state, or ablation table experiment; the canonical build creates the current eight-line table.",
+      "sha256": "986c711a11eb9c6b0e38fa266e923d6b8a939205b59d83d50c18ee65d432f11f"
+    },
+    {
+      "path": "scripts/build_cloudy_cii_jeans_table.py",
+      "reason": "Historical single-line, radiation-state, or ablation table experiment; the canonical build creates the current eight-line table.",
+      "sha256": "f434e9a17c232de14aba888f072dae20287f2053e4520a74a95922a955218e3a"
+    },
+    {
+      "path": "scripts/build_cloudy_cii_lowT_extension.py",
+      "reason": "Historical single-line, radiation-state, or ablation table experiment; the canonical build creates the current eight-line table.",
+      "sha256": "ac1e85c56695021331b3244e0423280ab44243cf6cf256b658283bd85b4cc07a"
+    },
+    {
+      "path": "scripts/build_cloudy_cii_lowT_sparse_table.py",
+      "reason": "Historical single-line, radiation-state, or ablation table experiment; the canonical build creates the current eight-line table.",
+      "sha256": "11ea8645d370b16786aa88ca3870bad8cdfa5170c2de864cb7fb2195530060f9"
+    },
+    {
+      "path": "scripts/build_cloudy_cii_table.py",
+      "reason": "Historical single-line, radiation-state, or ablation table experiment; the canonical build creates the current eight-line table.",
+      "sha256": "a85f34d1a92849e51531dc130287fef87a401a4ef1afcf8583eaad5c01ac023f"
+    },
+    {
+      "path": "scripts/build_cloudy_co_physics_ablation_tables.py",
+      "reason": "Historical single-line, radiation-state, or ablation table experiment; the canonical build creates the current eight-line table.",
+      "sha256": "77676eb014aab6b440b39d19d29b6fdca07db62aaa4513084d06c55e215cae50"
+    },
+    {
+      "path": "scripts/build_cloudy_line_physics_ablation_tables.py",
+      "reason": "Historical single-line, radiation-state, or ablation table experiment; the canonical build creates the current eight-line table.",
+      "sha256": "c94b5ed97fb9c951dc275963df50cc43a5f7c450f16a9c6676ddb4db414e2b7c"
+    },
+    {
+      "path": "scripts/build_hm12_physical_ism_sed.py",
+      "reason": "Historical single-line, radiation-state, or ablation table experiment; the canonical build creates the current eight-line table.",
+      "sha256": "3cd80f4af2bd07cf733344c8bac1dd06830cae151a6eb4ef48cddc4334394915"
+    },
+    {
+      "path": "scripts/compare_despotic_dvdr_extension_spectra.py",
+      "reason": "Historical experiment or retired cached-product format; current emission plots and retained manuscript figures have direct entrypoints.",
+      "sha256": "8606880d452be0ade5327f75b0704ae7ea44f59762d754ee6519f5394302fd53"
+    },
+    {
+      "path": "scripts/compare_grackle_hm12_with_cloudy_hm12.py",
+      "reason": "Historical experiment or retired cached-product format; current emission plots and retained manuscript figures have direct entrypoints.",
+      "sha256": "6d38da2e97c8bcca08267c5d1675b40ed6f54f1933f5edafaf3e548ec2473699"
+    },
+    {
+      "path": "scripts/compare_ism_foreground_slab.py",
+      "reason": "Historical experiment or retired cached-product format; current emission plots and retained manuscript figures have direct entrypoints.",
+      "sha256": "f3722612ed2eadef68d5f28d71893bae97714cf38476a34595f63c5eea16bfe8"
+    },
+    {
+      "path": "scripts/diagnose_raw_dvdr_min.py",
+      "reason": "Historical scientific diagnostic without a current operational or manuscript caller.",
+      "sha256": "5dfbc04dd68afacba949e173e469310b4d96462c6d328f5c81278027e9bdfad3"
+    },
+    {
+      "path": "scripts/extend_despotic_dvdr_table.py",
+      "reason": "Retired migration from the old fixed 35-node velocity-gradient axis; active table builds use measured snapshot axes.",
+      "sha256": "c6e34070468d8455b7bba25d83ed3a79e2789b38b8a2d757e38c029efb61482c"
+    },
+    {
+      "path": "scripts/plot_cloudy_hi21_sparse_table.py",
+      "reason": "Historical experiment or retired cached-product format; current emission plots and retained manuscript figures have direct entrypoints.",
+      "sha256": "6d45bfb1ca4cab84503774fd108d16413ae1e99ff9bb96134b2135d82b958225"
+    },
+    {
+      "path": "scripts/plot_cloudy_physical_vs_quick_ism_spectra.py",
+      "reason": "Historical experiment or retired cached-product format; current emission plots and retained manuscript figures have direct entrypoints.",
+      "sha256": "736f4063b43c6f6d71479a5ad21b0c2171c7762b75bc194857d022e9ebd0895e"
+    },
+    {
+      "path": "scripts/plot_cloudy_radiation_field_components.py",
+      "reason": "Historical experiment or retired cached-product format; current emission plots and retained manuscript figures have direct entrypoints.",
+      "sha256": "9e7e936edb2ed523838bf96603c06f9613b2eedb507a798c12a7993f63b4246f"
+    },
+    {
+      "path": "scripts/plot_cplus_high_full31.py",
+      "reason": "Historical experiment or retired cached-product format; current emission plots and retained manuscript figures have direct entrypoints.",
+      "sha256": "69f273affa569aecbfbd8e69a80f711c41bdcbc5eee03151c2ed8de7a2526f69"
+    },
+    {
+      "path": "scripts/plot_dust_spectrum_comparison.py",
+      "reason": "Historical experiment or retired cached-product format; current emission plots and retained manuscript figures have direct entrypoints.",
+      "sha256": "b23fa74d25fdf55aa956776324a28f2f10cf8c3748b83d9d14fbccb624625b81"
+    },
+    {
+      "path": "scripts/plot_hm12_physical_vs_extinguished_ism.py",
+      "reason": "Historical experiment or retired cached-product format; current emission plots and retained manuscript figures have direct entrypoints.",
+      "sha256": "40f03e0bf9bb43168442797c6ea46aa93e54b541f2d571c7aaa5847ed31606bf"
+    },
+    {
+      "path": "scripts/plot_hydrogen_analytic_cloudy_spectra.py",
+      "reason": "Historical experiment or retired cached-product format; current emission plots and retained manuscript figures have direct entrypoints.",
+      "sha256": "d3ef5d6b4870f6bb7a5d002c0f2d0368fbd8dfaaa8b40b5ac3ea714554e2714b"
+    },
+    {
+      "path": "scripts/plot_overleaf_adopted_losz_spectra.py",
+      "reason": "Historical experiment or retired cached-product format; current emission plots and retained manuscript figures have direct entrypoints.",
+      "sha256": "8ffb028cff192b3cfe350478ffc5341da751fc28c13b37319ca970f429ff92f5"
+    },
+    {
+      "path": "scripts/plot_representative_cold_dense.py",
+      "reason": "Historical experiment or retired cached-product format; current emission plots and retained manuscript figures have direct entrypoints.",
+      "sha256": "1520fd3387405bbffcd0f795639f8d7e4b64693ff9e036b96302a4ef6cc59101"
+    },
+    {
+      "path": "scripts/plot_unattenuated_hm12_with_cmb.py",
+      "reason": "Historical experiment or retired cached-product format; current emission plots and retained manuscript figures have direct entrypoints.",
+      "sha256": "0f7cf70806f320a550a7a6e6374bf9075c05a72f8ff36959f24281f5b2fabfad"
+    },
+    {
+      "path": "scripts/plot_validation_migration.py",
+      "reason": "Historical experiment or retired cached-product format; current emission plots and retained manuscript figures have direct entrypoints.",
+      "sha256": "9547f757387c7b3a8adc6b610204cba703d4350835b20ad7de139e69769c50eb"
+    },
+    {
+      "path": "scripts/plot_validation_prop_only.py",
+      "reason": "Historical experiment or retired cached-product format; current emission plots and retained manuscript figures have direct entrypoints.",
+      "sha256": "b651ae981ae9ba9c0dced739f6d5e151dd549893c2d9cd0a3b98142ba2dfe795"
+    },
+    {
+      "path": "scripts/replot_cplus_cloudy_despotic_shared_ylim.py",
+      "reason": "Historical experiment or retired cached-product format; current emission plots and retained manuscript figures have direct entrypoints.",
+      "sha256": "05b5f19f6f1f1312c511574b799ea2a660ebd3d5e0c88ff83ca71957e3b5c2d7"
+    },
+    {
+      "path": "scripts/replot_hydrogen_without_cr.py",
+      "reason": "Historical experiment or retired cached-product format; current emission plots and retained manuscript figures have direct entrypoints.",
+      "sha256": "189725f37ef6bf9dff895a899511a2e7cce3806884dc253f71d8440702f38d3a"
+    },
+    {
+      "path": "scripts/replot_validation_shared_cbar.py",
+      "reason": "Historical experiment or retired cached-product format; current emission plots and retained manuscript figures have direct entrypoints.",
+      "sha256": "5f25089101b0ac139a79535ebafb47d515d6ae8e084ecd341b491c5763ce1ac4"
+    },
+    {
+      "path": "scripts/run_cloudy_defaultabund_cii_tables.sh",
+      "reason": "Historical CII and column/Jeans experimental table runner; current table build uses the single canonical Cloudy tool chain.",
+      "sha256": "cab648dde5d38407303ad9717c66c6cdf34dfb27a3484191d1a960668351fda8"
+    },
+    {
+      "path": "scripts/run_cloudy_draine_cr_defaultabund_cii_tables.sh",
+      "reason": "Historical CII and column/Jeans experimental table runner; current table build uses the single canonical Cloudy tool chain.",
+      "sha256": "4f6e728de9317d553b9699f7065f514570d00fce8d263684ac4a072fee94c6e6"
+    },
+    {
+      "path": "scripts/run_cloudy_draine_only_cr_only_defaultabund_cii_tables.sh",
+      "reason": "Historical CII and column/Jeans experimental table runner; current table build uses the single canonical Cloudy tool chain.",
+      "sha256": "2863e21c636470b960bf590b4ea88a0b99c0ea046582f5d89f73ce73de142d81"
+    },
+    {
+      "path": "scripts/run_cloudy_hm12_ism_validation.py",
+      "reason": "Historical scientific diagnostic without a current operational or manuscript caller.",
+      "sha256": "55627fe077365b453bf27aa0d73e326ad761f5ad1a7b88506a55b156df453702"
+    },
+    {
+      "path": "scripts/run_hm12_filtered_ism_cmb_cr_ct_sixline_tables.sh",
+      "reason": "Historical CII and column/Jeans experimental table runner; current table build uses the single canonical Cloudy tool chain.",
+      "sha256": "d01e6fd01f1bff109e1674b208dd8bbf5e4daac2c677c1ea7113656ed63ed98a"
+    },
+    {
+      "path": "scripts/run_hm12_filtered_ism_cr_ct_sixline_tables.sh",
+      "reason": "Historical CII and column/Jeans experimental table runner; current table build uses the single canonical Cloudy tool chain.",
+      "sha256": "99fb827b926440bf5cb239b67cc5e47839eedf9af26da2ce2bb6b2214d668198"
+    },
+    {
+      "path": "scripts/run_hm12_filtered_ism_sixline_tables.sh",
+      "reason": "Historical CII and column/Jeans experimental table runner; current table build uses the single canonical Cloudy tool chain.",
+      "sha256": "db5a5026b1aab655009db9115832b55982454bdd3910a068743dff09f3219dcf"
+    },
+    {
+      "path": "src/quokka2s/cloudy/single_line_lookup.py",
+      "reason": "Historical single-line/schema-1 CII lookup. The class was test-only; its failure-filling helper was called only by the independently retired old CII table builder.",
+      "sha256": "beb51541ed1fdee90e5e08a0b78e6ab2e32f6ec9018d9040193fc5b844a90aeb"
+    },
+    {
+      "path": "src/quokka2s/despotic/dvdr_domain.py",
+      "reason": "Retired fixed-axis helpers; active DESPOTIC builds require measured snapshot axes. The unchanged gas-field floor is now owned by physics.settings.",
+      "sha256": "cecf59c18b00a6218b9f3fc8ee0d41dff4bd584f5648ba4b7ecbea9925284978"
+    },
+    {
+      "path": "src/quokka2s/figures/spectrum_units.py",
+      "reason": "Old frequency-conversion and spectral-label helpers have no current caller.",
+      "sha256": "a3f2d58ace6888527959a8b1344a22c783d7e042a9597979c48657fa93d47556"
+    },
+    {
+      "path": "src/quokka2s/physics/cie_composition.py",
+      "reason": "Historical CHIANTI CIE density conversion; only its exclusive test called it.",
+      "sha256": "c4d406021561318ad17fb2d6190c09b8c27ec231cb3dc1a770e0748502840fb8"
+    },
+    {
+      "path": "src/quokka2s/physics/saha_cii.py",
+      "reason": "Historical Saha/LTE CII diagnostic; only its exclusive test called it. Current emission uses Cloudy and DESPOTIC.",
+      "sha256": "5521948a05259cdf7baf5b5c21f7a9f0bf51700abc953afd6280949edd7e0f6f"
+    },
+    {
+      "path": "src/quokka2s/physics/temperature_regimes.py",
+      "reason": "Old three-branch masks, emitter field-name mapping, and EOS electron inversion have no active callers. The exact active hydrogen-fraction formula now resides in physics/settings.py.",
+      "sha256": "0dbc5eff62523cc770642cb675d114a60b7e19f17a53e916197f265dac65b8dd"
+    },
+    {
+      "path": "tests/test_cie_composition.py",
+      "reason": "Historical CHIANTI CIE density conversion; only its exclusive test called it.",
+      "sha256": "754d4021bda6913bb2aa348795ab78deba2cb60947842efecb151069ad969fb8"
+    },
+    {
+      "path": "tests/test_cloudy_cii_lookup.py",
+      "reason": "Historical single-line/schema-1 CII lookup. The class was test-only; its failure-filling helper was called only by the independently retired old CII table builder.",
+      "sha256": "65916bb3f092ea4d8e28d9c3b5bd159f649f4131047300295c9f68809b9a99e3"
+    },
+    {
+      "path": "tests/test_despotic_dvdr_extension.py",
+      "reason": "Tests only the retired fixed-axis table migration tool.",
+      "sha256": "7bac638f67c3678126343b85fda680b7242e013c8915d04081ee4a13ec9797ee"
+    },
+    {
+      "path": "tests/test_dvdr_domain.py",
+      "reason": "Exclusive tests of retired fixed-axis helpers; measured snapshot-domain and active gas-field floor tests remain.",
+      "sha256": "65370023c68c2589b6dfbb23ccc86c180eb804bad94cda4bd283f8998072841c"
+    },
+    {
+      "path": "tests/test_line_regimes.py",
+      "reason": "Old three-branch masks, emitter field-name mapping, and EOS electron inversion have no active callers. The exact active hydrogen-fraction formula now resides in physics/settings.py.",
+      "sha256": "7c1895728f92d4177f592193e5a9bc4e8207e52fc844e4e3e1188febc803a842"
+    },
+    {
+      "path": "tests/test_saha_cii.py",
+      "reason": "Historical Saha/LTE CII diagnostic; only its exclusive test called it. Current emission uses Cloudy and DESPOTIC.",
+      "sha256": "8e1a2a616c93285a412b6d6ce27c0407801ee4090debc16966732502c9f29bd8"
+    },
+    {
+      "path": "vendor/cloudy_cooling_tools/examples/grackle/fg_2011_sh_161.par",
+      "reason": "Project-only historical CII/Halpha/six-line/cooling experiment; current builder generates parameters at runtime.",
+      "sha256": "02af93f582fee47ee6ecb28d7d33710ed5b69fdada1899b2903534b461b03072"
+    },
+    {
+      "path": "vendor/cloudy_cooling_tools/examples/grackle/fg_2011_sh_mf_161.par",
+      "reason": "Project-only historical CII/Halpha/six-line/cooling experiment; current builder generates parameters at runtime.",
+      "sha256": "1a6c667ce97da415ffc27034bfd2352ea921b60bce941fc6450b9e063f70da55"
+    },
+    {
+      "path": "vendor/cloudy_cooling_tools/examples/grackle/hm2012_native_plus_filtered_ism_cmb_cr_ct_defaultabund_sixline_column_10x10x21.par",
+      "reason": "Project-only historical CII/Halpha/six-line/cooling experiment; current builder generates parameters at runtime.",
+      "sha256": "2a31f0b7990eb3cfb7b7ee1964314d4d8912578c24184de8961af1ac56d3f730"
+    },
+    {
+      "path": "vendor/cloudy_cooling_tools/examples/grackle/hm2012_native_plus_filtered_ism_cmb_cr_ct_defaultabund_sixline_jeans_10x21.par",
+      "reason": "Project-only historical CII/Halpha/six-line/cooling experiment; current builder generates parameters at runtime.",
+      "sha256": "62f8a1e97a3d3292478d1c5769784c6e182d26b56f1888d5c9a55cdcaeadd2a8"
+    },
+    {
+      "path": "vendor/cloudy_cooling_tools/examples/grackle/hm2012_native_plus_filtered_ism_cmb_cr_ct_defaultabund_sixline_smoke.par",
+      "reason": "Project-only historical CII/Halpha/six-line/cooling experiment; current builder generates parameters at runtime.",
+      "sha256": "4a3d21d3d470d142cba5b6b7acead52675e72e973c27bc34247ebad7e4238ea2"
+    },
+    {
+      "path": "vendor/cloudy_cooling_tools/examples/grackle/hm2012_native_plus_filtered_ism_cr_ct_defaultabund_sixline_column_10x10x21.par",
+      "reason": "Project-only historical CII/Halpha/six-line/cooling experiment; current builder generates parameters at runtime.",
+      "sha256": "f63a1bb372651bc56264c946d568ec240354235149bd4ce230b540614f84076d"
+    },
+    {
+      "path": "vendor/cloudy_cooling_tools/examples/grackle/hm2012_native_plus_filtered_ism_cr_ct_defaultabund_sixline_jeans_10x21.par",
+      "reason": "Project-only historical CII/Halpha/six-line/cooling experiment; current builder generates parameters at runtime.",
+      "sha256": "bebe356b0286d4dd46630073f1276314dbbf382b3cf5fec57df03ee68bbd9ba4"
+    },
+    {
+      "path": "vendor/cloudy_cooling_tools/examples/grackle/hm2012_native_plus_filtered_ism_cr_ct_defaultabund_sixline_smoke.par",
+      "reason": "Project-only historical CII/Halpha/six-line/cooling experiment; current builder generates parameters at runtime.",
+      "sha256": "02184e6896843555bb0aba16c8133b8a789f4fd76593111a98ae81361b5c9752"
+    },
+    {
+      "path": "vendor/cloudy_cooling_tools/examples/grackle/hm2012_native_plus_filtered_ism_defaultabund_sixline_column_10x10x21.par",
+      "reason": "Project-only historical CII/Halpha/six-line/cooling experiment; current builder generates parameters at runtime.",
+      "sha256": "239584d09b1998e7bca75450988f0f76fe6c50f1c55e7b308502676cf37a8eaa"
+    },
+    {
+      "path": "vendor/cloudy_cooling_tools/examples/grackle/hm2012_native_plus_filtered_ism_defaultabund_sixline_jeans_10x21.par",
+      "reason": "Project-only historical CII/Halpha/six-line/cooling experiment; current builder generates parameters at runtime.",
+      "sha256": "7eeb1bbb2eccecc07583c12a9a8dcce5ed49f48b151a0d96bb4fc7afdd275f06"
+    },
+    {
+      "path": "vendor/cloudy_cooling_tools/examples/grackle/hm2012_native_plus_filtered_ism_defaultabund_sixline_smoke.par",
+      "reason": "Project-only historical CII/Halpha/six-line/cooling experiment; current builder generates parameters at runtime.",
+      "sha256": "2457acf444fbc6ed18b9a157fbd3c564546c70fc448fc11e76030b3eb927b1ff"
+    },
+    {
+      "path": "vendor/cloudy_cooling_tools/examples/grackle/hm2012_plus_filtered_ism_defaultabund_sixline_column_10x10x21.par",
+      "reason": "Project-only historical CII/Halpha/six-line/cooling experiment; current builder generates parameters at runtime.",
+      "sha256": "fe809c504544fddb5050b003620c76f1c92e39d3117901e8f42c2130dd23ea33"
+    },
+    {
+      "path": "vendor/cloudy_cooling_tools/examples/grackle/hm2012_plus_filtered_ism_defaultabund_sixline_jeans_10x21.par",
+      "reason": "Project-only historical CII/Halpha/six-line/cooling experiment; current builder generates parameters at runtime.",
+      "sha256": "11fa9d7786f9947315eefb796e8f2e739298c8e04b5f4f25906e19ae68fbd47d"
+    },
+    {
+      "path": "vendor/cloudy_cooling_tools/examples/grackle/hm_2012_cii_NHtest.par",
+      "reason": "Project-only historical CII/Halpha/six-line/cooling experiment; current builder generates parameters at runtime.",
+      "sha256": "7d0aaa356811bcc2912afaefdccc03eeb7adf3d1aa288773d37388f6b6b162bf"
+    },
+    {
+      "path": "vendor/cloudy_cooling_tools/examples/grackle/hm_2012_cii_abundance_test.par",
+      "reason": "Project-only historical CII/Halpha/six-line/cooling experiment; current builder generates parameters at runtime.",
+      "sha256": "a4bad67bd6cc460dd7f07456ddb8fa7da5970e21c1ff335fd3dd4902a19d313f"
+    },
+    {
+      "path": "vendor/cloudy_cooling_tools/examples/grackle/hm_2012_cii_cloudy_coarse.par",
+      "reason": "Project-only historical CII/Halpha/six-line/cooling experiment; current builder generates parameters at runtime.",
+      "sha256": "3cf49035b75d43f16fb1304acb2cfeefb732c2b47797252fc878ede31f450336"
+    },
+    {
+      "path": "vendor/cloudy_cooling_tools/examples/grackle/hm_2012_cii_cloudy_full.par",
+      "reason": "Project-only historical CII/Halpha/six-line/cooling experiment; current builder generates parameters at runtime.",
+      "sha256": "7b6e43cd0094e7460a76463eaca7b5ee146939224fa285e4a94a19f71a68af09"
+    },
+    {
+      "path": "vendor/cloudy_cooling_tools/examples/grackle/hm_2012_cii_cloudy_grid.par",
+      "reason": "Project-only historical CII/Halpha/six-line/cooling experiment; current builder generates parameters at runtime.",
+      "sha256": "24f560d1bdbc91d4350621d134ae73d40a8447c4214e3052a558284c7b7113a1"
+    },
+    {
+      "path": "vendor/cloudy_cooling_tools/examples/grackle/hm_2012_cii_lowT_sparse.par",
+      "reason": "Project-only historical CII/Halpha/six-line/cooling experiment; current builder generates parameters at runtime.",
+      "sha256": "38e341436e9d18feb97e212ecb8b2db86017e64ed7e82452bb3de7ea03955d6d"
+    },
+    {
+      "path": "vendor/cloudy_cooling_tools/examples/grackle/hm_2012_cii_lowT_sparse_repair_12_13.par",
+      "reason": "Project-only historical CII/Halpha/six-line/cooling experiment; current builder generates parameters at runtime.",
+      "sha256": "59dda669821ff80b676c0188cf0ef105f241c34e126d54c8f99743414390f221"
+    },
+    {
+      "path": "vendor/cloudy_cooling_tools/examples/grackle/hm_2012_cii_secant_validation.par",
+      "reason": "Project-only historical CII/Halpha/six-line/cooling experiment; current builder generates parameters at runtime.",
+      "sha256": "f49e6f9cf7ff8b85987689842775a14e963a1c1cfdddf81b9c1c0b78bde2696c"
+    },
+    {
+      "path": "vendor/cloudy_cooling_tools/examples/grackle/hm_2012_cii_zero_sparse.par",
+      "reason": "Project-only historical CII/Halpha/six-line/cooling experiment; current builder generates parameters at runtime.",
+      "sha256": "979c58e3ccdcafe713476230e54c83046e906d64c04f0bc39089f01632f615ec"
+    },
+    {
+      "path": "vendor/cloudy_cooling_tools/examples/grackle/hm_2012_halpha_lowT_sparse.par",
+      "reason": "Project-only historical CII/Halpha/six-line/cooling experiment; current builder generates parameters at runtime.",
+      "sha256": "156aee2d3169f1f8429e2d27aef59cccca8f4bd27a1fec0c99345a63a13911aa"
+    },
+    {
+      "path": "vendor/cloudy_cooling_tools/examples/grackle/hm_2012_halpha_sparse.par",
+      "reason": "Project-only historical CII/Halpha/six-line/cooling experiment; current builder generates parameters at runtime.",
+      "sha256": "822d334abe3c2bbf9a81370eb35b95ef98412c02ea38c07a671f3d774cecfdfb"
+    },
+    {
+      "path": "vendor/cloudy_cooling_tools/examples/grackle/hm_2012_ot_161.par",
+      "reason": "Project-only historical CII/Halpha/six-line/cooling experiment; current builder generates parameters at runtime.",
+      "sha256": "383db43a09342952ac7f776d052a8719eac4ef32be0004a9c35def01c67dc948"
+    },
+    {
+      "path": "vendor/cloudy_cooling_tools/examples/grackle/hm_2012_ot_mf_161.par",
+      "reason": "Project-only historical CII/Halpha/six-line/cooling experiment; current builder generates parameters at runtime.",
+      "sha256": "8dadea39efdfc7945113964740ac0348a8f298203b9945d3611d6d242b343503"
+    },
+    {
+      "path": "vendor/cloudy_cooling_tools/examples/grackle/hm_2012_sh.par",
+      "reason": "Project-only historical CII/Halpha/six-line/cooling experiment; current builder generates parameters at runtime.",
+      "sha256": "4a2cd9a9854820039729945aa18ee94568a5834e6fc62a2925fa18cb9d8719f2"
+    },
+    {
+      "path": "vendor/cloudy_cooling_tools/examples/grackle/hm_2012_sh_161.par",
+      "reason": "Project-only historical CII/Halpha/six-line/cooling experiment; current builder generates parameters at runtime.",
+      "sha256": "410b5a23cdeae1f51beed38db4102f726ae57fe4a51896faa68a214f720e7639"
+    },
+    {
+      "path": "vendor/cloudy_cooling_tools/examples/grackle/hm_2012_sh_cii_161T.par",
+      "reason": "Project-only historical CII/Halpha/six-line/cooling experiment; current builder generates parameters at runtime.",
+      "sha256": "cdb0753658be78fc22c1683d6907f36eda79aba142fcba476f929ebb105ac5ef"
+    },
+    {
+      "path": "vendor/cloudy_cooling_tools/examples/grackle/hm_2012_sh_cii_5T.par",
+      "reason": "Project-only historical CII/Halpha/six-line/cooling experiment; current builder generates parameters at runtime.",
+      "sha256": "118ed818d876efc85eb4983efc5adbea56987e801bad0ce4f3d0a872a20b32ad"
+    },
+    {
+      "path": "vendor/cloudy_cooling_tools/examples/grackle/hm_2012_sh_lines_5T.par",
+      "reason": "Project-only historical CII/Halpha/six-line/cooling experiment; current builder generates parameters at runtime.",
+      "sha256": "584dd65320a149428ca3ba53cb49f44894ec16759be87745d1721f60ff3cb8c2"
+    },
+    {
+      "path": "vendor/cloudy_cooling_tools/examples/grackle/hm_2012_sh_lines_single.par",
+      "reason": "Project-only historical CII/Halpha/six-line/cooling experiment; current builder generates parameters at runtime.",
+      "sha256": "2bc30b04a154a39931df0e271b8633a150d2616d0dcf2221d4c58d2c8d2c824a"
+    },
+    {
+      "path": "vendor/cloudy_cooling_tools/examples/grackle/hm_2012_sh_mf.par",
+      "reason": "Project-only historical CII/Halpha/six-line/cooling experiment; current builder generates parameters at runtime.",
+      "sha256": "205920671963a87004a8d1dae8fd22586b5e21cdd50c882336e7019b40e286d7"
+    },
+    {
+      "path": "vendor/cloudy_cooling_tools/examples/grackle/hm_2012_sh_mf_161.par",
+      "reason": "Project-only historical CII/Halpha/six-line/cooling experiment; current builder generates parameters at runtime.",
+      "sha256": "9d4cf44a836abd22205a9a2b04e7c9d670f2a5b0796ed5f97ec702f653329a8e"
+    }
+  ],
+  "moved_files": {
+    "tools": [
+      {
+        "from": "scripts/apply_despotic_gow_patch.py",
+        "to": "tools/despotic/patch_gow_composition.py",
+        "sha256_before": "e84e18985828ec84088dc596df72ff7d78ae6a41306f95cc9ffeef248afedd94"
+      },
+      {
+        "from": "scripts/apply_despotic_chemistry_patch.py",
+        "to": "tools/despotic/install_checked_gow_integration.py",
+        "sha256_before": "a6efdba3dcc3387318c49048442e69b365c6c9f08d888920dd4c58c6ba95a5c2"
+      },
+      {
+        "from": "scripts/measure_despotic_snapshot_domain.py",
+        "to": "tools/despotic/measure_snapshot_domain.py",
+        "sha256_before": "470834c9dcc9b400e82a95e7ebd50d488a15cc73c44cf1376449828e98f78727"
+      },
+      {
+        "from": "scripts/check_despotic_snapshot_coverage.py",
+        "to": "tools/despotic/check_snapshot_coverage.py",
+        "sha256_before": "5bb797f10c6b5ddff323d916f14dab5c4935fbf8d048aca3f57a3d34fb06019a"
+      },
+      {
+        "from": "scripts/build_cloudy_emission_table.py",
+        "to": "tools/cloudy/build_cloudy_emission_table.py",
+        "sha256_before": "92f30452e674511abf5a96936f57873a15d01b9432374383497c7110139f26df"
+      },
+      {
+        "from": "scripts/build_hm12_filtered_ism_sed.py",
+        "to": "tools/cloudy/generate_incident_radiation_fields.py",
+        "sha256_before": "819b1e18dd123b9c7ba54b41d80cad59b38b35a405ad7e09afd12963eccd2093"
+      },
+      {
+        "from": "scripts/build_hm12_filtered_ism_sixline_bundles.py",
+        "to": "tools/cloudy/package_emission_table.py",
+        "sha256_before": "b60d3bd2bc3d73bd7cab7c725fd6616d1ac7c9291957bd5e9ad8aca90fe105fe"
+      },
+      {
+        "from": "scripts/build_table_input_slice.py",
+        "to": "tools/figures/build_table_input_slice.py",
+        "sha256_before": "c5a7be44688e94a32baea043ea10da1c17c82963c9f31eb862300441eea061e2"
+      },
+      {
+        "from": "scripts/build_emission_phase_histograms.py",
+        "to": "tools/figures/build_emission_phase_histograms.py",
+        "sha256_before": "9f4dba797af651e00953a2791e881d14cf10b9daee68d3cb0125e80679bf4745"
+      },
+      {
+        "from": "scripts/build_gas_projection_maps.py",
+        "to": "tools/figures/build_gas_projection_maps.py",
+        "sha256_before": "6c303e39e42beebca9bd5b9a9f4f422925ebc8dd57ef16b8184cd54ecaa4a4dd"
+      },
+      {
+        "from": "scripts/plot_draine_extinction_coverage.py",
+        "to": "tools/figures/plot_dust_extinction.py",
+        "sha256_before": "21949d0b72f7568069d2f07602256429da4c631d60a6956c3147120b11e06dfa"
+      },
+      {
+        "from": "scripts/plot_extinguished_hm12_ism_combined.py",
+        "to": "tools/figures/plot_radiation_components.py",
+        "sha256_before": "31f889234836cc3a48f8dd6ca50300e16db6612001c1da45fddeeb7fabd139b3"
+      },
+      {
+        "from": "scripts/plot_unattenuated_hm12_ism.py",
+        "to": "tools/figures/plot_unattenuated_radiation.py",
+        "sha256_before": "1916d08e7266427043fe3fa400a1210834ca1a77896a9c49421f6accfca594c7"
+      }
+    ],
+    "package_modules": {
+      "src/quokka2s/despotic/io.py": "src/quokka2s/despotic/table_files.py",
+      "src/quokka2s/despotic/models.py": "src/quokka2s/despotic/table_data.py",
+      "src/quokka2s/despotic/builder.py": "src/quokka2s/despotic/table_builder.py",
+      "src/quokka2s/despotic/solver.py": "src/quokka2s/despotic/cell_solver.py",
+      "src/quokka2s/despotic/plotting.py": "src/quokka2s/despotic/table_plots.py",
+      "src/quokka2s/despotic/view_table.py": "src/quokka2s/despotic/plot_table.py",
+      "src/quokka2s/products/accumulation.py": "src/quokka2s/products/emission_products.py"
+    },
+    "tests": {
+      "tests/test_cloudy_sixline_lookup.py": "tests/test_cloudy_lookup.py",
+      "tests/test_emission_config.py": "tests/test_run_settings.py",
+      "tests/test_emission_io.py": "tests/test_processing_inputs.py",
+      "tests/test_emission_product_accumulator.py": "tests/test_line_luminosity_images.py",
+      "tests/test_full_line_moments.py": "tests/test_line_velocity_moments.py",
+      "tests/test_gas_multiview.py": "tests/test_gas_projections.py",
+      "tests/test_phase_spectrum_plot.py": "tests/test_gas_phase_spectra.py",
+      "tests/test_table_lookup_bundle.py": "tests/test_despotic_lookup.py",
+      "tests/test_thermal_solver.py": "tests/test_despotic_thermal_solver.py",
+      "tests/test_cloudy_sixline_build_workflow.py": "tests/test_cloudy_table_build_workflow.py",
+      "tests/test_table_io.py": "tests/test_despotic_table_files.py"
+    },
+    "documents_and_configs": [
+      {
+        "from": "data",
+        "to": "archive/local/data"
+      },
+      {
+        "from": "intermediates",
+        "to": "archive/local/intermediates"
+      },
+      {
+        "from": "intermediates_z2ray_harmonic",
+        "to": "archive/local/intermediates_z2ray_harmonic"
+      },
+      {
+        "from": "logs",
+        "to": "archive/local/logs"
+      },
+      {
+        "from": "work",
+        "to": "archive/local/work"
+      },
+      {
+        "from": "tmp",
+        "to": "archive/local/tmp"
+      },
+      {
+        "from": "output_tables_3D_GOW_LVG",
+        "to": "archive/local/output_tables_3D_GOW_LVG"
+      },
+      {
+        "from": "TablePlots_GOW_LVG",
+        "to": "archive/local/TablePlots_GOW_LVG"
+      },
+      {
+        "from": "to-baochen",
+        "to": "archive/local/to-baochen"
+      },
+      {
+        "from": "output/despotic_query_stages_20261004",
+        "to": "archive/local/output/despotic_query_stages_20261004"
+      },
+      {
+        "from": "output/calculator_methods_refactor_20261005",
+        "to": "archive/local/output/calculator_methods_refactor_20261005"
+      },
+      {
+        "from": "output/despotic_parallel_audit_20260918",
+        "to": "archive/local/output/despotic_parallel_audit_20260918"
+      },
+      {
+        "from": "output/full_line_moments_20261006",
+        "to": "archive/local/output/full_line_moments_20261006"
+      },
+      {
+        "from": "output/despotic_mu_bug_audit_20260907",
+        "to": "archive/local/output/despotic_mu_bug_audit_20260907"
+      },
+      {
+        "from": "output/dust_attenuation_control_20260929",
+        "to": "archive/local/output/dust_attenuation_control_20260929"
+      },
+      {
+        "from": "output/column_jeans_comparison_20260913",
+        "to": "archive/local/output/column_jeans_comparison_20260913"
+      },
+      {
+        "from": "output/cell_emission_stages_20261004",
+        "to": "archive/local/output/cell_emission_stages_20261004"
+      },
+      {
+        "from": "output/process_snapshot_readability_20261004",
+        "to": "archive/local/output/process_snapshot_readability_20261004"
+      },
+      {
+        "from": "output/phase_spectrum_overlay",
+        "to": "archive/local/output/phase_spectrum_overlay"
+      },
+      {
+        "from": "output/branch_lookup_audit_20261005",
+        "to": "archive/local/output/branch_lookup_audit_20261005"
+      },
+      {
+        "from": "output/plt0655228_down1_Lext15kpc_cplus_high_chianti",
+        "to": "archive/local/output/plt0655228_down1_Lext15kpc_cplus_high_chianti"
+      },
+      {
+        "from": "output/despotic_rebuild_snapshot_20260908",
+        "to": "archive/local/output/despotic_rebuild_snapshot_20260908"
+      },
+      {
+        "from": "output/cloudy_rgi_comparison_20260920",
+        "to": "archive/local/output/cloudy_rgi_comparison_20260920"
+      },
+      {
+        "from": "output/pipeline_simplification_20261006",
+        "to": "archive/local/output/pipeline_simplification_20261006"
+      },
+      {
+        "from": "output/slab_interface_20261004",
+        "to": "archive/local/output/slab_interface_20261004"
+      },
+      {
+        "from": "output/cleanup_validation_20261003",
+        "to": "archive/local/output/cleanup_validation_20261003"
+      },
+      {
+        "from": "output/emission_config_cli_pilot_20261001_figures",
+        "to": "archive/local/output/emission_config_cli_pilot_20261001_figures"
+      },
+      {
+        "from": "output/despotic_default_parallel_20260918",
+        "to": "archive/local/output/despotic_default_parallel_20260918"
+      },
+      {
+        "from": "output/constants_migration_20261003",
+        "to": "archive/local/output/constants_migration_20261003"
+      },
+      {
+        "from": "output/cloudy_line_matching_audit_20260922",
+        "to": "archive/local/output/cloudy_line_matching_audit_20260922"
+      },
+      {
+        "from": "output/default_table_reuse_20260918",
+        "to": "archive/local/output/default_table_reuse_20260918"
+      },
+      {
+        "from": "output/plt0655228_down1_Lext15kpc_co10_co21",
+        "to": "archive/local/output/plt0655228_down1_Lext15kpc_co10_co21"
+      },
+      {
+        "from": "output/counts_simplification_20261003",
+        "to": "archive/local/output/counts_simplification_20261003"
+      },
+      {
+        "from": "output/emission_config_cli_pilot_20261001",
+        "to": "archive/local/output/emission_config_cli_pilot_20261001"
+      },
+      {
+        "from": "output/package_layout_20261004",
+        "to": "archive/local/output/package_layout_20261004"
+      },
+      {
+        "from": "output/cloudy_zero_support_20260920",
+        "to": "archive/local/output/cloudy_zero_support_20260920"
+      },
+      {
+        "from": "output/pdf",
+        "to": "archive/local/output/pdf"
+      },
+      {
+        "from": "output/default_emission_20260919",
+        "to": "archive/local/output/default_emission_20260919"
+      },
+      {
+        "from": "output/default_emission_dust_20260930",
+        "to": "archive/local/output/default_emission_dust_20260930"
+      },
+      {
+        "from": "output/hash_simplification_20261003",
+        "to": "archive/local/output/hash_simplification_20261003"
+      },
+      {
+        "from": "output/read_slab_readability_20261003",
+        "to": "archive/local/output/read_slab_readability_20261003"
+      },
+      {
+        "from": "output/despotic_rebuild_20260908",
+        "to": "archive/local/output/despotic_rebuild_20260908"
+      },
+      {
+        "from": "output/dust_attenuation_pilot_20260929",
+        "to": "archive/local/output/dust_attenuation_pilot_20260929"
+      },
+      {
+        "from": "output/default_setup_20260918",
+        "to": "archive/local/output/default_setup_20260918"
+      },
+      {
+        "from": "output/hydrogen_mass_astropy_20261003",
+        "to": "archive/local/output/hydrogen_mass_astropy_20261003"
+      },
+      {
+        "from": "output/cell_reader_objects_refactor_20261005",
+        "to": "archive/local/output/cell_reader_objects_refactor_20261005"
+      },
+      {
+        "from": "output/function_docs_20261003",
+        "to": "archive/local/output/function_docs_20261003"
+      },
+      {
+        "from": "output/spectra_naming_20261003",
+        "to": "archive/local/output/spectra_naming_20261003"
+      },
+      {
+        "from": "output/unused_modules_audit_20261004",
+        "to": "archive/local/output/unused_modules_audit_20261004"
+      },
+      {
+        "from": "output/library_simplification_20261003",
+        "to": "archive/local/output/library_simplification_20261003"
+      },
+      {
+        "from": "output/abundance_pilot_20260907",
+        "to": "archive/local/output/abundance_pilot_20260907"
+      },
+      {
+        "from": "output/independent_line_masks_20261005",
+        "to": "archive/local/output/independent_line_masks_20261005"
+      },
+      {
+        "from": "output/cloudy_3d_cleanup_20261005",
+        "to": "archive/local/output/cloudy_3d_cleanup_20261005"
+      },
+      {
+        "from": "output/emissivity_sources_refactor_20261005",
+        "to": "archive/local/output/emissivity_sources_refactor_20261005"
+      },
+      {
+        "from": "output/benchmarks",
+        "to": "archive/local/output/benchmarks"
+      },
+      {
+        "from": "output/periodic_xy_gradient_20261003",
+        "to": "archive/local/output/periodic_xy_gradient_20261003"
+      },
+      {
+        "from": "output/cloudy_query_refactor_20261004",
+        "to": "archive/local/output/cloudy_query_refactor_20261004"
+      },
+      {
+        "from": "output/pipeline_readability_20261004",
+        "to": "archive/local/output/pipeline_readability_20261004"
+      },
+      {
+        "from": "output/pipeline_readability_20261003",
+        "to": "archive/local/output/pipeline_readability_20261003"
+      },
+      {
+        "from": "output/despotic_node22_audit_20260908",
+        "to": "archive/local/output/despotic_node22_audit_20260908"
+      },
+      {
+        "from": "output/broadening_readability_20261005",
+        "to": "archive/local/output/broadening_readability_20261005"
+      },
+      {
+        "from": "output/cloudy_query_stages_20261004",
+        "to": "archive/local/output/cloudy_query_stages_20261004"
+      },
+      {
+        "from": "output/despotic_numerics_20260908",
+        "to": "archive/local/output/despotic_numerics_20260908"
+      },
+      {
+        "from": "output/named_line_results_refactor_20261005",
+        "to": "archive/local/output/named_line_results_refactor_20261005"
+      },
+      {
+        "from": "output/read_slab_functions_20261003",
+        "to": "archive/local/output/read_slab_functions_20261003"
+      },
+      {
+        "from": "output/architecture_refactor_20261003",
+        "to": "archive/local/output/architecture_refactor_20261003"
+      },
+      {
+        "from": "output/line_state_refactor_20261005",
+        "to": "archive/local/output/line_state_refactor_20261005"
+      },
+      {
+        "from": "output/plot_full_sigma_20261006",
+        "to": "archive/local/output/plot_full_sigma_20261006"
+      },
+      {
+        "from": "output/plt0655228_down1_Lext15kpc_0.1E",
+        "to": "archive/local/output/plt0655228_down1_Lext15kpc_0.1E"
+      },
+      {
+        "from": "output/cell_batch_properties_20261005",
+        "to": "archive/local/output/cell_batch_properties_20261005"
+      },
+      {
+        "from": "output/despotic_high_temperature_audit_20260921",
+        "to": "archive/local/output/despotic_high_temperature_audit_20260921"
+      },
+      {
+        "from": "output/multiview",
+        "to": "archive/local/output/multiview"
+      },
+      {
+        "from": "output/plt0655228_down1_Lext0kpc_z2ray_harmonic",
+        "to": "archive/local/output/plt0655228_down1_Lext0kpc_z2ray_harmonic"
+      },
+      {
+        "from": "output/plt0655228_down1_Lext15kpc",
+        "to": "archive/local/output/plt0655228_down1_Lext15kpc"
+      },
+      {
+        "from": "output/cloudy_model_depth_20260911",
+        "to": "archive/local/output/cloudy_model_depth_20260911"
+      },
+      {
+        "from": "output/abundance_comparison_20260916",
+        "to": "archive/local/output/abundance_comparison_20260916"
+      },
+      {
+        "from": "output/2026-09-07_hydrogen_comparison",
+        "to": "archive/local/output/2026-09-07_hydrogen_comparison"
+      },
+      {
+        "from": "output/emission_process_plot_pilot_20261001",
+        "to": "archive/local/output/emission_process_plot_pilot_20261001"
+      },
+      {
+        "from": "output/object_interfaces_20261004",
+        "to": "archive/local/output/object_interfaces_20261004"
+      },
+      {
+        "from": "output/phase_histograms",
+        "to": "archive/local/output/phase_histograms"
+      },
+      {
+        "from": "output/despotic_refresh_20260908",
+        "to": "archive/local/output/despotic_refresh_20260908"
+      },
+      {
+        "from": "output/despotic_co_solver_audit_20260908",
+        "to": "archive/local/output/despotic_co_solver_audit_20260908"
+      },
+      {
+        "from": "output/halpha_spectrum_audit_20260921.md",
+        "to": "archive/local/output/halpha_spectrum_audit_20260921.md"
+      },
+      {
+        "from": "output/process_plot_check_cleanup_20261005",
+        "to": "archive/local/output/process_plot_check_cleanup_20261005"
+      },
+      {
+        "from": "output/cloudy_model_depth_20260910",
+        "to": "archive/local/output/cloudy_model_depth_20260910"
+      },
+      {
+        "from": "output/velocity_window_audit_20261005",
+        "to": "archive/local/output/velocity_window_audit_20261005"
+      },
+      {
+        "from": "output/plt0655228/pilot_readability_refactor_20261002",
+        "to": "archive/local/output/plt0655228/pilot_readability_refactor_20261002"
+      },
+      {
+        "from": "output/plt0655228/pilot_direct_tables_20261002",
+        "to": "archive/local/output/plt0655228/pilot_direct_tables_20261002"
+      },
+      {
+        "from": "output/plt0655228/pilot_native_20261002",
+        "to": "archive/local/output/plt0655228/pilot_native_20261002"
+      },
+      {
+        "from": "output/plt0655228/pilot_1e6_20261002",
+        "to": "archive/local/output/plt0655228/pilot_1e6_20261002"
+      },
+      {
+        "from": "output/plt0655228/processed_full_line_moments_20261006",
+        "to": "archive/local/output/plt0655228/processed_full_line_moments_20261006"
+      },
+      {
+        "from": "output/plt0655228/processed_interrupted_20261002_1146",
+        "to": "archive/local/output/plt0655228/processed_interrupted_20261002_1146"
+      },
+      {
+        "from": "output/plt0655228/pilot_profile_20261002",
+        "to": "archive/local/output/plt0655228/pilot_profile_20261002"
+      },
+      {
+        "from": "output/plt0655228/processed_failed_image_conservation_20261002",
+        "to": "archive/local/output/plt0655228/processed_failed_image_conservation_20261002"
+      },
+      {
+        "from": "output/plt0655228/pilot_serial_lookup_20261002",
+        "to": "archive/local/output/plt0655228/pilot_serial_lookup_20261002"
+      },
+      {
+        "from": "output/plt0655228/processed_independent_lines_20261005",
+        "to": "archive/local/output/plt0655228/processed_independent_lines_20261005"
+      },
+      {
+        "from": "output/plt0655228/pilot_direct_tables_final_20261002",
+        "to": "archive/local/output/plt0655228/pilot_direct_tables_final_20261002"
+      },
+      {
+        "from": "output/plt0655228/processed_parallel_20261002",
+        "to": "archive/local/output/plt0655228/processed_parallel_20261002"
+      },
+      {
+        "from": "output/plt0655228/processed_native_optimized",
+        "to": "archive/local/output/plt0655228/processed_native_optimized"
+      },
+      {
+        "from": "output/plt0655228/pilot_phase_process_20261002",
+        "to": "archive/local/output/plt0655228/pilot_phase_process_20261002"
+      },
+      {
+        "from": "output/plt0655228/pilot_optimized_20261002",
+        "to": "archive/local/output/plt0655228/pilot_optimized_20261002"
+      },
+      {
+        "from": "output/plt0655228/pilot_parallel_20261002",
+        "to": "archive/local/output/plt0655228/pilot_parallel_20261002"
+      },
+      {
+        "from": "output/plt0655228/pilot_conservation_4slab_20261002",
+        "to": "archive/local/output/plt0655228/pilot_conservation_4slab_20261002"
+      },
+      {
+        "from": "output/plt0655228/processed",
+        "to": "archive/local/output/plt0655228/processed"
+      },
+      {
+        "from": "output/plt0655228/processed_native",
+        "to": "archive/local/output/plt0655228/processed_native"
+      },
+      {
+        "from": "LAMDA",
+        "to": "vendor/molecular_data/LAMDA"
+      },
+      {
+        "from": "inputs/tables/cloudy/cloudy_hm2012_attgrid_ism_nh21_cmb_cr_defaultabund_eightline_jeans_7x10x21.npz",
+        "to": "inputs/tables/cloudy/emission.npz"
+      },
+      {
+        "from": "DEFAULT_EMISSION_WORKFLOW.md",
+        "to": "docs/emission_method.md"
+      },
+      {
+        "from": "src/quokka2s/README.md",
+        "to": "docs/code_walkthrough.md"
+      },
+      {
+        "from": "emission_process.yaml",
+        "to": "configs/emission_process.yaml"
+      },
+      {
+        "from": "emission_plot.yaml",
+        "to": "configs/emission_plot.yaml"
+      }
+    ]
+  },
+  "retired_functions": [
+    "products.emission_phase_histograms.select_emissivities",
+    "figures.spectrum_units.convert_dsigma_dnu_to_dsigma_dv",
+    "figures.emission_results.prepare_temperature_component_spectra",
+    "figures.emission_results.draw_temperature_component_profiles",
+    "figures.emission_results.format_temperature_component_panel",
+    "figures.emission_results.format_temperature_component_figure",
+    "figures.emission_results.plot_temperature_component_spectra"
+  ],
+  "large_local_archive": "archive/local/",
+  "numerical_scope": "Path/module/organization cleanup; scientific values and current calculation rules preserved.",
+  "validation_run_configs": "output/repo_reorganization_20261006/execution_configs/",
+  "final_result_moves": [
+    {
+      "from": "output/plt0655228/processed_repository_layout_20261006",
+      "to": "output/plt0655228/processed"
+    },
+    {
+      "from": "output/plt0655228/processed_simplified_20261006",
+      "to": "archive/local/output/plt0655228/processed_simplified_20261006"
+    }
+  ]
+}

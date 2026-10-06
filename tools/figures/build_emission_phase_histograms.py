@@ -1,0 +1,208 @@
+#!/usr/bin/env python3
+"""Save gas-mass and line-luminosity phase bins from the current process setup.
+
+Build: python tools/figures/build_emission_phase_histograms.py
+       --config configs/emission_process.yaml --output-dir output/emission_phase --no-plot
+Replot: python tools/figures/build_emission_phase_histograms.py
+        --output-dir output/emission_phase --plot-only
+"""
+from __future__ import annotations
+
+import argparse
+from datetime import datetime, timezone
+import json
+from pathlib import Path
+import sys
+import time
+
+import matplotlib
+matplotlib.use('Agg')
+import numpy as np
+
+ROOT = Path(__file__).resolve().parents[2]
+if __package__ in (None, ''):
+    sys.path.insert(0, str(ROOT / 'src'))
+
+from quokka2s.figures.emission_phase_histograms import plot_panels
+from quokka2s.processing_inputs import load_processing_inputs
+from quokka2s.products.emission_phase_histograms import (
+    PANELS,
+    DexHistogram,
+    accumulate_emission_phase_histograms,
+)
+from quokka2s.run_settings import load_process_config
+from quokka2s.snapshot_reader import slab_windows
+
+
+def accumulate_phase_batch(histograms, cells, emission_calculator):
+    """Query one batch once, update all bins, and return cell/mass totals.
+
+    The fourteen saved panels include gas mass and every separate line.
+    Each panel selects only the quantities it needs; no shared emission mask
+    removes gas or a different line's available luminosity.
+    Intrinsic epsilon [erg/s/cm^3] times cell volume [cm^3] supplies each
+    line-luminosity weight. Temperature choices come from the emission result.
+    emission_calculator is the shared CellEmissionCalculator from input loading.
+    """
+    emission = emission_calculator.calculate(cells=cells)
+    accumulate_emission_phase_histograms(
+        histograms=histograms,
+        rho=cells.density_g_cm3,
+        tq=cells.temperature_QUOKKA_K,
+        td=emission.despotic_temperature_K,
+        column=cells.shielding_NH_cm2,
+        emission=emission,
+        volume=cells.cell_volume_cm3,
+    )
+    mass = cells.density_g_cm3 * cells.cell_volume_cm3
+    despotic_temperature = emission.despotic_temperature_K
+    mixed_temperature = np.where(
+        emission.cold_cells,
+        despotic_temperature,
+        cells.temperature_QUOKKA_K,
+    )
+    missing_despotic_temperature = ~np.isfinite(despotic_temperature) | (despotic_temperature <= 0.0)
+    missing_mixed_temperature = ~np.isfinite(mixed_temperature) | (mixed_temperature <= 0.0)
+    return {
+        'processed_cells': cells.cell_count,
+        'total_mass_g': float(np.sum(mass, dtype=np.float64)),
+        'missing_despotic_temperature_cells': int(np.count_nonzero(missing_despotic_temperature)),
+        'missing_mixed_temperature_cells': int(np.count_nonzero(missing_mixed_temperature)),
+    }
+
+
+def process_phase_histograms(snapshot, emission_calculator, settings):
+    """Read one slab at a time and retain only small accumulated 0.2-dex bins."""
+    histograms = {key: DexHistogram(step=0.2) for key, _, _ in PANELS}
+    totals = {
+        'processed_cells': 0,
+        'total_mass_g': 0.0,
+        'missing_despotic_temperature_cells': 0,
+        'missing_mixed_temperature_cells': 0,
+    }
+    selected_slabs = list(slab_windows(snapshot.shape[0], settings.slab_nx))
+    if settings.max_slabs is not None:
+        selected_slabs = selected_slabs[:settings.max_slabs]
+    began = time.monotonic()
+    for slab_number, (x_start, x_stop) in enumerate(selected_slabs, start=1):
+        slab = snapshot.read_slab(
+            x_start=x_start,
+            x_stop=x_stop,
+        )
+        for start in range(0, slab.cell_count, settings.query_chunk):
+            stop = min(start + settings.query_chunk, slab.cell_count)
+            cells = slab.batch(
+                start=start,
+                stop=stop,
+            )
+            batch_totals = accumulate_phase_batch(
+                histograms=histograms,
+                cells=cells,
+                emission_calculator=emission_calculator,
+            )
+            for key in totals:
+                totals[key] += batch_totals[key]
+            del cells
+        del slab
+        elapsed = time.monotonic() - began
+        fraction = slab_number / len(selected_slabs)
+        remaining = elapsed * (1.0 - fraction) / fraction
+        print(
+            f'Phase histograms: {100 * fraction:.1f}% '
+            f'({slab_number}/{len(selected_slabs)} slabs); '
+            f'elapsed {elapsed / 60:.1f} min; ETA ~{remaining / 60:.1f} min',
+            flush=True,
+        )
+    return histograms, totals
+
+
+def save_phase_histograms(histograms, totals, snapshot, settings):
+    """Save numerical bins for every panel and record the processed selection."""
+    panels = {key: histogram.result() for key, histogram in histograms.items()}
+    payload = {}
+    for key, panel in panels.items():
+        for field, value in panel.items():
+            payload[f'{key}__{field}'] = value
+    np.savez_compressed(settings.output_dir / 'phase_histograms.npz', **payload)
+    report = {
+        'status': 'completed',
+        'completed_at': datetime.now(timezone.utc).isoformat(),
+        'dataset': str(settings.dataset),
+        'despotic_table': str(settings.despotic_table),
+        'cloudy_table': str(settings.cloudy_table),
+        'snapshot_shape': list(snapshot.shape),
+        'full_snapshot': totals['processed_cells'] == snapshot.cell_count,
+        'mass_selection': {
+            'QUOKKA_temperature_and_NH': 'all cells',
+            'DESPOTIC_temperature': 'available DESPOTIC temperature',
+            'mixed_temperature': 'available DESPOTIC temperature for cold cells; QUOKKA for hot cells',
+        },
+        'line_selection': 'each line requires its own emissivity and thermal temperature',
+        'panel_counts': {key: histogram.count for key, histogram in histograms.items()},
+        'bin_width_dex': 0.2,
+        'line_emission': 'intrinsic',
+        **totals,
+    }
+    (settings.output_dir / 'phase_histograms.json').write_text(
+        json.dumps(report, indent=2) + '\n',
+        encoding='utf-8',
+    )
+    return panels
+
+
+def load_saved_phase_histograms(output_dir):
+    """Read only the small saved histogram arrays; no snapshot or table lookup."""
+    with np.load(output_dir / 'phase_histograms.npz', allow_pickle=False) as data:
+        panels = {}
+        for key, _, _ in PANELS:
+            panels[key] = {}
+            for field in ('H', 'x_edges', 'y_edges'):
+                panels[key][field] = np.array(data[f'{key}__{field}'])
+    return panels
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument('--config', type=Path, default=ROOT / 'configs/emission_process.yaml')
+    parser.add_argument('--output-dir', type=Path, required=True)
+    parser.add_argument('--max-slabs', type=int, help='Limit this diagnostic run to its first N slabs')
+    parser.add_argument('--plot-only', action='store_true', help='Render saved phase_histograms.npz only')
+    parser.add_argument('--no-plot', action='store_true', help='Save bins without rendering figures')
+    args = parser.parse_args()
+    if args.plot_only and args.no_plot:
+        parser.error('--plot-only and --no-plot cannot be used together')
+    if args.max_slabs is not None and args.max_slabs <= 0:
+        parser.error('--max-slabs must be positive')
+    output_dir = args.output_dir.resolve()
+    if args.plot_only:
+        panels = load_saved_phase_histograms(output_dir)
+    else:
+        settings = load_process_config(args.config)
+        settings.output_dir = output_dir
+        if args.max_slabs is not None:
+            settings.max_slabs = args.max_slabs
+        snapshot, emission_calculator = load_processing_inputs(settings)
+        histograms, totals = process_phase_histograms(
+            snapshot=snapshot,
+            emission_calculator=emission_calculator,
+            settings=settings,
+        )
+        panels = save_phase_histograms(
+            histograms=histograms,
+            totals=totals,
+            snapshot=snapshot,
+            settings=settings,
+        )
+    if not args.no_plot:
+        plot_panels(
+            panels=panels,
+            png=output_dir / 'phase_histograms_10panel.png',
+            pdf=output_dir / 'phase_histograms_10panel.pdf',
+        )
+
+
+if __name__ == '__main__':
+    main()

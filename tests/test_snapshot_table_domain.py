@@ -1,11 +1,13 @@
 import json
+from contextlib import redirect_stderr
+from io import StringIO
 from pathlib import Path
 import tempfile
 import unittest
 
 import numpy as np
 
-from quokka2s.tables.build_table import _snapshot_grids
+from quokka2s.despotic.build_table import _parse_args, _snapshot_grids
 
 
 class SnapshotDomainTests(unittest.TestCase):
@@ -46,3 +48,10 @@ class SnapshotDomainTests(unittest.TestCase):
             domain['axes']['nH'][key] = value
             with self.subTest(key=key, value=value), self.assertRaises(ValueError):
                 self.load(domain)
+
+    def test_build_command_requires_measured_snapshot_domain(self):
+        with redirect_stderr(StringIO()), self.assertRaises(SystemExit) as missing:
+            _parse_args([])
+        self.assertEqual(missing.exception.code, 2)
+        parsed = _parse_args(["--snapshot-domain", "snapshot_domain.json"])
+        self.assertEqual(parsed.snapshot_domain, Path("snapshot_domain.json"))

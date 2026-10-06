@@ -14,8 +14,15 @@ Local changes included in this snapshot:
   unchanged as a source reference.
 - `scripts/subtract_cooling_lite.pl` converts Cloudy 17 component fractions
   back to physical heating/cooling rates using the total rate.
-- `examples/grackle/*.par` contains the C II, H-alpha, HM2012, and diagnostic
-  parameter files used in this project.
+- Project-specific C II, H-alpha and six-line diagnostic parameter files are
+  archived in `archive/code/retired_experiments_20261006.tar.gz` at the repository
+  root. The current eight-line parameters are generated at runtime by
+  `tools/cloudy/build_cloudy_emission_table.py`. Ten upstream-style parameter
+  examples remain in `examples/grackle/` as source references.
+
+The upstream README is preserved as upstream documentation. This is a selected
+source snapshot, so some data/example paths described there are not included.
+Current project commands and paths are documented in the repository-root README.
 
 Generated Cloudy outputs, UVB data files, logs, nested Git metadata, simulation
 snapshots, and pipeline intermediates are intentionally excluded from Git.
