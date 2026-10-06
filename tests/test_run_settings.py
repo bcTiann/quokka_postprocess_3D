@@ -39,6 +39,8 @@ class RunSettingsTests(unittest.TestCase):
                          (8, 100000, 6))
         self.assertEqual(config.chunk_workers, 1)
         self.assertIsNone(config.max_slabs)
+        self.assertIsNone(config.x_index_range)
+        self.assertIsNone(config.y_index_range)
 
     def test_process_optional_settings_and_absolute_path(self):
         values = {
@@ -74,6 +76,30 @@ class RunSettingsTests(unittest.TestCase):
         self.assertTrue(config.allow_partial)
         self.assertEqual(config.image_downsample_factor, 2)
         self.assertEqual(config.titled_output_dir, self.directory / "figures_titled")
+
+    def test_process_region_keeps_stop_exclusive_and_allows_one_full_axis(self):
+        config = load_process_config(self.write({
+            **PROCESS_MINIMUM,
+            "x_index_range": [64, 128],
+            "y_index_range": [32, 96],
+        }))
+        self.assertEqual(config.x_index_range, (64, 128))
+        self.assertEqual(config.y_index_range, (32, 96))
+        config = load_process_config(self.write({
+            **PROCESS_MINIMUM,
+            "x_index_range": [0, 1],
+        }))
+        self.assertEqual(config.x_index_range, (0, 1))
+        self.assertIsNone(config.y_index_range)
+
+    def test_process_rejects_invalid_region_ranges(self):
+        for value in ([3, 3], [-1, 2], [0, 1.5], [True, 2], [1], "0:8"):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(ValueError, "x_index_range"):
+                    load_process_config(self.write({
+                        **PROCESS_MINIMUM,
+                        "x_index_range": value,
+                    }))
 
     def test_missing_unknown_and_wrong_document_shape_fail(self):
         cases = [

@@ -20,11 +20,11 @@ IMAGE_LUMINOSITY_RTOL = 1e-10
 class LineLuminosityImageAccumulator:
     """Accumulate one luminosity image per line and dust state.
 
-    ``native_xy_shape`` is the full snapshot's (x, y) cell count. Each saved
+    ``native_xy_shape`` is the selected region's (x, y) cell count. Each saved
     pixel contains the summed luminosity of its original z sightline.
     """
 
-    def __init__(self, line_keys, native_xy_shape):
+    def __init__(self, line_keys, native_xy_shape, image_xy_origin=(0, 0)):
         """Create zero-filled native-resolution luminosity images.
 
         Parameters
@@ -32,8 +32,11 @@ class LineLuminosityImageAccumulator:
         line_keys : sequence of str
             Nonempty, unique line names from CellEmissionCalculator.line_keys, in that order.
         native_xy_shape : tuple of int, shape (2,)
-            Two positive cell counts (Nx, Ny), from snapshot.shape[:2].
-            Currently (256, 256).
+            Selected cell counts (Nx, Ny), from snapshot.processing_shape[:2].
+            Full-box processing keeps (256, 256).
+        image_xy_origin : tuple of int, shape (2,)
+            Selected image's lower x/y indices in the original grid. Defaults
+            to (0, 0); e.g. a 64:128, 80:144 region starts at (64, 80).
 
         Notes
         -----
@@ -42,18 +45,23 @@ class LineLuminosityImageAccumulator:
 
         Examples
         --------
-        images = LineLuminosityImageAccumulator(emission_calculator.line_keys, snapshot.shape[:2])
+        images = LineLuminosityImageAccumulator(
+            line_keys=emission_calculator.line_keys,
+            native_xy_shape=snapshot.processing_shape[:2],
+            image_xy_origin=snapshot.processing_xy_origin,
+        )
         """
         self.line_keys = tuple(line_keys) # ("cii", "halpha", "hi21", "ciii_977", "ciii_1907", "ciii_1909", "civ_1548", "civ_1551", "co10", "co21")
         self.native_xy_shape = tuple(int(n) for n in native_xy_shape) # (256, 256)
-        # Current shape: (2, 10, 256, 256). The four axes are:
+        self.image_xy_origin = tuple(int(n) for n in image_xy_origin)
+        # Full-box example: (2, 10, 256, 256). The four axes are:
         #   axis 0, size   2: 0 = intrinsic, 1 = dust-attenuated.
         #   axis 1, size  10: lines in the same order as CellEmissionCalculator.line_keys.
         #   axis 2, size 256: x pixel index.
         #   axis 3, size 256: y pixel index.
         # Each entry stores luminosity [erg/s] and starts at zero.
         # Example: native_images[0, 1, 10, 20] is the intrinsic Halpha
-        # luminosity at pixel (x=10, y=20), for the current line order.
+        # luminosity at local pixel (x=10, y=20), for the current line order.
         self.native_images = np.zeros((len(DUST_STATES), len(self.line_keys), *self.native_xy_shape)) # (2, 10, 256, 256)
 
     def add_batch(self, cells, emission):
@@ -83,6 +91,7 @@ class LineLuminosityImageAccumulator:
         # line's available cells. A missing CO value does not remove Halpha.
         all_pixel_indices = self.map_cells_to_image_pixels(
             x_start=cells.x_start,
+            y_start=cells.y_start,
             slab_shape=cells.slab_shape,
             batch_start=cells.batch_start,
             selected_indices=np.arange(cells.density_g_cm3.size),
@@ -148,23 +157,30 @@ class LineLuminosityImageAccumulator:
         --------
         images.merge(batch_images)
         """
+        if (self.native_xy_shape != other.native_xy_shape
+                or self.image_xy_origin != other.image_xy_origin):
+            raise ValueError('Cannot merge images from different native x-y regions')
         self.native_images += other.native_images
         return self
 
-    def map_cells_to_image_pixels(self, x_start, slab_shape, batch_start, selected_indices):
-        """Map retained flat cell positions (R,) to native flat x-y pixels (R,).
+    def map_cells_to_image_pixels(
+        self, x_start, y_start, slab_shape, batch_start, selected_indices,
+    ):
+        """Map compact slab positions (R,) to region-local flat x-y pixels (R,).
 
         C-order cell storage changes z first, then y, then x. Thus every z cell
-        with the same x and y maps to the same image pixel. With Nz=2048,
-        slab indices 0 and 2047 map to (x_start, 0); index 2048 maps to
-        (x_start, 1). Returned indices flatten the full native image in C order.
+        with the same x and y maps to the same image pixel. A slab starting at
+        (64, 80), with image_xy_origin=(64, 80), maps its first z column to
+        local pixel (0, 0). slab_shape[1] is selected Ny, not the original Ny.
         """
         ny = slab_shape[1]
         nz = slab_shape[2]
         slab_indices = batch_start + selected_indices
         x_indices = x_start + slab_indices // (ny * nz)
-        y_indices = (slab_indices // nz) % ny
-        return x_indices * self.native_xy_shape[1] + y_indices
+        y_indices = y_start + (slab_indices // nz) % ny
+        image_x = x_indices - self.image_xy_origin[0]
+        image_y = y_indices - self.image_xy_origin[1]
+        return image_x * self.native_xy_shape[1] + image_y
 
     def accumulate_line_pixel_luminosity(
         self,
@@ -207,6 +223,7 @@ class LineLuminosityImageAccumulator:
             "axis_order": np.asarray("dust_state,line,x_pixel,y_pixel"),
             "native_xy_shape": np.asarray(self.native_xy_shape),
             "image_shape": np.asarray(self.native_xy_shape),
+            "image_xy_origin": np.asarray(self.image_xy_origin),
             "line_luminosity_image_erg_s": images,
             "total_luminosity_erg_s": images.sum(axis=(-2, -1)),
         }

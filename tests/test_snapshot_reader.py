@@ -99,14 +99,63 @@ class SnapshotReaderTests(unittest.TestCase):
         expected_widths = dataset.domain_width / dataset.domain_dimensions
         self.assertEqual(snapshot.shape, (12, 3, 4))
         self.assertEqual(snapshot.cell_count, 144)
+        self.assertEqual(snapshot.xy_region, {'x': (0, 12), 'y': (0, 3)})
+        self.assertEqual(snapshot.processing_shape, snapshot.shape)
+        self.assertEqual(snapshot.processing_cell_count, snapshot.cell_count)
+        self.assertEqual(snapshot.processing_xy_origin, (0, 0))
         np.testing.assert_array_equal(snapshot.cell_widths, expected_widths)
         self.assertEqual(snapshot.cell_volume_cm3, float(np.prod(expected_widths.to('cm').value)))
         expected_area = dataset.domain_width[0] * dataset.domain_width[1]
         self.assertEqual(snapshot.projected_area_cm2, float(expected_area.to('cm**2').value))
+        self.assertEqual(snapshot.processing_area_cm2, snapshot.projected_area_cm2)
         # Geometry is calculated once and reused; no covering_grid() is needed.
         self.assertIs(snapshot.cell_widths, snapshot.cell_widths)
         self.assertFalse(hasattr(snapshot, 'config'))
         self.assertFalse(hasattr(snapshot, 'physics'))
+
+    def test_selected_geometry_preserves_original_box_and_native_cell_volume(self):
+        dataset = SimpleNamespace(
+            domain_dimensions=np.array([12, 5, 4]),
+            domain_width=unyt_array([24., 15., 20.], 'cm'),
+        )
+        snapshot = Snapshot(
+            dataset=dataset,
+            xy_region={'x': [2, 7], 'y': [1, 3]},
+        )
+        self.assertEqual(snapshot.xy_region, {'x': (2, 7), 'y': (1, 3)})
+        self.assertEqual(snapshot.shape, (12, 5, 4))
+        self.assertEqual(snapshot.cell_count, 240)
+        self.assertEqual(snapshot.projected_area_cm2, 360.)
+        self.assertEqual(snapshot.processing_shape, (5, 2, 4))
+        self.assertEqual(snapshot.processing_cell_count, 40)
+        self.assertEqual(snapshot.processing_xy_origin, (2, 1))
+        self.assertEqual(snapshot.processing_area_cm2, 60.)
+        self.assertEqual(snapshot.cell_volume_cm3, 30.)
+
+        for requested in ({}, {'x': None}, {'y': None}, {'x': None, 'y': None}):
+            with self.subTest(requested=requested):
+                full = Snapshot(dataset=dataset, xy_region=requested)
+                self.assertEqual(full.processing_shape, full.shape)
+                self.assertEqual(full.processing_area_cm2, full.projected_area_cm2)
+        x_only = Snapshot(dataset=dataset, xy_region={'x': (11, 12)})
+        self.assertEqual(x_only.processing_shape, (1, 5, 4))
+        self.assertEqual(x_only.xy_region['y'], (0, 5))
+
+    def test_selected_geometry_rejects_noninteger_empty_and_out_of_box_bounds(self):
+        dataset = SimpleNamespace(domain_dimensions=np.array([12, 5, 4]))
+        invalid_regions = (
+            [], {'z': (0, 4)}, {'x': '2:7'}, {'x': (2,)}, {'x': (False, 2)},
+            {'y': (1., 3)}, {'x': (-1, 2)}, {'x': (0, 13)}, {'y': (0, 6)},
+            {'x': (4, 4)}, {'y': (3, 1)},
+        )
+        for region in invalid_regions:
+            with self.subTest(region=region), self.assertRaises(ValueError):
+                Snapshot(dataset=dataset, xy_region=region)
+
+    def test_one_cell_processing_window_does_not_change_native_grid_requirement(self):
+        self.assertEqual(list(slab_windows(nx=1, slab_nx=8)), [(0, 1)])
+        with self.assertRaises(ValueError):
+            Snapshot(dataset=SimpleNamespace(domain_dimensions=np.array([1, 5, 4])))
 
     def test_opposite_face_plane_uses_native_width_with_real_yt(self):
         """A dims=1 covering grid stretches that axis in yt; read two layers."""
@@ -166,6 +215,39 @@ class SnapshotReaderTests(unittest.TestCase):
         np.testing.assert_array_equal(x, [4] * 6 + [5] * 6)
         np.testing.assert_array_equal(y, [1, 1, 2, 2, 2, 2, 0, 0, 0, 0, 1, 1])
         np.testing.assert_array_equal(z, [2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1])
+
+    def test_compact_y_global_ids_skip_unselected_rows_between_x_layers(self):
+        shape = (3, 2, 4)
+        arrays = [np.arange(np.prod(shape), dtype=float) for _ in range(6)]
+        slab = SlabArrays(
+            density_g_cm3=arrays[0],
+            foreground_NH_cm2=arrays[1],
+            temperature_QUOKKA_K=arrays[2],
+            shielding_NH_cm2=arrays[3],
+            velocity_gradient_s=arrays[4],
+            velocity_z_kms=arrays[5],
+            x_start=4,
+            shape=shape,
+            cell_volume_cm3=7.,
+            y_start=2,
+            native_y_size=7,
+        )
+        native_ids = np.arange(12 * 7 * 4).reshape(12, 7, 4)[4:7, 2:4, :].ravel()
+        actual_ids = [slab.cell_id_at(index) for index in range(slab.cell_count)]
+        np.testing.assert_array_equal(actual_ids, native_ids)
+        self.assertEqual(slab.first_cell_id, 120)
+        self.assertEqual(slab.cell_id_at(7), 127)
+        self.assertEqual(slab.cell_id_at(8), 148)
+
+        cells = slab.batch(start=6, stop=18)
+        self.assertEqual(cells.first_cell_id, 126)
+        self.assertEqual(cells.last_cell_id, 177)
+        self.assertEqual(cells.y_start, 2)
+        self.assertEqual(cells.native_y_size, 7)
+        np.testing.assert_array_equal(
+            [cells.cell_id_at(index) for index in range(6, 18)],
+            native_ids[6:18],
+        )
 
     def test_batch_views_release_slab_arrays_when_the_batch_is_released(self):
         slab = SlabArrays(
@@ -271,6 +353,75 @@ class SnapshotReaderTests(unittest.TestCase):
         actual = shielding_hydrogen_column(grid).to_value('cm**-2')
         expected = 2. / (1. / np.array([14., 12., 8.]) + 1. / np.array([2., 6., 14.]))
         np.testing.assert_allclose(actual.ravel(), expected, rtol=1e-14, atol=0)
+
+    def test_region_slab_fields_equal_original_slice_at_internal_and_box_faces(self):
+        shape = (9, 7, 6)
+        i, j, k = np.indices(shape, dtype=float)
+        velocity = {
+            'velocity_x': i**2 + 2*j*k,
+            'velocity_y': 3*j**2 + i*k,
+            'velocity_z': 5*k**2 + i*j,
+        }
+        original = _snapshot_with_velocity(
+            velocity=velocity,
+            spacing={'dx': 2., 'dy': 3., 'dz': 5.},
+        )
+        regions = (
+            {'x': (0, 2), 'y': (0, 3)},
+            {'x': (2, 7), 'y': (1, 5)},
+            {'x': (8, 9), 'y': (6, 7)},
+        )
+        for region in regions:
+            with self.subTest(region=region):
+                selected = Snapshot(dataset=original.dataset, xy_region=region)
+                x_start, x_stop = region['x']
+                y_start, y_stop = region['y']
+                full_slab = original.read_slab(x_start=x_start, x_stop=x_stop)
+                region_slab = selected.read_slab(x_start=x_start, x_stop=x_stop)
+                self.assertEqual(region_slab.shape, (x_stop - x_start, y_stop - y_start, 6))
+                self.assertEqual(region_slab.y_start, y_start)
+                self.assertEqual(region_slab.native_y_size, 7)
+                self.assertEqual(region_slab.cell_volume_cm3, full_slab.cell_volume_cm3)
+                for name, full_values in vars(full_slab).items():
+                    if not isinstance(full_values, np.ndarray):
+                        continue
+                    expected = full_values.reshape(full_slab.shape)[:, y_start:y_stop, :]
+                    actual = getattr(region_slab, name)
+                    np.testing.assert_array_equal(actual, expected.ravel())
+                    self.assertFalse(actual.flags.writeable)
+
+    def test_single_x_region_copies_y_crop_but_full_y_keeps_existing_views(self):
+        dataset = SimpleNamespace(
+            domain_dimensions=np.array([4, 5, 4]),
+            domain_width=unyt_array([8., 15., 20.], 'cm'),
+        )
+        fields = [np.arange(20., dtype=float).reshape(1, 5, 4) + i for i in range(6)]
+        for region in (None, {'y': (2, 4)}):
+            with (
+                self.subTest(region=region),
+                patch('quokka2s.snapshot_reader.read_slab_grid'),
+                patch(
+                    'quokka2s.snapshot_reader.read_simulation_fields',
+                    return_value=(fields[0], fields[2], fields[5]),
+                ),
+                patch(
+                    'quokka2s.snapshot_reader.calculate_dust_foreground_column',
+                    return_value=fields[1],
+                ),
+                patch(
+                    'quokka2s.snapshot_reader.calculate_shielding_column',
+                    return_value=fields[3],
+                ),
+                patch(
+                    'quokka2s.snapshot_reader.calculate_core_velocity_gradient',
+                    return_value=fields[4],
+                ),
+            ):
+                snapshot = Snapshot(dataset=dataset, xy_region=region)
+                slab = snapshot.read_slab(x_start=1, x_stop=2)
+                arrays = [value for value in vars(slab).values() if isinstance(value, np.ndarray)]
+                for array, original in zip(arrays, fields):
+                    self.assertEqual(np.shares_memory(array, original), region is None)
 
     def test_gradient_matches_whole_grid_at_slab_seams_and_box_faces(self):
         """Exercise real LVG differences, including a one-cell final slab."""

@@ -313,7 +313,8 @@ class IntegratedSpectra:
 
         Profiles use (dust, line, cold/hot, channel). Full and window moments
         use (dust, line), combining both branches. Empty lines have NaN moments.
-        projected_area_cm2 is snapshot x-y area [cm^2], stored as metadata.
+        projected_area_cm2 is the processed region's x-y area [cm^2], stored as
+        metadata; full-box processing uses the original snapshot area.
         """
         edges = self.velocity_edges_kms
         centers = .5 * (edges[:-1] + edges[1:])

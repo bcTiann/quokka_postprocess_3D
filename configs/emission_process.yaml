@@ -7,3 +7,7 @@ query_chunk: 1000000
 chunk_workers: 2
 spectral_workers: 3  # Per chunk: at most 2 x 3 spectral threads.
 output_dir: ../output/plt0655228/processed
+# Optional native x-y region; stops are excluded and z stays complete.
+# x_index_range: [64, 128]
+# y_index_range: [32, 96]
+# Choose a new output_dir when processing a region.

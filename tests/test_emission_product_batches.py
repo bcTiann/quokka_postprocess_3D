@@ -1,6 +1,7 @@
 """Product-owned batch mapping, ordered merging, and conservation checks."""
 from types import SimpleNamespace
 import gc
+import json
 import unittest
 import weakref
 from unittest.mock import patch
@@ -19,10 +20,29 @@ from quokka2s.products.line_luminosity_images import LineLuminosityImageAccumula
 from quokka2s.products.emission_products import EmissionProducts
 from quokka2s.physics.cell_emission import LineEmission
 from quokka2s.physics.line_emissivity import ATOMIC_LINE_KEYS, CO_LINE_KEYS, CIII_CIV_LINE_KEYS
+from quokka2s.result_files import add_output_metadata
 
 
 LINE_KEYS = ('hi21', 'cii')
 VELOCITY_EDGES = np.linspace(-200., 200., 401)
+
+
+def snapshot_geometry(shape, projected_area_cm2, xy_region=None):
+    """Provide the production geometry attributes without retaining a dataset."""
+    region = {'x': (0, shape[0]), 'y': (0, shape[1])} if xy_region is None else xy_region
+    nx = region['x'][1] - region['x'][0]
+    ny = region['y'][1] - region['y'][0]
+    processing_shape = (nx, ny, shape[2])
+    return SimpleNamespace(
+        shape=shape,
+        cell_count=int(np.prod(shape)),
+        projected_area_cm2=projected_area_cm2,
+        xy_region=region,
+        processing_shape=processing_shape,
+        processing_cell_count=int(np.prod(processing_shape)),
+        processing_area_cm2=projected_area_cm2 * nx * ny / (shape[0] * shape[1]),
+        processing_xy_origin=(region['x'][0], region['y'][0]),
+    )
 
 
 def batches():
@@ -41,7 +61,8 @@ def batches():
     for start, stop in ((0, 3), (3, 5), (5, 8)):
         part = slice(start, stop)
         cells = SimpleNamespace(
-            x_start=0, slab_shape=(2, 2, 2), batch_start=start,
+            x_start=0, y_start=0, native_y_size=2,
+            slab_shape=(2, 2, 2), batch_start=start,
             cell_volume_cm3=3., velocity_z_kms=velocity[part],
             temperature_QUOKKA_K=temperature[part], density_g_cm3=density[part],
         )
@@ -95,9 +116,11 @@ def expected_luminosity():
 class ProductBatchTests(unittest.TestCase):
     def test_missing_hot_co_does_not_remove_atomic_images_spectra_or_gas(self):
         line_keys = ATOMIC_LINE_KEYS + CO_LINE_KEYS
-        snapshot = SimpleNamespace(shape=(1, 1, 2), cell_count=2, projected_area_cm2=12.)
+        snapshot = snapshot_geometry(shape=(1, 1, 2), projected_area_cm2=12.)
         cells = SimpleNamespace(
             x_start=0,
+            y_start=0,
+            native_y_size=1,
             slab_shape=(1, 1, 2),
             batch_start=0,
             cell_volume_cm3=3.,
@@ -132,6 +155,8 @@ class ProductBatchTests(unittest.TestCase):
         products.record_batch(cells, emission)
         outputs = products.build_outputs()
         products.check_outputs(outputs)
+        self.assertTrue(outputs.processing_complete)
+        self.assertTrue(outputs.full_snapshot)
 
         halpha = line_keys.index('halpha')
         co10 = line_keys.index('co10')
@@ -145,11 +170,116 @@ class ProductBatchTests(unittest.TestCase):
         self.assertEqual(outputs.phase_payload['group_count'][-1], 2)
         self.assertEqual(outputs.phase_payload['group_mass_g'][-1], 9.)
 
+    def test_selected_region_keeps_native_pixels_area_and_completion_metadata(self):
+        snapshot = snapshot_geometry(
+            shape=(5, 7, 3),
+            projected_area_cm2=70.,
+            xy_region={'x': (1, 4), 'y': (2, 6)},
+        )
+        products = EmissionProducts(snapshot, LINE_KEYS, spectral_workers=1)
+        initial = products.build_outputs()
+        self.assertFalse(initial.processing_complete)
+        self.assertFalse(initial.full_snapshot)
+        native_values = np.arange(1., 106.).reshape(snapshot.shape)
+        selected_values = native_values[1:4, 2:6].ravel()
+        for start, stop in ((0, 5), (5, 19), (19, selected_values.size)):
+            values = selected_values[start:stop]
+            intrinsic = np.where(values % 7 == 0, np.nan, 2. * values)
+            cells = SimpleNamespace(
+                x_start=1,
+                y_start=2,
+                native_y_size=7,
+                slab_shape=snapshot.processing_shape,
+                batch_start=start,
+                cell_volume_cm3=2.,
+                density_g_cm3=np.ones(values.size),
+                temperature_QUOKKA_K=np.full(values.size, 100.),
+                velocity_z_kms=np.zeros(values.size),
+            )
+            emission = SimpleNamespace(
+                cold_cells=np.ones(values.size, dtype=bool),
+                despotic_temperature_K=np.full(values.size, 100.),
+                lines={
+                    'hi21': LineEmission(values, values, np.full(values.size, 100.)),
+                    'cii': LineEmission(intrinsic, .25 * intrinsic, np.full(values.size, 100.)),
+                },
+                despotic_coordinate_clipped_cells={'nH': 0, 'NH': 0, 'dVdr': 0},
+                cloudy_column_clipped_cells={'below': 0, 'above': 0},
+            )
+            products.images.add_batch(cells=cells, emission=emission)
+            products.spectra.add_batch(cells=cells, emission=emission)
+            products.phases.add_batch(cells=cells, emission=emission)
+            products.record_batch(cells=cells, emission=emission)
+
+        outputs = products.build_outputs()
+        self.assertTrue(outputs.processing_complete)
+        self.assertFalse(outputs.full_snapshot)
+        self.assertEqual(products.expected_cell_count, 36)
+        self.assertEqual(products.snapshot_cell_count, 105)
+        self.assertEqual(float(outputs.spectrum_payload['projected_area_cm2']), 24.)
+        selected_cube = native_values[1:4, 2:6]
+        expected_hi = 2. * selected_cube.sum(axis=2)
+        expected_cii = 4. * np.where(selected_cube % 7 == 0, 0., selected_cube).sum(axis=2)
+        np.testing.assert_array_equal(
+            outputs.image_payload['line_luminosity_image_erg_s'],
+            np.asarray([[expected_hi, expected_cii], [expected_hi, .25 * expected_cii]]),
+        )
+        np.testing.assert_array_equal(outputs.image_payload['image_xy_origin'], [1, 2])
+
+        left = np.array([-2., -3., -1.])
+        right = np.array([3., 4., 1.])
+        snapshot.dataset = SimpleNamespace(
+            domain_left_edge=SimpleNamespace(to=lambda unit: SimpleNamespace(value=left)),
+            domain_right_edge=SimpleNamespace(to=lambda unit: SimpleNamespace(value=right)),
+        )
+        calculator = SimpleNamespace(
+            line_keys=LINE_KEYS,
+            dust_cross_section_cm2_H={'hi21': 0., 'cii': 1e-21},
+        )
+        add_output_metadata(
+            snapshot=snapshot,
+            emission_calculator=calculator,
+            outputs=outputs,
+        )
+        np.testing.assert_array_equal(
+            outputs.image_payload['x_edges_kpc'], np.linspace(-2., 3., 6)[1:5],
+        )
+        np.testing.assert_array_equal(
+            outputs.image_payload['y_edges_kpc'], np.linspace(-3., 4., 8)[2:7],
+        )
+        for payload in (outputs.image_payload, outputs.spectrum_payload, outputs.phase_payload):
+            self.assertTrue(bool(payload['processing_complete']))
+            self.assertFalse(bool(payload['full_snapshot']))
+            region = json.loads(str(payload['processing_region']))
+            self.assertEqual(region['xy_region'], {'x': [1, 4], 'y': [2, 6]})
+            self.assertEqual(region['z_index_range'], [0, 3])
+            self.assertEqual(region['shape'], [3, 4, 3])
+            self.assertEqual(region['cell_count'], 36)
+            self.assertEqual(region['projected_area_cm2'], 24.)
+
+    def test_equal_size_images_from_different_regions_cannot_merge(self):
+        images = LineLuminosityImageAccumulator(
+            line_keys=LINE_KEYS,
+            native_xy_shape=(3, 4),
+            image_xy_origin=(1, 2),
+        )
+        other = LineLuminosityImageAccumulator(
+            line_keys=LINE_KEYS,
+            native_xy_shape=(3, 4),
+            image_xy_origin=(2, 2),
+        )
+        with self.assertRaisesRegex(ValueError, 'different native x-y regions'):
+            images.merge(other)
+
     def test_product_geometry_survives_without_retaining_snapshot(self):
         class SnapshotGeometry:
             shape = (2, 3, 4)
             cell_count = 24
             projected_area_cm2 = 12.
+            processing_shape = shape
+            processing_cell_count = cell_count
+            processing_area_cm2 = projected_area_cm2
+            processing_xy_origin = (0, 0)
 
         snapshot = SnapshotGeometry()
         reference = weakref.ref(snapshot)
@@ -162,7 +292,7 @@ class ProductBatchTests(unittest.TestCase):
         self.assertEqual(products.images.native_images.shape, (2, 2, 2, 3))
 
     def test_outputs_are_built_before_separate_accounting_checks(self):
-        snapshot = SimpleNamespace(shape=(2, 3, 4), cell_count=24, projected_area_cm2=12.)
+        snapshot = snapshot_geometry(shape=(2, 3, 4), projected_area_cm2=12.)
         products = EmissionProducts(snapshot, LINE_KEYS, spectral_workers=1)
         products.mass_g['all'] = 1.  # Deliberately disagrees with cold + hot.
         outputs = products.build_outputs()
@@ -172,7 +302,7 @@ class ProductBatchTests(unittest.TestCase):
             products.check_outputs(outputs)
 
     def test_final_process_check_rejects_nonfinite_or_negative_light(self):
-        snapshot = SimpleNamespace(shape=(1, 1, 1), cell_count=1, projected_area_cm2=1.)
+        snapshot = snapshot_geometry(shape=(1, 1, 1), projected_area_cm2=1.)
         corrupt_fields = (
             ("image pixels", "image_payload", "line_luminosity_image_erg_s", np.nan),
             ("image pixels", "image_payload", "line_luminosity_image_erg_s", -1.),
@@ -259,7 +389,7 @@ class ProductBatchTests(unittest.TestCase):
                                       payload['dL_dv_erg_s_per_kms'][1, 0])
 
     def test_line_dictionary_order_does_not_change_images_spectra_or_totals(self):
-        snapshot = SimpleNamespace(shape=(2, 2, 2), cell_count=8, projected_area_cm2=12.)
+        snapshot = snapshot_geometry(shape=(2, 2, 2), projected_area_cm2=12.)
         declared = EmissionProducts(snapshot, LINE_KEYS, spectral_workers=1)
         reversed_dictionary = EmissionProducts(snapshot, LINE_KEYS, spectral_workers=1)
         for cells, emission in batches():
@@ -328,7 +458,7 @@ class ProductBatchTests(unittest.TestCase):
 
         images = LineLuminosityImageAccumulator(LINE_KEYS, (2, 2))
         phases = GasPhaseVelocityAccumulator(VELOCITY_EDGES)
-        snapshot = SimpleNamespace(shape=(2, 2, 2), cell_count=8, projected_area_cm2=12.)
+        snapshot = snapshot_geometry(shape=(2, 2, 2), projected_area_cm2=12.)
         accounting = EmissionProducts(snapshot, LINE_KEYS, spectral_workers=1)
         with patch.object(spectra, 'pack_available_line_fields', side_effect=remember_scratch):
             images.add_batch(cells, emission)
@@ -353,7 +483,7 @@ class ProductBatchTests(unittest.TestCase):
             )
             for row, key in enumerate(LINE_KEYS)
         })
-        snapshot = SimpleNamespace(shape=(2, 2, 2), cell_count=8, projected_area_cm2=12.)
+        snapshot = snapshot_geometry(shape=(2, 2, 2), projected_area_cm2=12.)
         products = EmissionProducts(snapshot, LINE_KEYS, spectral_workers=1)
         actual_intrinsic, actual_attenuated = products.sum_named_line_luminosities(
             emission=emission,

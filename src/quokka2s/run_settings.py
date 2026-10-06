@@ -19,6 +19,7 @@ _PROCESS_REQUIRED_PATHS = (
 )
 _PROCESS_OPTIONAL_PATHS = ("dust_opacity_table",)
 _PROCESS_INTEGERS = ("slab_nx", "query_chunk", "chunk_workers", "spectral_workers", "max_slabs")
+_PROCESS_INDEX_RANGES = ("x_index_range", "y_index_range")
 _PROCESS_DEFAULTS = {
     "dust_opacity_table": str(DEFAULT_DRAINE_TABLE),
     "slab_nx": 8,
@@ -26,6 +27,8 @@ _PROCESS_DEFAULTS = {
     "chunk_workers": 1,
     "spectral_workers": 6,
     "max_slabs": None,
+    "x_index_range": None,
+    "y_index_range": None,
 }
 _PLOT_REQUIRED_PATHS = ("products", "output_dir")
 _PLOT_OPTIONAL_PATHS = ("titled_output_dir",)
@@ -80,13 +83,33 @@ def _positive_int(name: str, value: object, *, nullable: bool = False) -> int | 
     return value
 
 
+def _index_range(name: str, value: object) -> tuple[int, int] | None:
+    """Read [start, stop] native cell indices, with stop excluded.
+
+    None selects the full axis. Snapshot checks the upper bound after loading
+    its geometry. Example: [64, 128] selects indices 64 through 127."""
+    if value is None:
+        return None
+    if (not isinstance(value, list) or len(value) != 2
+            or any(type(index) is not int for index in value)):
+        raise ValueError(f"{name} must contain two integer cell indices [start, stop]")
+    start, stop = value
+    if start < 0 or stop <= start:
+        raise ValueError(f"{name} must satisfy 0 <= start < stop")
+    return start, stop
+
+
 def load_process_config(path: str | Path) -> Namespace:
     """Read snapshot/table/output Paths and execution settings from process YAML.
 
     Paths are relative to the YAML directory. Slab and query sizes count cells;
-    worker settings count threads. Omitted optional settings receive defaults."""
+    worker settings count threads. x/y_index_range selects native cell indices;
+    omitted axes use the full extent. The z axis always remains complete."""
     required = set(_PROCESS_REQUIRED_PATHS)
-    allowed = required | set(_PROCESS_OPTIONAL_PATHS) | set(_PROCESS_INTEGERS)
+    allowed = (
+        required | set(_PROCESS_OPTIONAL_PATHS) | set(_PROCESS_INTEGERS)
+        | set(_PROCESS_INDEX_RANGES)
+    )
     config_path, supplied = _read_mapping(path, required, allowed)
     values = {**_PROCESS_DEFAULTS, **supplied}
     for name in _PROCESS_REQUIRED_PATHS:
@@ -95,6 +118,8 @@ def load_process_config(path: str | Path) -> Namespace:
         values[name] = _path_value(name, values[name], config_path.parent)
     for name in _PROCESS_INTEGERS:
         values[name] = _positive_int(name, values[name], nullable=name == "max_slabs")
+    for name in _PROCESS_INDEX_RANGES:
+        values[name] = _index_range(name, values[name])
     if values["query_chunk"] > 1000000:
         raise ValueError("query_chunk must be at most 1000000 cells")
     return Namespace(**values)

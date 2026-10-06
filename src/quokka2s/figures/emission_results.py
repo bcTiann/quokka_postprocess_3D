@@ -65,16 +65,20 @@ def load_emission_products(products_dir: str | Path) -> tuple[dict, dict]:
     ``images["line_luminosity_image_erg_s"][0]`` contains intrinsic images.
     """
     directory = Path(products_dir)
-    images = read_product_arrays(
-        path=directory / "images.npz",
-        required=(
+    with np.load(directory / "images.npz", allow_pickle=False) as saved_images:
+        image_fields = (
             "line_keys",
             "line_luminosity_image_erg_s",
             "x_edges_kpc",
             "y_edges_kpc",
             "full_snapshot",
-        ),
-    )
+        )
+        images = {key: saved_images[key].copy() for key in image_fields}
+        # Older full-box products have only full_snapshot as their completion flag.
+        completion_field = (
+            "processing_complete" if "processing_complete" in saved_images else "full_snapshot"
+        )
+        images["processing_complete"] = saved_images[completion_field].copy()
     spectra = read_product_arrays(
         path=directory / "spectra.npz",
         required=(
@@ -191,7 +195,7 @@ def plot_line_images(
     output : pathlib.Path
         Figure destination.
     diagnostic_suffix : str
-        Empty for full-snapshot products, otherwise "_partial_diagnostic".
+        Empty for a complete requested region, otherwise "_partial_diagnostic".
     titled : bool
         Include the line name and dust state in each figure title.
     formats : tuple of str
@@ -372,7 +376,7 @@ def plot_line_spectra(
     per_projected_area : bool
         Divide by saved projected_area_cm2 when True; dust states are unchanged.
     diagnostic_suffix : str
-        Empty for full-snapshot products, otherwise "_partial_diagnostic".
+        Empty for a complete requested region, otherwise "_partial_diagnostic".
     titled : bool
         Include the line name above each figure.
     formats : tuple of str
@@ -452,7 +456,7 @@ def plot_gas_phase_comparisons(
     output : pathlib.Path
         Figure destination.
     diagnostic_suffix : str
-        Empty for a complete snapshot, otherwise "_partial_diagnostic".
+        Empty for a complete requested region, otherwise "_partial_diagnostic".
     titled : bool
         Include the standalone title and phase-cut footer.
     formats : tuple of str
@@ -499,7 +503,8 @@ class SavedEmissionProducts:
     ----------
     images : dict of str to numpy.ndarray
         images.npz from load_emission_products(). Luminosities have shape
-        (2, 10, 256, 256) [erg/s per pixel]; x/y edges are in kpc.
+        (2, 10, selected_Nx, selected_Ny) [erg/s per pixel]; original global
+        x/y edges are in kpc. Full-box processing keeps (256, 256) pixels.
     spectra : dict of str to numpy.ndarray
         spectra.npz from load_emission_products(). Profiles have shape
         (2, 10, 2, 400) [erg/s/(km/s)], with saved channel centres and
@@ -574,7 +579,7 @@ def draw_emission_products(
     formats : tuple of str
         Output extensions, normally ("png", "pdf").
     allow_partial, titled : bool
-        Permit diagnostic subsets; include standalone titles.
+        Permit incomplete diagnostic products; include standalone titles.
     image_downsample_factor : int
         Pixels summed along each x/y axis for display; 1 retains native pixels.
 
@@ -593,11 +598,11 @@ def draw_emission_products(
     images = products.images
     spectra = products.spectra
     phase = products.gas_phases
-    full_snapshot = bool(images["full_snapshot"])
-    if not full_snapshot and not allow_partial:
+    processing_complete = bool(images["processing_complete"])
+    if not processing_complete and not allow_partial:
         raise ValueError("Partial diagnostic products require allow_partial=True")
     diagnostic_suffix = ""
-    if not full_snapshot:
+    if not processing_complete:
         diagnostic_suffix = "_partial_diagnostic"
 
     import matplotlib
@@ -667,7 +672,7 @@ def plot_emission_products(
     formats : tuple of str
         Output extensions, "png" and/or "pdf".
     allow_partial, titled : bool
-        Permit diagnostic subsets; include standalone figure titles.
+        Permit incomplete diagnostic products; include standalone figure titles.
     image_downsample_factor : int
         Pixels summed along each image axis for display; default 1.
 

@@ -16,7 +16,6 @@ from quokka2s.run_settings import load_process_config
 from quokka2s.processing_inputs import load_processing_inputs
 from quokka2s.result_files import write_products_and_report, write_status
 from quokka2s.products.emission_products import EmissionProducts
-from quokka2s.snapshot_reader import slab_windows
 
 
 def accumulate_batch(cells, emission_calculator: CellEmissionCalculator, products):
@@ -79,10 +78,9 @@ def process_parallel_batches(
     try:
         while pending:
             future, start, stop = pending.popleft()
-            offset = slab.first_cell_id
             products.failure_context = {
-                "first_cell_id": offset + start,
-                "last_cell_id": offset + stop - 1,
+                "first_cell_id": slab.cell_id_at(start),
+                "last_cell_id": slab.cell_id_at(stop - 1),
             }
             partial = future.result()
             products.merge(partial)
@@ -106,11 +104,14 @@ def duration_label(seconds):
 def select_slabs_to_process(config, snapshot):
     """Select core x windows without reading cells.
 
-    config.slab_nx limits each window's width; max_slabs optionally selects only
-    the first windows. read_slab() handles their gradient neighbours internally."""
-    # Select core ranges only; read_slab() handles all neighbour reads.
-    number_of_x_layers = snapshot.shape[0]  # 256 for this snapshot.
-    selected_slabs = list(slab_windows(number_of_x_layers, config.slab_nx))
+    snapshot.xy_region supplies the global x range. config.slab_nx limits each
+    window's width; max_slabs optionally selects its first windows. read_slab()
+    reads gradient neighbours from the original box, even outside the region."""
+    region_x_start, region_x_stop = snapshot.xy_region["x"]
+    selected_slabs = []
+    for x_start in range(region_x_start, region_x_stop, config.slab_nx):
+        x_stop = min(x_start + config.slab_nx, region_x_stop)
+        selected_slabs.append((x_start, x_stop))
     if config.max_slabs is not None:
         selected_slabs = selected_slabs[:config.max_slabs]
     return selected_slabs
@@ -119,8 +120,9 @@ def select_slabs_to_process(config, snapshot):
 def count_cells_in_slabs(snapshot, selected_slabs):
     """Count selected core cells for progress, excluding gradient neighbours.
 
-    snapshot supplies (Nx, Ny, Nz); each window is an exclusive x range."""
-    cells_per_x_layer = snapshot.shape[1] * snapshot.shape[2]  # 256 * 2048.
+    snapshot.processing_shape supplies selected Ny and full Nz; each window
+    is an exclusive global x range. Gradient neighbours are not counted."""
+    cells_per_x_layer = snapshot.processing_shape[1] * snapshot.processing_shape[2]
     total_cells = 0
     for window in selected_slabs:
         x_start, x_stop = window  # E.g. 0, 8; x_stop is excluded.

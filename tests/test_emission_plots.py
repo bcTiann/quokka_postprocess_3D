@@ -18,19 +18,30 @@ from quokka2s.plot_emission_results import main
 
 class EmissionPlotTests(unittest.TestCase):
     @staticmethod
-    def save_products(directory: Path, *, full_snapshot: bool = True) -> None:
+    def save_products(
+        directory: Path,
+        *,
+        full_snapshot: bool = True,
+        processing_complete: bool | None = None,
+        image_shape: tuple[int, int] = (256, 256),
+        image_xy_origin: tuple[int, int] = (0, 0),
+    ) -> None:
         """Write only the arrays actually consumed by the plotting stage."""
         keys = np.asarray(LINE_ORDER)
-        images = np.zeros((2, len(keys), 256, 256))
+        images = np.zeros((2, len(keys), *image_shape))
         images[:, 0, 10, 20] = (10.0, 4.0)
         images[:, 1, 40, 30] = 2.0
+        x_start, y_start = image_xy_origin
+        nx, ny = image_shape
+        complete = full_snapshot if processing_complete is None else processing_complete
         np.savez_compressed(
             directory / "images.npz",
             line_keys=keys,
             line_luminosity_image_erg_s=images,
-            x_edges_kpc=np.linspace(0.0, 1.0, 257),
-            y_edges_kpc=np.linspace(-0.5, 0.5, 257),
+            x_edges_kpc=np.linspace(0.0, 1.0, 257)[x_start:x_start + nx + 1],
+            y_edges_kpc=np.linspace(-0.5, 0.5, 257)[y_start:y_start + ny + 1],
             full_snapshot=np.asarray(full_snapshot),
+            processing_complete=np.asarray(complete),
         )
         edges = np.linspace(-200.0, 200.0, 401)
         spectra = np.zeros((2, len(keys), 2, 400))
@@ -131,6 +142,45 @@ class EmissionPlotTests(unittest.TestCase):
             phase = load_phase_velocity_products(root)
             for payload in (images, spectra, phase):
                 self.assertNotIn("unused_metadata", payload)
+
+    def test_completed_region_uses_global_edges_without_partial_diagnostic_flag(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.save_products(
+                root,
+                full_snapshot=False,
+                processing_complete=True,
+                image_shape=(64, 32),
+                image_xy_origin=(64, 80),
+            )
+            images, _ = load_emission_products(root)
+            self.assertFalse(bool(images['full_snapshot']))
+            self.assertTrue(bool(images['processing_complete']))
+            np.testing.assert_array_equal(images['x_edges_kpc'], np.linspace(0., 1., 257)[64:129])
+            np.testing.assert_array_equal(images['y_edges_kpc'], np.linspace(-.5, .5, 257)[80:113])
+            with patch('quokka2s.figures.emission_results.plot_line_images', return_value=[]) as image_plot, \
+                    patch('quokka2s.figures.emission_results.plot_line_spectra', return_value=[]) as spectrum_plot, \
+                    patch('quokka2s.figures.emission_results.plot_gas_phase_comparisons', return_value=[]) as phase_plot:
+                plot_emission_products(
+                    products_dir=root,
+                    output_dir=root / 'plots',
+                    formats=('png',),
+                )
+            self.assertEqual(image_plot.call_args.kwargs['image_values'].shape, (2, 10, 64, 32))
+            for plot in (image_plot, spectrum_plot, phase_plot):
+                self.assertEqual(plot.call_args.kwargs['diagnostic_suffix'], '')
+
+    def test_legacy_products_use_full_snapshot_as_completion_flag(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for full_snapshot in (True, False):
+                with self.subTest(full_snapshot=full_snapshot):
+                    self.save_products(root, full_snapshot=full_snapshot)
+                    with np.load(root / 'images.npz', allow_pickle=False) as saved:
+                        fields = {key: saved[key] for key in saved.files if key != 'processing_complete'}
+                    np.savez_compressed(root / 'images.npz', **fields)
+                    images, _ = load_emission_products(root)
+                    self.assertEqual(bool(images['processing_complete']), full_snapshot)
 
     def test_partial_products_require_explicit_diagnostic_flag(self):
         with TemporaryDirectory() as tmp:

@@ -72,6 +72,8 @@ def write_products_and_report(
         counts=products.counts,
         began=began,
         state=report['status'],
+        processing_complete=outputs.processing_complete,
+        full_snapshot=outputs.full_snapshot,
     )
 
 
@@ -85,8 +87,11 @@ def add_output_metadata(
     outputs comes from products.build_outputs(). Updates its payloads in place;
     no numerical field values change. Image edges are saved in kpc.
     """
+    processing_region = build_processing_region_metadata(snapshot=snapshot)
     for product in (outputs.image_payload, outputs.spectrum_payload, outputs.phase_payload):
         product['full_snapshot'] = np.asarray(outputs.full_snapshot)
+        product['processing_complete'] = np.asarray(outputs.processing_complete)
+        product['processing_region'] = np.asarray(json.dumps(processing_region))
     add_dust_metadata(
         emission_calculator=emission_calculator,
         image_payload=outputs.image_payload,
@@ -120,17 +125,36 @@ def add_dust_metadata(
         product['dust_observer_side'] = np.asarray('outer -z boundary face')
 
 
-def add_image_geometry(snapshot: Snapshot, image_payload):
-    """Add native x/y edges in kpc to the image dict from products.build_outputs().
+def build_processing_region_metadata(snapshot: Snapshot) -> dict:
+    """Describe selected native index bounds, counts and x-y area [cm^2].
 
-    snapshot comes from open_snapshot(). For (256, 256, 2048), the saved x/y
-    edge arrays each have shape (257,); line_of_sight is the scalar string z.
+    Bounds exclude the stop index. z always spans the original snapshot.
+    The same small dictionary is saved as JSON in the report and each NPZ.
+    """
+    return {
+        'xy_region': {axis: list(bounds) for axis, bounds in snapshot.xy_region.items()},
+        'z_index_range': [0, snapshot.shape[2]],
+        'shape': list(snapshot.processing_shape),
+        'cell_count': snapshot.processing_cell_count,
+        'projected_area_cm2': snapshot.processing_area_cm2,
+    }
+
+
+def add_image_geometry(snapshot: Snapshot, image_payload):
+    """Slice original native x/y edges [kpc] for the selected image region.
+
+    For x=64:128, 65 original x edges are saved; pixel widths and global
+    coordinates stay unchanged. line_of_sight remains the scalar string z.
     """
     left_kpc = snapshot.dataset.domain_left_edge.to('kpc').value
     right_kpc = snapshot.dataset.domain_right_edge.to('kpc').value
+    x_edges_kpc = np.linspace(left_kpc[0], right_kpc[0], snapshot.shape[0] + 1)
+    y_edges_kpc = np.linspace(left_kpc[1], right_kpc[1], snapshot.shape[1] + 1)
+    x_start, x_stop = snapshot.xy_region['x']
+    y_start, y_stop = snapshot.xy_region['y']
     image_payload.update(
-        x_edges_kpc=np.linspace(left_kpc[0], right_kpc[0], snapshot.shape[0] + 1),
-        y_edges_kpc=np.linspace(left_kpc[1], right_kpc[1], snapshot.shape[1] + 1),
+        x_edges_kpc=x_edges_kpc[x_start:x_stop + 1],
+        y_edges_kpc=y_edges_kpc[y_start:y_stop + 1],
         line_of_sight=np.asarray('z'),
     )
 
@@ -182,8 +206,10 @@ def build_processing_report(
     mass = products.mass_g
     result = {
         # Run status and the saved array organization.
-        'status': 'completed' if full else 'partial diagnostic',
+        'status': 'completed' if outputs.processing_complete else 'partial diagnostic',
         'full_snapshot': full,
+        'processing_complete': outputs.processing_complete,
+        'processing_region': build_processing_region_metadata(snapshot=snapshot),
         'completed_at': datetime.now(timezone.utc).isoformat(),
         'counts': products.counts,
         'mass_g': mass,

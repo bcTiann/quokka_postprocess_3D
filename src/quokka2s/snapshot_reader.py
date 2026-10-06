@@ -20,6 +20,9 @@ class Snapshot:
     dataset : yt dataset
         Returned by yt.load() in processing_inputs.open_snapshot(). Opening it reads
         snapshot metadata; cell fields are loaded later by read_slab().
+    xy_region : dict, optional
+        Native cell-index bounds, e.g. {'x': (64, 128), 'y': (80, 144)}.
+        Stops are excluded; omitted axes span the original box. z is always full.
 
     Geometry properties are calculated from this dataset, so callers do not
     repeat its shape, cell widths, or volume in the constructor.
@@ -28,6 +31,29 @@ class Snapshot:
     """
 
     dataset: object
+    xy_region: dict | None = None
+
+    def __post_init__(self):
+        """Resolve the selected x/y bounds once, without changing native geometry."""
+        if self.shape[0] < 2:
+            raise ValueError('Native x dimension must be at least two cells')
+        requested = {} if self.xy_region is None else self.xy_region
+        if not isinstance(requested, dict) or set(requested) - {'x', 'y'}:
+            raise ValueError('xy_region must contain only x and y cell-index ranges')
+        normalized = {}
+        for axis, size in zip(('x', 'y'), self.shape[:2]):
+            bounds = requested.get(axis)
+            if bounds is None:
+                bounds = (0, size)
+            if not isinstance(bounds, (tuple, list)) or len(bounds) != 2:
+                raise ValueError(f'xy_region.{axis} must be a two-integer range')
+            start, stop = bounds
+            if type(start) is not int or type(stop) is not int:
+                raise ValueError(f'xy_region.{axis} must use integer cell indices')
+            if not 0 <= start < stop <= size:
+                raise ValueError(f'xy_region.{axis} must satisfy 0 <= start < stop <= {size}')
+            normalized[axis] = (start, stop)
+        object.__setattr__(self, 'xy_region', normalized)
 
     @cached_property
     def shape(self) -> tuple[int, int, int]:
@@ -55,8 +81,34 @@ class Snapshot:
         """Total native cells, e.g. 256 * 256 * 2048 = 134217728."""
         return int(np.prod(self.shape))
 
+    @cached_property
+    def processing_shape(self) -> tuple[int, int, int]:
+        """Selected native cell counts, e.g. (64, 64, 2048), with full z depth."""
+        x_start, x_stop = self.xy_region['x']
+        y_start, y_stop = self.xy_region['y']
+        return x_stop - x_start, y_stop - y_start, self.shape[2]
+
+    @cached_property
+    def processing_cell_count(self) -> int:
+        """Number of selected cells before any diagnostic max_slabs limit."""
+        return int(np.prod(self.processing_shape))
+
+    @cached_property
+    def processing_area_cm2(self) -> float:
+        """Selected x-y area [cm^2], retaining original native pixel widths."""
+        if self.processing_shape[:2] == self.shape[:2]:
+            return self.projected_area_cm2
+        nx, ny = self.processing_shape[:2]
+        area = nx * self.cell_widths[0] * ny * self.cell_widths[1]
+        return float(area.to('cm**2').value)
+
+    @cached_property
+    def processing_xy_origin(self) -> tuple[int, int]:
+        """Selected image's lower native cell indices, e.g. (64, 80)."""
+        return self.xy_region['x'][0], self.xy_region['y'][0]
+
     def read_slab(self, x_start: int, x_stop: int) -> SlabArrays:
-        """Return processed fields for the requested x layers and the full y-z plane.
+        """Derive fields on original neighbours, then retain selected y rows.
 
         Parameters
         ----------
@@ -67,7 +119,7 @@ class Snapshot:
         Returns
         -------
         SlabArrays
-            Six read-only arrays of shape (slab_nx * Ny * Nz,), flattened in
+            Six read-only arrays of shape (slab_nx * selected_Ny * Nz,), flattened in
             C order. Units are specified by SlabArrays. Foreground NH comes from
             observer_side_hydrogen_column(); shielding NH and dVdr come from
             physics.gas_fields.shielding_hydrogen_column() and velocity_gradient().
@@ -125,7 +177,19 @@ class Snapshot:
         # The returned NumPy arrays own their data; release the yt grid.
         del grid
 
-        # 6. Flatten each field: (8, 256, 2048) -> (4194304,).
+        # 6. Crop only after columns and gradients use the original neighbours.
+        # Copy even a one-x-layer crop so it cannot retain the full y arrays.
+        y_start, y_stop = self.xy_region['y']
+        if y_start != 0 or y_stop != self.shape[1]:
+            selected_y = slice(y_start, y_stop)
+            density = density[:, selected_y, :].copy(order='C')
+            temperature = temperature[:, selected_y, :].copy(order='C')
+            velocity_z = velocity_z[:, selected_y, :].copy(order='C')
+            foreground_column = foreground_column[:, selected_y, :].copy(order='C')
+            shielding_column = shielding_column[:, selected_y, :].copy(order='C')
+            velocity_gradient = velocity_gradient[:, selected_y, :].copy(order='C')
+
+        # 7. Flatten each field: (8, 64, 2048) -> (1048576,) for y=80:144.
         # z varies fastest, followed by y, then x.
         slab = SlabArrays(
             density_g_cm3=density.ravel(),
@@ -135,8 +199,10 @@ class Snapshot:
             velocity_gradient_s=velocity_gradient.ravel(),
             velocity_z_kms=velocity_z.ravel(),
             x_start=x_start,
-            shape=(x_stop - x_start, self.shape[1], self.shape[2]),
+            shape=(x_stop - x_start, y_stop - y_start, self.shape[2]),
             cell_volume_cm3=self.cell_volume_cm3,
+            y_start=y_start,
+            native_y_size=self.shape[1],
         )
 
         # Later batches may read these arrays but must not modify them.
@@ -167,14 +233,19 @@ class CellBatch:
     x_start : int
         First x index of the parent slab in the full grid.
     slab_shape : tuple of three int
-        Parent core-slab dimensions (slab_nx, Ny, Nz).
+        Retained core-slab dimensions (slab_nx, selected_Ny, Nz).
     batch_start : int
         First cell index within the C-order flattened slab; z varies fastest.
     cell_volume_cm3 : float
         Native volume of each cell [cm^3].
+    y_start : int, optional
+        First retained y index in the original grid; zero for the full-y default.
+    native_y_size : int, optional
+        Original Ny for global IDs; defaults to slab_shape[1] for full-y batches.
 
     first_cell_id and last_cell_id are derived properties: the inclusive
-    cell IDs in the C-order flattened full grid.
+    endpoint IDs in the C-order flattened full grid. A selected-y batch can
+    skip native IDs between its x layers.
 
     The six input arrays are views, with no averaging or copying. They retain
     their parent arrays; batches from read_slab() are read-only.
@@ -191,6 +262,12 @@ class CellBatch:
     slab_shape: tuple[int, int, int]
     batch_start: int
     cell_volume_cm3: float
+    y_start: int = 0
+    native_y_size: int | None = None
+
+    def __post_init__(self):
+        if self.native_y_size is None:
+            object.__setattr__(self, 'native_y_size', self.slab_shape[1])
 
     @cached_property
     def hydrogen_density_cm3(self) -> np.ndarray:
@@ -214,13 +291,22 @@ class CellBatch:
     @property
     def first_cell_id(self) -> int:
         """Full-grid ID of the first cell; z varies fastest, then y, then x."""
-        cells_per_x_layer = self.slab_shape[1] * self.slab_shape[2]
-        return int(self.x_start * cells_per_x_layer + self.batch_start)
+        return self.cell_id_at(self.batch_start)
 
     @property
     def last_cell_id(self) -> int:
         """Inclusive full-grid ID of the last cell in this batch."""
-        return self.first_cell_id + self.cell_count - 1
+        return self.cell_id_at(self.batch_start + self.cell_count - 1)
+
+    def cell_id_at(self, slab_index: int) -> int:
+        """Map an index in the compact parent slab to its original full-grid ID."""
+        return native_cell_id(
+            slab_index=slab_index,
+            x_start=self.x_start,
+            y_start=self.y_start,
+            slab_shape=self.slab_shape,
+            native_y_size=self.native_y_size,
+        )
 
 
 @dataclass(frozen=True)
@@ -241,6 +327,10 @@ class SlabArrays:
         Retained slab dimensions, e.g. (8, 256, 2048), without neighbour layers.
     cell_volume_cm3 : float
         Volume of one original cell [cm^3], copied from Snapshot.
+    y_start : int, optional
+        First retained y index in the original grid; normally zero or the region start.
+    native_y_size : int, optional
+        Original Ny for global IDs; defaults to shape[1] for full-y slabs.
 
     S = slab_nx * Ny * Nz. Arrays use C order, with z varying fastest.
     read_slab() removes the x halos and marks these arrays read-only.
@@ -255,6 +345,12 @@ class SlabArrays:
     x_start: int
     shape: tuple[int, int, int]
     cell_volume_cm3: float
+    y_start: int = 0
+    native_y_size: int | None = None
+
+    def __post_init__(self):
+        if self.native_y_size is None:
+            object.__setattr__(self, 'native_y_size', self.shape[1])
 
     @property
     def cell_count(self) -> int:
@@ -264,8 +360,21 @@ class SlabArrays:
     @property
     def first_cell_id(self) -> int:
         """Full-grid ID of this slab's first cell, for batch-failure reports."""
-        cells_per_x_layer = self.shape[1] * self.shape[2]
-        return int(self.x_start * cells_per_x_layer)
+        return self.cell_id_at(0)
+
+    def cell_id_at(self, slab_index: int) -> int:
+        """Map a compact slab index to its original full-grid ID.
+
+        Example: for shape=(2, 2, 4), x_start=3, y_start=1, native_y_size=5,
+        compact indices 7 and 8 have native IDs 71 and 84, respectively.
+        """
+        return native_cell_id(
+            slab_index=slab_index,
+            x_start=self.x_start,
+            y_start=self.y_start,
+            slab_shape=self.shape,
+            native_y_size=self.native_y_size,
+        )
 
     def batch(self, start: int, stop: int) -> CellBatch:
         """Select views and preserve each cell's original grid location.
@@ -299,7 +408,20 @@ class SlabArrays:
             slab_shape=self.shape,
             batch_start=start,
             cell_volume_cm3=self.cell_volume_cm3,
+            y_start=self.y_start,
+            native_y_size=self.native_y_size,
         )
+
+
+def native_cell_id(slab_index, x_start, y_start, slab_shape, native_y_size):
+    """Map one C-order compact slab index to the original grid, with full z depth."""
+    selected_y_size = slab_shape[1]
+    nz = slab_shape[2]
+    local_x, within_x_layer = divmod(slab_index, selected_y_size * nz)
+    local_y, z_index = divmod(within_x_layer, nz)
+    x_index = x_start + local_x
+    y_index = y_start + local_y
+    return int((x_index * native_y_size + y_index) * nz + z_index)
 
 
 def slab_windows(nx, slab_nx):
@@ -308,7 +430,7 @@ def slab_windows(nx, slab_nx):
     Parameters
     ----------
     nx : int
-        Full x dimension, normally snapshot.shape[0]; at least two cells.
+        Number of x cells to process; a selected region can be one cell wide.
     slab_nx : int
         Maximum number of core x cells in each slab.
 
@@ -323,8 +445,8 @@ def slab_windows(nx, slab_nx):
     >>> list(slab_windows(5, 3))
     [(0, 3), (3, 5)]
     """
-    if nx < 2 or slab_nx < 1:
-        raise ValueError('x dimension must be at least two and slab size positive')
+    if nx < 1 or slab_nx < 1:
+        raise ValueError('x dimension and slab size must be positive')
     for x_start in range(0, nx, slab_nx):
         x_stop = min(x_start + slab_nx, nx)
         yield x_start, x_stop

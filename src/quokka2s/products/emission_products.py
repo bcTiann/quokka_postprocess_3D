@@ -28,7 +28,9 @@ class EmissionOutputs:
     Attributes
     ----------
     full_snapshot : bool
-        Whether the processed cell count equals the snapshot grid size.
+        Whether the complete original snapshot was processed.
+    processing_complete : bool
+        Whether every cell in the requested x-y region was processed.
     image_payload : dict
         Native images [erg/s], ordered (dust state, line, x, y).
     spectrum_payload : dict
@@ -42,6 +44,7 @@ class EmissionOutputs:
     """
 
     full_snapshot: bool
+    processing_complete: bool
     image_payload: dict
     spectrum_payload: dict
     phase_payload: dict
@@ -58,7 +61,8 @@ class EmissionProducts:
         Parameters
         ----------
         snapshot : Snapshot
-            From load_processing_inputs(); shape supplies the native image size.
+            From load_processing_inputs(); processing_shape supplies the selected
+            native image size, with the original z depth.
         line_keys : sequence of str
             From CellEmissionCalculator.line_keys; fixes the line order of every accumulator.
         spectral_workers : int
@@ -77,8 +81,9 @@ class EmissionProducts:
         self.line_keys = tuple(line_keys)
         # Retain only the small geometry values needed when finalizing.
         # Do not retain the dataset or lookup tables in a product accumulator.
-        self.expected_cell_count = snapshot.cell_count  # Full box: 134,217,728.
-        self.projected_area_cm2 = snapshot.projected_area_cm2  # Full x-y area.
+        self.expected_cell_count = snapshot.processing_cell_count
+        self.snapshot_cell_count = snapshot.cell_count
+        self.projected_area_cm2 = snapshot.processing_area_cm2
         velocity_edges_kms = np.linspace(
             -VELOCITY_RANGE_KMS,
             VELOCITY_RANGE_KMS,
@@ -86,8 +91,9 @@ class EmissionProducts:
         )
 
         self.images = LineLuminosityImageAccumulator(
-            self.line_keys,       # ("cii", "halpha", "hi21", "ciii_977", "ciii_1907", "ciii_1909", "civ_1548", "civ_1551", "co10", "co21")
-            snapshot.shape[:2],  # (256, 256): x and y pixel counts.
+            line_keys=self.line_keys,
+            native_xy_shape=snapshot.processing_shape[:2],
+            image_xy_origin=snapshot.processing_xy_origin,
         )
         self.spectra = IntegratedSpectra(
             line_keys=self.line_keys,
@@ -288,8 +294,12 @@ class EmissionProducts:
         )
         image_payload = self.images.build_output()
         phase_payload, phase_report = self.phases.build_output()
+        processing_complete = self.counts['all'] == self.expected_cell_count
         return EmissionOutputs(
-            full_snapshot=self.counts['all'] == self.expected_cell_count,
+            full_snapshot=(
+                processing_complete and self.expected_cell_count == self.snapshot_cell_count
+            ),
+            processing_complete=processing_complete,
             image_payload=image_payload,
             spectrum_payload=spectrum_payload,
             phase_payload=phase_payload,

@@ -41,6 +41,11 @@ def calculate_slice_fields(snapshot, emission_calculator, slice_index, query_chu
     mask means mixed temperature is available: cold cells require T_DESPOTIC,
     hot cells use T_QUOKKA regardless of DESPOTIC or line-emissivity failures.
     """
+    if snapshot.processing_shape != snapshot.shape:
+        raise ValueError(
+            'Table-input slices require full x and y ranges; use the standard '
+            'process/plot workflow for region line images, spectra, and gas phases'
+        )
     if not 0 <= slice_index < snapshot.shape[0]:
         raise ValueError(f'slice_index must be in [0, {snapshot.shape[0]})')
     slab = snapshot.read_slab(

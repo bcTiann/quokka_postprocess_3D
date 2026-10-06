@@ -43,10 +43,12 @@ belongs to [result_files.py](../src/quokka2s/result_files.py);
 [products/emission_products.py](../src/quokka2s/products/emission_products.py) groups the accumulated products.
 The objects group related variables; they are not extra copies of the snapshot:
 
-- `snapshot` is constructed from the yt dataset alone. Its geometry properties
-  derive shape, cell widths/volume, full cell count, and projected area from that
-  dataset; `snapshot.read_slab()` loads cell fields. It does not carry physical
-  settings or function modules as attributes.
+- `snapshot` holds the yt dataset and an optional `xy_region` of native index
+  bounds. `shape`, cell widths/volume, `cell_count`, and `projected_area_cm2`
+  describe the original box. `processing_shape`, `processing_cell_count`,
+  `processing_area_cm2`, and `processing_xy_origin` describe the selected region.
+  `snapshot.read_slab()` loads cell fields; physical settings and function
+  modules are not attributes.
 - `emission_calculator` is a `CellEmissionCalculator`. It holds the DESPOTIC
   and Cloudy readers, ten line names, and named dust cross-sections. Each reader
   holds its fixed lookup table. These objects are created once and shared across
@@ -57,7 +59,7 @@ The objects group related variables; they are not extra copies of the snapshot:
   cell IDs are calculated properties, so callers cannot provide conflicting IDs.
 - `products` holds the running sums: luminosity images, spectra, gas-phase
   statistics, total luminosities, cell counts, and mass totals. It saves the
-  expected full-cell count and projected area at construction, so `build_outputs()`
+  expected selected-cell count and projected area at construction, so `build_outputs()`
   needs no arguments and products retain no dataset/table references.
 
 Slab reads, table queries, and spectrum accumulation remain explicit actions.
@@ -68,7 +70,8 @@ is no second stored mask that can disagree with the values.
 Inside `load_processing_inputs(config)`, follow three named steps:
 
 1. `check_input_paths()` checks the configured input and output locations.
-2. `open_snapshot()` opens yt and obtains the grid shape, widths and volume.
+2. `open_snapshot()` opens yt, obtains the original grid geometry, and records
+   any x/y selection from the YAML.
 3. `load_emission_calculator()` loads the tables, creates their cell readers,
    and prepares the per-line dust cross-sections. It derives line names once
    from Cloudy plus `co10` and `co21`, then constructs `CellEmissionCalculator`.
@@ -114,7 +117,9 @@ Read `read_slab()` from top to bottom as these steps:
 3. `calculate_dust_foreground_column()` calculates the column to the observer.
 4. `calculate_shielding_column()` calculates the +z/-z harmonic-mean column.
 5. `calculate_core_velocity_gradient()` calculates dV/dr using neighbours.
-6. Release the yt grid and flatten the six arrays into `SlabArrays`.
+6. Release the yt grid; for a region, copy only the selected y rows after all
+   column and gradient calculations. Flatten the six retained arrays into
+   `SlabArrays`.
 
 All six numerical field arrays retain their three-dimensional core-slab shape
 until the final flattening in `read_slab()`.
@@ -147,6 +152,15 @@ interpreted in kelvin. Plain arrays do not retain a yt unit object; names and
 interfaces state their units. Cell widths and volume come from yt conversions.
 Hydrogen density `nH` is calculated later for each query batch, not retained
 as a seventh slab array.
+
+For `x_index_range: [64, 128]` and `y_index_range: [32, 96]`, slabs cover
+global x ranges `64:72`, `72:80`, ..., `120:128`. Each read first calculates
+fields with all 256 original y rows and full z, then retains y=32:96.
+The returned slab shape is `(8, 64, 2048)`. Its `y_start=32` and
+`native_y_size=256` retain the original positions. Images subtract the region's
+origin `(64, 32)` to map these cells to local pixels. Original full-grid cell
+IDs skip the unselected y rows between x layers; they are not a contiguous
+range from first to last.
 
 ## 3. Calculate one batch: `emission_calculator.calculate()`
 
@@ -325,7 +339,7 @@ gas-phase statistics. `missing_emissivity_cells` and
 | Product | File and function | Calculation |
 |---|---|---|
 | Image | [products/line_luminosity_images.py](../src/quokka2s/products/line_luminosity_images.py), `LineLuminosityImageAccumulator.add_batch()` | Find each cell's native `(x,y)` pixel and add `epsilon * volume`; all z cells on that sightline add to the same pixel |
-| Spectrum | [products/integrated_spectra.py](../src/quokka2s/products/integrated_spectra.py), `IntegratedSpectra.add_batch()` | Centre the line at cell `vz`, integrate its thermal Gaussian over velocity channels, and add luminosity to the whole-box spectrum |
+| Spectrum | [products/integrated_spectra.py](../src/quokka2s/products/integrated_spectra.py), `IntegratedSpectra.add_batch()` | Centre the line at cell `vz`, integrate its thermal Gaussian over velocity channels, and add luminosity to the selected region's integrated spectrum |
 | Gas phases | [products/gas_phase_velocity.py](../src/quokka2s/products/gas_phase_velocity.py), `GasPhaseVelocityAccumulator.add_batch()` | Assign the mixed-temperature phase, add cell mass to its velocity channel, and accumulate velocity moments |
 
 Image accumulation uses the native 256 × 256 sightlines. Spectrum accumulation

@@ -73,6 +73,11 @@ def accumulate_phase_batch(histograms, cells, emission_calculator):
 
 def process_phase_histograms(snapshot, emission_calculator, settings):
     """Read one slab at a time and retain only small accumulated 0.2-dex bins."""
+    if snapshot.processing_shape != snapshot.shape:
+        raise ValueError(
+            'Emission phase histograms require full x and y ranges; use the standard '
+            'process/plot workflow for region line images, spectra, and gas phases'
+        )
     histograms = {key: DexHistogram(step=0.2) for key, _, _ in PANELS}
     totals = {
         'processed_cells': 0,

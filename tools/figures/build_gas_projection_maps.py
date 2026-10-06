@@ -100,6 +100,11 @@ def accumulate_projection_slab(
 
 def process_gas_projection_maps(snapshot, emission_calculator, settings):
     """Keep only the accumulated 2D maps while streaming through all x slabs."""
+    if snapshot.processing_shape != snapshot.shape:
+        raise ValueError(
+            'Gas projection maps require full x and y ranges; use the standard '
+            'process/plot workflow for region line images, spectra, and gas phases'
+        )
     accumulator = MultiviewAccumulator(
         shape=snapshot.shape,
         widths_cm=snapshot.cell_widths.to('cm').value,

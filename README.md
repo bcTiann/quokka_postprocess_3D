@@ -25,9 +25,9 @@ runtime/       intermediate Cloudy build files and logs (local)
 See the [directory guide](docs/repository_layout.md) for file locations and
 a suggested reading order.
 
-The current workflow makes LOS-z images, whole-box spectra, and gas-phase
-velocity distributions. It keeps all native simulation cells during processing.
-Images may be binned later for plotting.
+The current workflow makes LOS-z images, integrated spectra, and gas-phase
+velocity distributions for the full box or a selected x-y region. It keeps the
+native cell resolution and full z depth. Images may be binned later for plotting.
 
 ## Set up a new environment and run with existing tables
 
@@ -210,7 +210,33 @@ The worker counts multiply: this configuration permits up to 2 × 3 spectral
 threads. Reading slabs remains sequential. More workers do not necessarily
 make a complete run faster; select them using end-to-end timing and memory
 measurements. `max_slabs: 1` in a separate YAML makes a labelled partial
-run for debugging. Omit it for the full snapshot.
+run for debugging. Omit it to finish the selected region or full snapshot.
+
+### Select an x-y region
+
+Copy the process YAML and add native cell-index ranges:
+
+```yaml
+x_index_range: [64, 128]
+y_index_range: [32, 96]
+output_dir: ../output/plt0655228/region_x64_128_y32_96/processed
+```
+
+Indices start at zero and the stop is excluded: this example selects
+`64 × 64 × 2048` cells. An omitted axis uses its full extent; z always spans
+the original box. No cell averaging is performed. Gradients use neighbours
+from the original simulation, and both shielding and dust columns use the
+complete original z column.
+
+Run the copied YAML with the same process command. In a copied plot YAML,
+point `products` at this region's processed directory and choose new figure
+directories. The region's images retain their physical x/y coordinates.
+Its spectra, full-profile sigma, and gas-phase statistics use only selected
+cells; spectra per projected area use the region's x-y area. A finished region
+is a complete result and does not require `allow_partial`.
+Plot-time pixel binning must divide both selected image dimensions; the default
+factor of 1 works for any region. The separate slice, multiview-map and emission
+phase-histogram tools still use full-box configurations.
 
 ## What processing saves
 
@@ -223,6 +249,11 @@ For the current 256 × 256 × 2048 snapshot and ten transitions:
 | `phase_velocity.npz` | Mass velocity histograms and moments for five gas phases and all gas | Histograms `(6, 400)`, g per channel |
 | `emission_report.json` | Input paths, snapshot grid, physical settings, cell counts, omitted mass, and luminosity checks | Human-readable run record |
 | `status.json` | Running, failed, partial, or completed status | Progress and elapsed time |
+
+For a region, the last two image axes are its selected x/y cell counts.
+The report records the selected indices, shape, cell count and projected area;
+the original simulation geometry is also retained. The other array dimensions
+remain unchanged.
 
 The two dust states are intrinsic and attenuated; the two regimes are selected
 by `T_QUOKKA < 3000 K` and `T_QUOKKA >= 3000 K`. Spectra have 400 channels

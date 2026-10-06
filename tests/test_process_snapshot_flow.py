@@ -38,6 +38,9 @@ class FakeSlab:
             cell_count=stop - start,
         )
 
+    def cell_id_at(self, slab_index):
+        return self.first_cell_id + slab_index
+
 
 class ProcessSnapshotFlowTests(unittest.TestCase):
     def run_small_snapshot(self, *, workers, max_slabs=None, fail_at=None,
@@ -51,7 +54,11 @@ class ProcessSnapshotFlowTests(unittest.TestCase):
             max_slabs=max_slabs,
             output_dir=Path("unused-test-output"),
         )
-        snapshot = SimpleNamespace(shape=(10, 2, 3))
+        snapshot = SimpleNamespace(
+            shape=(10, 2, 3),
+            xy_region={"x": (0, 10), "y": (0, 2)},
+            processing_shape=(10, 2, 3),
+        )
         shared_calculator = SimpleNamespace(line_keys=())
         products = FakeProducts()
         windows_read = []
@@ -174,6 +181,21 @@ class ProcessSnapshotFlowTests(unittest.TestCase):
         self.assertEqual(len(windows), 3)
         self.assertEqual(progress[-1]["progress_percent"], 100.)
         self.assertIn("100.0% (3/3 slabs)", output)
+
+    def test_region_slabs_keep_global_x_indices_and_count_selected_y_only(self):
+        config = SimpleNamespace(slab_nx=4, max_slabs=None)
+        snapshot = SimpleNamespace(
+            shape=(16, 8, 6),
+            xy_region={"x": (5, 14), "y": (2, 5)},
+            processing_shape=(9, 3, 6),
+        )
+        windows = processing.select_slabs_to_process(config, snapshot)
+        self.assertEqual(windows, [(5, 9), (9, 13), (13, 14)])
+        self.assertEqual(processing.count_cells_in_slabs(snapshot, windows), 9 * 3 * 6)
+        config.max_slabs = 1
+        windows = processing.select_slabs_to_process(config, snapshot)
+        self.assertEqual(windows, [(5, 9)])
+        self.assertEqual(processing.count_cells_in_slabs(snapshot, windows), 4 * 3 * 6)
 
     def test_serial_slab_is_released_before_progress_and_next_read(self):
         self.run_small_snapshot(workers=1, check_release=True)

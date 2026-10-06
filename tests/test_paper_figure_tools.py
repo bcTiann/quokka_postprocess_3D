@@ -47,6 +47,7 @@ class PaperFigureToolsTests(unittest.TestCase):
         )
         snapshot = SimpleNamespace(
             shape=slab.shape,
+            processing_shape=slab.shape,
             cell_volume_cm3=slab.cell_volume_cm3,
             read_slab=Mock(return_value=slab),
             dataset=SimpleNamespace(
@@ -106,6 +107,34 @@ class PaperFigureToolsTests(unittest.TestCase):
         )
         self.assertEqual(counts['retained'], 4)
         self.assertEqual(masses['retained'], 20.)
+
+    def test_full_box_figure_tools_reject_a_region_before_reading_cells(self):
+        snapshot = SimpleNamespace(
+            shape=(4, 5, 6),
+            processing_shape=(2, 3, 6),
+            read_slab=Mock(),
+        )
+        emission_calculator = SimpleNamespace(calculate=Mock())
+        settings = SimpleNamespace()
+        calls = (
+            ('build_table_input_slice.py', 'calculate_slice_fields',
+             {'slice_index': 1, 'query_chunk': 10}),
+            ('build_gas_projection_maps.py', 'process_gas_projection_maps',
+             {'settings': settings}),
+            ('build_emission_phase_histograms.py', 'process_phase_histograms',
+             {'settings': settings}),
+        )
+        for filename, function_name, kwargs in calls:
+            with self.subTest(tool=filename):
+                script = load_figure_script(filename)
+                with self.assertRaisesRegex(ValueError, 'require full x and y ranges'):
+                    getattr(script, function_name)(
+                        snapshot=snapshot,
+                        emission_calculator=emission_calculator,
+                        **kwargs,
+                    )
+        snapshot.read_slab.assert_not_called()
+        emission_calculator.calculate.assert_not_called()
 
     def test_phase_batch_uses_the_calculator_result_without_an_extra_query(self):
         script = load_figure_script('build_emission_phase_histograms.py')

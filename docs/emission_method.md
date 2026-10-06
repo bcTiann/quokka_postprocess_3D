@@ -87,10 +87,15 @@ range and is left unchanged by the adopted approximation.
 ## Saved products and figures
 
 Processing saves intrinsic and attenuated native-resolution LOS-z luminosity
-images, whole-box spectra, and gas-phase velocity distributions. Spectra have
+images, integrated spectra, and gas-phase velocity distributions. By default
+these cover the full box. Optional native x/y index ranges select a region with
+the original full z depth; gradients still use original-box neighbours, and
+column densities still use complete z columns. All products accumulate only
+selected cells, and surface-luminosity spectra use the selected projected area.
+Spectra have
 400 channels over −200 to +200 km/s. Gaussian thermal profiles are integrated
 over channel boundaries. Luminosity outside that window is recorded rather
-than moved into edge channels. Each line and dust state has one whole-box
+than moved into edge channels. Each line and dust state has one integrated
 spectrum. Cold/hot contributions are retained separately.
 
 Two dispersions are saved: `line_sigma_window_kms` uses the saved channels;

@@ -50,7 +50,13 @@ def load_processing_inputs(config):
     load_process_config(). Return Snapshot and the shared CellEmissionCalculator;
     cell arrays are loaded later by read_slab()."""
     check_input_paths(config)
-    snapshot = open_snapshot(dataset_path=config.dataset)
+    snapshot = open_snapshot(
+        dataset_path=config.dataset,
+        xy_region={
+            "x": config.x_index_range,
+            "y": config.y_index_range,
+        },
+    )
     emission_calculator = load_emission_calculator(config=config, snapshot=snapshot)
 
     # Create the output directory only after every input has loaded successfully.
@@ -70,17 +76,22 @@ def check_input_paths(config):
         raise FileNotFoundError(f'Snapshot Header: {snapshot_header}')
 
 
-def open_snapshot(dataset_path) -> Snapshot:
+def open_snapshot(dataset_path, xy_region=None) -> Snapshot:
     """Open a native uniform yt snapshot and retain its geometry.
 
     dataset_path is the configured Path. Cell fields are loaded later; Snapshot
-    derives (Nx, Ny, Nz), unit-aware widths, and cell volume [cm^3] from yt."""
+    derives (Nx, Ny, Nz), unit-aware widths, and cell volume [cm^3] from yt.
+    xy_region optionally selects native x/y index ranges, e.g.
+    {"x": (64, 128), "y": (32, 96)}. Original geometry and full z are retained."""
     import yt
 
     ds = yt.load(str(dataset_path.resolve()))
     if ds.max_level != 0:
         raise ValueError('Expected the complete uniform snapshot at native resolution')
-    return Snapshot(dataset=ds)
+    return Snapshot(
+        dataset=ds,
+        xy_region=xy_region,
+    )
 
 
 def load_emission_calculator(config, snapshot: Snapshot) -> CellEmissionCalculator:

@@ -27,6 +27,9 @@ class FakeSlab:
             first_cell_id=offset+start, last_cell_id=offset+stop-1,
         )
 
+    def cell_id_at(self, slab_index):
+        return self.first_cell_id + slab_index
+
 
 class ParallelBatchTests(unittest.TestCase):
     def test_calculator_runs_once_before_the_four_product_updates(self):
@@ -133,7 +136,11 @@ class ParallelBatchTests(unittest.TestCase):
 
     def test_private_products_merge_like_one_continuous_accumulator(self):
         snapshot = SimpleNamespace(shape=(2, 2, 2), cell_volume_cm3=2.,
-                                   cell_count=8, projected_area_cm2=4.)
+                                   cell_count=8, projected_area_cm2=4.,
+                                   processing_shape=(2, 2, 2),
+                                   processing_cell_count=8,
+                                   processing_area_cm2=4.,
+                                   processing_xy_origin=(0, 0))
         emission_calculator = SimpleNamespace(
             line_keys=('halpha', 'co10'),
             calculate=Mock(),
