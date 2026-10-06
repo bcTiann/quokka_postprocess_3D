@@ -2,8 +2,9 @@
 
 The current entry points are `quokka2s-process` and `quokka2s-plot`.
 Each uses its default YAML in `configs/`; `--config PATH` selects another file.
-Use the [root README](../README.md) for
-commands and [code walkthrough](code_walkthrough.md) to follow the code.
+Use the [root README](../README.md) for the main commands, the
+[usage guide](usage.md) for settings and table building, and the
+[code walkthrough](code_walkthrough.md) to follow the code.
 This reference describes the adopted scientific choices for that route.
 
 ## Cell state and table queries

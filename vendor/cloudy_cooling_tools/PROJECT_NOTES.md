@@ -20,7 +20,8 @@ Local changes included in this snapshot:
 
 The upstream README is preserved as upstream documentation. This is a selected
 source snapshot, so some data/example paths described there are not included.
-Current project commands and paths are documented in the repository-root README.
+The main project commands are in the [repository-root README](../../README.md);
+table-building commands and paths are in the [usage guide](../../docs/usage.md#build-tables).
 
 Generated Cloudy outputs, UVB data files, logs, nested Git metadata, simulation
 snapshots, and pipeline intermediates are intentionally excluded from Git.

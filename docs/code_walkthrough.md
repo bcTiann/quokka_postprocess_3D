@@ -14,9 +14,9 @@ From the repository root, each reads its own default YAML:
 Use `--config PATH` to select another file. Each runs directly;
 there is no shared dispatcher.
 
-The two commands and table-build instructions are in the
-[root README](../README.md). The scientific choices are in the
-[physics reference](emission_method.md).
+The two main commands are in the [root README](../README.md). Detailed
+settings and table-building commands are in the [usage guide](usage.md).
+The scientific choices are in the [physics reference](emission_method.md).
 
 The package has five purpose-specific folders:
 
