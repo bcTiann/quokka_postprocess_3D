@@ -75,9 +75,9 @@ class EmissionPlotTests(unittest.TestCase):
             self.assertEqual(len(paths["images"]), 19)
             self.assertEqual(len(paths["spectra"]), 10)
             self.assertEqual(len(paths["gas_phases"]), 10)
-            self.assertIn(root / "plots" / "line_luminosity_hi21.png", paths["images"])
-            self.assertNotIn(root / "plots" / "line_luminosity_hi21_attenuated.png", paths["images"])
-            self.assertIn(root / "plots" / "gas_phase_spectrum_ciii_977.png", paths["gas_phases"])
+            self.assertIn(root / "plots" / "png" / "line_luminosity_hi21.png", paths["images"])
+            self.assertNotIn(root / "plots" / "png" / "line_luminosity_hi21_attenuated.png", paths["images"])
+            self.assertIn(root / "plots" / "png" / "gas_phase_spectrum_ciii_977.png", paths["gas_phases"])
             for path in paths["images"] + paths["spectra"] + paths["gas_phases"]:
                 self.assertTrue(path.exists())
                 self.assertGreater(path.stat().st_size, 1000)

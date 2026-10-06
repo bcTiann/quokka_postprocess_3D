@@ -264,9 +264,12 @@ Intrinsic and attenuated images of one line share a colour range from
 `vmax/1e5` to `vmax`, measured after any display binning.
 
 The command draws individual line images, intrinsic/dust spectrum comparisons,
-and gas-phase/line-profile comparisons as PNG and PDF. The displayed velocity
-range is −50 to +50 km/s; all saved channels remain intact. H I 21 cm appears
-once because this dust prescription leaves it unchanged. Set
+and gas-phase/line-profile comparisons as PNG and PDF. Each figure directory
+contains `png/` and `pdf/` subdirectories, including `titled_output_dir` when set.
+For example, `output_dir/png/spectrum_co10.png` and
+`output_dir/pdf/spectrum_co10.pdf` contain the two formats of the same figure.
+The displayed velocity range is −50 to +50 km/s; all saved channels remain
+intact. H I 21 cm appears once because this dust prescription leaves it unchanged. Set
 `allow_partial: true` only when intentionally plotting diagnostic subsets.
 
 ## Build tables

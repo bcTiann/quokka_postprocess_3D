@@ -7,6 +7,7 @@ from pathlib import Path
 import numpy as np
 
 from quokka2s.figures.line_labels import LINE_TITLES
+from quokka2s.figures.figure_files import save_figure_formats
 
 
 LINE_ORDER = (
@@ -346,13 +347,14 @@ def plot_phase_spectrum_overlay(
 
     Returns
     -------
-    None
-        Writes figures; each profile is divided by its own full-window peak.
+    list of pathlib.Path
+        Saved files in png/ and pdf/ subdirectories. Each profile is divided
+        by its own full-window peak.
 
     Examples
     --------
     ``plot_phase_spectrum_overlay(line_spectra, gas_phases, figure_stem)``
-    writes files such as ``gas_phase_spectrum_co10.png``.
+    writes files such as ``png/gas_phase_spectrum_co10.png``.
     """
     import matplotlib
     matplotlib.use('Agg')
@@ -373,6 +375,7 @@ def plot_phase_spectrum_overlay(
     stem = Path(output_stem)
     stem.parent.mkdir(parents=True, exist_ok=True)
     full = figure_style == 'full'
+    paths = []
     for key in line_keys:
         fig, ax, legend_ax = create_phase_comparison_figure(full=full)
         draw_phase_comparison_curves(
@@ -386,6 +389,11 @@ def plot_phase_spectrum_overlay(
         )
         format_phase_comparison_figure(fig, ax, key, full=full)
         line_stem = stem.with_name(f'{stem.name}_{key}')
-        for extension in formats:
-            fig.savefig(line_stem.with_suffix('.' + extension), dpi=200)
+        paths.extend(save_figure_formats(
+            figure=fig,
+            stem=line_stem,
+            formats=formats,
+            bbox_inches=None,
+        ))
         plt.close(fig)
+    return paths

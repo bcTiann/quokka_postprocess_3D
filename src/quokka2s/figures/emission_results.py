@@ -12,6 +12,7 @@ from pathlib import Path
 import numpy as np
 
 from quokka2s.figures.line_labels import LINE_TITLES
+from quokka2s.figures.figure_files import save_figure_formats
 from quokka2s.products import DUST_STATES
 from quokka2s.figures.gas_phase_spectra import (
     GasPhaseVelocityProfiles,
@@ -165,31 +166,6 @@ def combine_image_pixels_for_display(
     return binned, x_edges, y_edges
 
 
-def save_figure_formats(figure, stem: Path, formats: tuple[str, ...]) -> list[Path]:
-    """Write a Matplotlib figure in each requested format.
-
-    Parameters
-    ----------
-    figure : matplotlib.figure.Figure
-        Completed figure from a plotting function.
-    stem : pathlib.Path
-        Output path before the file extension; its directory must exist.
-    formats : tuple of str
-        Extensions such as ("png", "pdf").
-
-    Returns
-    -------
-    list of pathlib.Path
-        Written figure paths, in format order.
-    """
-    paths = []
-    for extension in formats:
-        path = stem.with_suffix("." + extension)
-        figure.savefig(path, dpi=200, bbox_inches="tight")
-        paths.append(path)
-    return paths
-
-
 def plot_line_images(
     keys,
     image_values,
@@ -320,6 +296,8 @@ def create_line_luminosity_image(
             cmap="magma",
             norm=color_scale,
             shading="flat",
+            # Rasterize the pixel grid in PDFs; axes and text remain vector graphics.
+            rasterized=True,
         )
     axis.set_xlabel("x [kpc]")
     axis.set_ylabel("y [kpc]")
@@ -503,7 +481,7 @@ def plot_gas_phase_comparisons(
         sigma_internal_kms=phase["sigma_internal_kms"],
     )
     phase_stem = output / f"gas_phase_spectrum{diagnostic_suffix}"
-    plot_phase_spectrum_overlay(
+    return plot_phase_spectrum_overlay(
         line_spectra=line_spectra,
         gas_phases=gas_phases,
         output_stem=phase_stem,
@@ -511,12 +489,6 @@ def plot_gas_phase_comparisons(
         figure_style="full" if titled else "latex",
         formats=formats,
     )
-    phase_paths = []
-    for key in LINE_ORDER:
-        line_stem = phase_stem.with_name(f"{phase_stem.name}_{key}")
-        for extension in formats:
-            phase_paths.append(line_stem.with_suffix("." + extension))
-    return phase_paths
 
 
 @dataclass(frozen=True)

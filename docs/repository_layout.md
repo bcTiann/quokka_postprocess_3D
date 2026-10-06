@@ -48,7 +48,7 @@ current scientific rules.
 | `despotic/` | `table_data.py`: table structures/field names; `table_files.py`: NPZ serialization; `cell_solver.py`: equilibrium at one state; `table_builder.py`: grid calculation |
 | `despotic/` | `lookup.py` and `cell_fields.py`: process-time queries; `build_table.py`, `interpolate_failed.py`, `plot_table.py`, `list_failures.py`: table commands |
 | `products/` | `line_luminosity_images.py`, `integrated_spectra.py`, `line_velocity_moments.py`, `gas_phase_velocity.py`: numerical accumulation |
-| `figures/` | `emission_results.py`, `gas_phase_spectra.py`, `line_labels.py` and the additional figure modules: rendering |
+| `figures/` | `emission_results.py`, `gas_phase_spectra.py`, `line_labels.py` and the additional figure modules: rendering; `figure_files.py`: PNG/PDF paths and saving |
 
 ## Data and results
 
@@ -67,9 +67,14 @@ output/plt0655228/
     emission_report.json
     status.json
   figures/
+    png/
+    pdf/
   figures_titled/
+    png/
+    pdf/
 ```
 
 Processing writes a new directory per run. Plotting may redraw from the saved
-products many times. Raw Cloudy calculation files belong in `runtime/`;
+products many times. Each figure version keeps PNG and PDF files in its own
+`png/` and `pdf/` subdirectories. Raw Cloudy calculation files belong in `runtime/`;
 process and plot read only the paths specified in their configuration files.

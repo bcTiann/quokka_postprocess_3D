@@ -471,8 +471,9 @@ The rendering functions are in [figures/emission_results.py](../src/quokka2s/fig
    Inside image plotting, `combine_image_pixels_for_display()` optionally sums neighbouring
    pixels for display. Gas-phase comparisons use
    [figures/gas_phase_spectra.py](../src/quokka2s/figures/gas_phase_spectra.py).
-4. Each plotting step saves PNG/PDF. If `titled_output_dir` is set, the same
-   loaded numerical products also produce copies with titles.
+4. Each plotting step saves PNG/PDF in the figure directory's `png/` and `pdf/`
+   subdirectories. If `titled_output_dir` is set, the same loaded numerical
+   products also produce copies with titles under its own `png/` and `pdf/`.
 
 No step reopens yt, the snapshot, DESPOTIC, or Cloudy tables. Plotting changes
 colour limits, labels, displayed velocity range, peak normalization for the
