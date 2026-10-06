@@ -26,6 +26,7 @@
 /yt-env/
 
 # Personal audit and experiment records are not public documentation.
+/tests/
 /docs/validation/
 /.venv/
 
@@ -39,8 +40,7 @@
 *.dat
 *.ipynb
 
-# Small scientific fixtures and pinned molecular data belong with the code.
-!tests/data/velocity_kernel_reference.npz
+# Pinned molecular data used by the calculations belong with the code.
 !vendor/molecular_data/LAMDA/*.dat
 
 # Fixed prebuilt emission tables are supplied with a normal Git clone.

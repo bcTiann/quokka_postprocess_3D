@@ -14,7 +14,6 @@ snapshot + tables → process → numerical files → plot → PNG/PDF
 configs/       process and plot YAML settings
 src/quokka2s/  reusable calculations and the two main entry points
 tools/         table-building and additional figure commands
-tests/         tests for the current workflow
 docs/          usage instructions, physical methods and code walkthrough
 vendor/        pinned external source and physical data
 inputs/        user-provided snapshots and the two bundled lookup tables

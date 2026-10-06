@@ -13,7 +13,6 @@ tools and additional paper figures have their own commands.
 | `tools/cloudy/` | Build radiation inputs, run Cloudy, package its emission table | Yes |
 | `tools/despotic/` | Install required GOW corrections, measure table axes, check coverage | Yes |
 | `tools/figures/` | Additional slice, phase, gas-projection, dust and radiation figures | Yes |
-| `tests/` | Current calculation and rendering tests; a small frozen numerical fixture | Yes |
 | `docs/` | Usage instructions, physical methods and code walkthrough | Yes |
 | `vendor/` | Pinned external source, dust table, molecular data and their notes | Yes |
 | `inputs/snapshots/` | User-provided QUOKKA snapshots | No |
