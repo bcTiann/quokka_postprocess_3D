@@ -8,7 +8,8 @@ import numpy as np
 from quokka2s.physics.cell_emission import BatchEmission, LineEmission
 from quokka2s.products.integrated_spectra import IntegratedSpectra
 from quokka2s.snapshot_reader import CellBatch
-from quokka2s.physics.dust_attenuation import DEFAULT_DRAINE_TABLE, LINE_WAVELENGTH_MICRON, attenuate_emissivities, extinction_cross_sections, load_draine_extinction, observer_side_hydrogen_column
+from quokka2s.line_definitions import LINE_DEFINITIONS
+from quokka2s.physics.dust_attenuation import DEFAULT_DRAINE_TABLE, attenuate_emissivities, extinction_cross_sections, load_draine_extinction, observer_side_hydrogen_column
 
 
 class DustAttenuationTests(unittest.TestCase):
@@ -36,7 +37,7 @@ class DustAttenuationTests(unittest.TestCase):
         self.assertGreater(values[0], values[1])
         self.assertGreater(values[1], values[3])
         self.assertEqual(values[-1], 0.)
-        self.assertGreater(LINE_WAVELENGTH_MICRON["hi21"], wavelength[-1])
+        self.assertGreater(LINE_DEFINITIONS["hi21"].rest_wavelength_micron, wavelength[-1])
 
     def test_cell_attenuation_precedes_spectral_binning(self):
         keys = ("halpha", "hi21")

@@ -9,7 +9,7 @@ import numpy as np
 from unyt import unyt_array
 
 from quokka2s.constants import HYDROGEN_MASS_G
-from quokka2s.physics.settings import X_H
+from quokka2s.physics.settings import X_H, SIMULATION_DVDR_MIN_S
 from quokka2s.snapshot_reader import (
     Snapshot, SlabArrays, read_x_velocity_plane, slab_windows,
 )
@@ -153,7 +153,7 @@ class SnapshotReaderTests(unittest.TestCase):
                 Snapshot(dataset=dataset, xy_region=region)
 
     def test_one_cell_processing_window_does_not_change_native_grid_requirement(self):
-        self.assertEqual(list(slab_windows(nx=1, slab_nx=8)), [(0, 1)])
+        self.assertEqual(list(slab_windows(x_start=0, x_stop=1, slab_nx=8)), [(0, 1)])
         with self.assertRaises(ValueError):
             Snapshot(dataset=SimpleNamespace(domain_dimensions=np.array([1, 5, 4])))
 
@@ -180,7 +180,7 @@ class SnapshotReaderTests(unittest.TestCase):
         for slab_nx in slab_sizes:
             with self.subTest(shape=snapshot.shape, slab_nx=slab_nx):
                 pieces = []
-                for start, stop in slab_windows(snapshot.shape[0], slab_nx):
+                for start, stop in slab_windows(x_start=0, x_stop=snapshot.shape[0], slab_nx=slab_nx):
                     slab = snapshot.read_slab(x_start=start, x_stop=stop)
                     pieces.append(slab.velocity_gradient_s.reshape(
                         stop - start, *snapshot.shape[1:]))
@@ -425,7 +425,7 @@ class SnapshotReaderTests(unittest.TestCase):
 
     def test_gradient_matches_whole_grid_at_slab_seams_and_box_faces(self):
         """Exercise real LVG differences, including a one-cell final slab."""
-        from quokka2s.physics.gas_fields import VELOCITY_GRADIENT_FLOOR_S, velocity_gradient
+        from quokka2s.physics.gas_fields import velocity_gradient
 
         shape = (17, 5, 6)
         i, j, k = np.indices(shape, dtype=float)
@@ -452,25 +452,25 @@ class SnapshotReaderTests(unittest.TestCase):
         dz[:, :, 0] = 5.
         dz[:, :, -1] = 5*(2*shape[2] - 3.)
         divergence = dx/spacing['dx'] + dy/spacing['dy'] + dz/spacing['dz']
-        expected = np.maximum(np.abs(divergence) / 3., VELOCITY_GRADIENT_FLOOR_S)
+        expected = np.maximum(np.abs(divergence) / 3., SIMULATION_DVDR_MIN_S)
         np.testing.assert_allclose(whole_grid, expected, rtol=1e-13, atol=1e-14)
         self.assert_slab_gradients(snapshot, expected, (1, 4, 8, 17, 20))
 
     def test_periodic_two_cell_axes_have_zero_centered_derivative(self):
         """For two periodic cells, the left and right neighbours coincide."""
-        from quokka2s.physics.gas_fields import VELOCITY_GRADIENT_FLOOR_S, velocity_gradient
+        from quokka2s.physics.gas_fields import velocity_gradient
 
         shape = (2, 2, 3)
         i, j, k = np.indices(shape, dtype=float)
         velocity = {'velocity_x': 7*i, 'velocity_y': 11*j, 'velocity_z': 0*k}
         snapshot = _snapshot_with_velocity(velocity, {'dx': 2., 'dy': 3., 'dz': 5.})
         grid = snapshot.dataset.covering_grid(0, snapshot.dataset.domain_left_edge, shape)
-        expected = np.full(shape, VELOCITY_GRADIENT_FLOOR_S)
+        expected = np.full(shape, SIMULATION_DVDR_MIN_S)
         np.testing.assert_array_equal(velocity_gradient(grid).to_value('s**-1'), expected)
         self.assert_slab_gradients(snapshot, expected, (1, 2, 3), atol=0)
 
     def test_smooth_periodic_velocity_matches_discrete_sine_derivative(self):
-        from quokka2s.physics.gas_fields import VELOCITY_GRADIENT_FLOOR_S, velocity_gradient
+        from quokka2s.physics.gas_fields import velocity_gradient
 
         shape = (9, 7, 4)
         i, j, k = np.indices(shape, dtype=float)
@@ -487,7 +487,7 @@ class SnapshotReaderTests(unittest.TestCase):
         divergence = (8*np.sin(theta_x)*np.cos(theta_x*i)/spacing['dx']
                       - 5*np.sin(theta_y)*np.sin(theta_y*j)/spacing['dy']
                       + .4/spacing['dz'])
-        expected = np.maximum(np.abs(divergence) / 3., VELOCITY_GRADIENT_FLOOR_S)
+        expected = np.maximum(np.abs(divergence) / 3., SIMULATION_DVDR_MIN_S)
         np.testing.assert_allclose(velocity_gradient(grid).to_value('s**-1'), expected,
                                    rtol=1e-13, atol=1e-14)
         self.assert_slab_gradients(snapshot, expected, (1, 4, 9))

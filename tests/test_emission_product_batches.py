@@ -9,9 +9,9 @@ from unittest.mock import patch
 import numpy as np
 
 from quokka2s.constants import ATOMIC_MASS_UNIT_G, BOLTZMANN_ERG_K, SPEED_OF_LIGHT_KMS
+from quokka2s.line_definitions import LINE_DEFINITIONS
 from quokka2s.products.integrated_spectra import (
     IntegratedSpectra,
-    LINE_MASSES_AMU,
     accumulate_velocity_spectra,
     check_spectrum_luminosity,
 )
@@ -20,7 +20,7 @@ from quokka2s.products.line_luminosity_images import LineLuminosityImageAccumula
 from quokka2s.products.emission_products import EmissionProducts
 from quokka2s.physics.cell_emission import LineEmission
 from quokka2s.physics.line_emissivity import ATOMIC_LINE_KEYS, CO_LINE_KEYS, CIII_CIV_LINE_KEYS
-from quokka2s.result_files import add_output_metadata
+from quokka2s.result_metadata import ResultMetadata
 
 
 LINE_KEYS = ('hi21', 'cii')
@@ -236,11 +236,11 @@ class ProductBatchTests(unittest.TestCase):
             line_keys=LINE_KEYS,
             dust_cross_section_cm2_H={'hi21': 0., 'cii': 1e-21},
         )
-        add_output_metadata(
+        metadata = ResultMetadata.from_processing_inputs(
             snapshot=snapshot,
             emission_calculator=calculator,
-            outputs=outputs,
         )
+        outputs.add_metadata(metadata=metadata)
         np.testing.assert_array_equal(
             outputs.image_payload['x_edges_kpc'], np.linspace(-2., 3., 6)[1:5],
         )
@@ -360,7 +360,7 @@ class ProductBatchTests(unittest.TestCase):
                     velocity = cells.velocity_z_kms[selected]
                     width = np.sqrt(
                         BOLTZMANN_ERG_K * line.temperature_K[selected]
-                        / (LINE_MASSES_AMU[key] * ATOMIC_MASS_UNIT_G)
+                        / (LINE_DEFINITIONS[key].emitter_mass_amu * ATOMIC_MASS_UNIT_G)
                     ) / 1.e5
                     width *= 1. - velocity / SPEED_OF_LIGHT_KMS
                     luminosity = np.column_stack((

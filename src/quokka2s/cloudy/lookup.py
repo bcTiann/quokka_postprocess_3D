@@ -10,11 +10,11 @@ from pathlib import Path
 import numpy as np
 from scipy.interpolate import RegularGridInterpolator
 
+from quokka2s.cloudy.table_definition import EXPECTED_AXIS_ORDER
 from quokka2s.physics.composition import reject_superseded_composition
 
 
 TOUCH_EPS = 1.0e-12
-EXPECTED_AXIS_ORDER = "line,log_NH_attenuation,log_nH,log_T"
 
 
 class CloudyFailureTouchError(RuntimeError):
@@ -72,34 +72,6 @@ class CloudyDiagnostics:
 
 
 @dataclass(frozen=True)
-class CloudyPhysicalQueries:
-    """Broadcast physical inputs, each array retaining the query shape S.
-
-    temperature_K [K], hydrogen_density_cm3 [cm^-3], shielding_NH_cm2 [cm^-2]
-    come from a lookup entry point. No coordinate has been clipped yet.
-    """
-
-    temperature_K: np.ndarray
-    hydrogen_density_cm3: np.ndarray
-    shielding_NH_cm2: np.ndarray
-
-
-@dataclass(frozen=True)
-class CloudyLogarithmicQueries:
-    """Flattened log10 coordinates after checking coverage and clipping NH.
-
-    points: (Q, 3), ordered log NH, log nH, log T.
-    query_shape: input broadcast shape S to restore after interpolation.
-    below_column, above_column: (Q,) flags from the original log NH values.
-    """
-
-    points: np.ndarray
-    query_shape: tuple[int, ...]
-    below_column: np.ndarray
-    above_column: np.ndarray
-
-
-@dataclass(frozen=True)
 class InterpolationCoordinates:
     """Prepared table coordinates, internal to CloudyLookup.
 
@@ -110,7 +82,7 @@ class InterpolationCoordinates:
     """
     points: np.ndarray
     brackets: tuple
-    shape: tuple
+    shape: tuple[int, ...]
     below_column: np.ndarray
     above_column: np.ndarray
 
@@ -355,27 +327,7 @@ class CloudyLookup:
             input shape S. Example: points[7] is the eighth query's log NH/nH/T row;
             it need not be the eighth original batch cell.
         """
-        physical_queries = self.prepare_physical_query_coordinates(
-            temperature_K=temperature_K,
-            hydrogen_density_cm3=hydrogen_density_cm3,
-            shielding_NH_cm2=shielding_NH_cm2,
-        )
-        logarithmic_queries = self.prepare_logarithmic_query_coordinates(
-            physical_queries=physical_queries,
-        )
-        return self.locate_query_interpolation_brackets(
-            logarithmic_queries=logarithmic_queries,
-        )
-
-    def prepare_physical_query_coordinates(
-        self, temperature_K, hydrogen_density_cm3, shielding_NH_cm2,
-    ) -> CloudyPhysicalQueries:
-        """Broadcast the physical inputs and require finite, positive coordinates.
-
-        Inputs have the units documented by prepare_interpolation_coordinates().
-        Return CloudyPhysicalQueries with shape S, without selecting or clipping
-        any cell. For example, scalar T and three density/column values give S=(3,).
-        """
+        # 1. Broadcast physical inputs and check them before logarithms.
         inputs = [
             np.asarray(temperature_K, dtype=float),
             np.asarray(hydrogen_density_cm3, dtype=float),
@@ -387,25 +339,14 @@ class CloudyLookup:
         if any(np.any(value <= 0.0) for value in inputs):
             raise ValueError("Cloudy lookup inputs must all be positive")
 
-        return CloudyPhysicalQueries(
-            temperature_K=inputs[0],
-            hydrogen_density_cm3=inputs[1],
-            shielding_NH_cm2=inputs[2],
-        )
-
-    def prepare_logarithmic_query_coordinates(self, physical_queries) -> CloudyLogarithmicQueries:
-        """Convert to log10 table units, clip NH and check all other axes.
-
-        physical_queries comes from prepare_physical_query_coordinates(). Only
-        shielding NH permits physical clipping. Density/temperature accept the
-        existing log-coordinate roundoff tolerance. Physical input arrays remain unchanged.
-        """
-        log_column = np.log10(physical_queries.shielding_NH_cm2).ravel()
+        # 2. Flatten in NH/nH/T axis order; retain log-coordinate clipping flags.
+        log_column = np.log10(inputs[2]).ravel()
         below = log_column < self.log_NH_attenuation[0]
         above = log_column > self.log_NH_attenuation[-1]
-        log_density = np.log10(physical_queries.hydrogen_density_cm3).ravel()
-        log_temperature = np.log10(physical_queries.temperature_K).ravel()
+        log_density = np.log10(inputs[1]).ravel()
+        log_temperature = np.log10(inputs[0]).ravel()
 
+        # 3. Require density/temperature coverage with the existing roundoff tolerance.
         for name, axis, coordinate in (
             ("log_nH", self.log_nH, log_density),
             ("log_T", self.log_T, log_temperature),
@@ -418,40 +359,30 @@ class CloudyLookup:
                     f"{name} is outside [{axis[0]:.8g}, {axis[-1]:.8g}]"
                 )
 
-        coordinates = [
+        # 4. Clip only query coordinates; physical cell arrays remain unchanged.
+        logarithmic_coordinates = [
             np.clip(log_column, self.log_NH_attenuation[0], self.log_NH_attenuation[-1]),
             np.clip(log_density, self.log_nH[0], self.log_nH[-1]),
             np.clip(log_temperature, self.log_T[0], self.log_T[-1]),
         ]
-        return CloudyLogarithmicQueries(
-            points=np.stack(coordinates, axis=-1),
-            query_shape=physical_queries.temperature_K.shape,
-            below_column=below,
-            above_column=above,
-        )
+        points = np.stack(logarithmic_coordinates, axis=-1)
 
-    def locate_query_interpolation_brackets(self, logarithmic_queries) -> InterpolationCoordinates:
-        """Locate lower/upper nodes and fractions for every log-coordinate row.
-
-        logarithmic_queries comes from prepare_logarithmic_query_coordinates().
-        Each axis has Q lower indices, upper indices and interpolation fractions.
-        Table axes stay ordered NH, nH, T, as in the saved table.
-        """
+        # 5. Locate the eight-corner brackets used by support diagnostics.
         axes = [self.log_NH_attenuation, self.log_nH, self.log_T]
 
         brackets = []
         for axis_index, axis in enumerate(axes):
             bracket = _brackets(
                 axis=axis,
-                coordinate=logarithmic_queries.points[:, axis_index],
+                coordinate=points[:, axis_index],
             )
             brackets.append(bracket)
         return InterpolationCoordinates(
-            points=logarithmic_queries.points,
+            points=points,
             brackets=tuple(brackets),
-            shape=logarithmic_queries.query_shape,
-            below_column=logarithmic_queries.below_column,
-            above_column=logarithmic_queries.above_column,
+            shape=inputs[0].shape,
+            below_column=below,
+            above_column=above,
         )
 
     def interpolate_available(
@@ -463,7 +394,7 @@ class CloudyLookup:
         ----------
         temperature_K, hydrogen_density_cm3, shielding_NH_cm2 : array-like, broadcastable to S
             Physical T [K], nH [cm^-3] and shielding NH [cm^-2] from the selected
-            CloudyQueryInputs. Main processing supplies arrays of shape (Q,).
+            selected cell arrays. Main processing supplies shape (Q,).
 
         Returns
         -------

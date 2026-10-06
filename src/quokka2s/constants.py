@@ -19,6 +19,10 @@ ATOMIC_MASS_UNIT_G = const.u.to_value("g")
 SOLAR_LUMINOSITY_ERG_S = const.L_sun.to_value("erg/s")
 PARSEC_CM = u.pc.to(u.cm)
 
+# Adopted conversion used by the existing Cloudy radiation figures.
+# Preserve the literal so moving the display settings changes no axis values.
+EV_PER_RYD = 13.605693122994
+
 # Mean atomic mass of hydrogen used in nH = X_H * rho / m_H.
 # Retain the adopted atomic weight and use Astropy's atomic mass unit.
 HYDROGEN_ATOMIC_WEIGHT = 1.007947

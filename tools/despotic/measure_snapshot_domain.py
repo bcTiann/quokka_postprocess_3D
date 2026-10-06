@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 from pathlib import Path
 
@@ -10,11 +9,12 @@ import numpy as np
 from unyt import unyt_array
 
 from quokka2s.physics import gas_fields, settings
+from quokka2s.despotic.snapshot_domain import AXIS_NAMES
+from quokka2s.file_provenance import file_sha256
 from quokka2s.snapshot_reader import Snapshot, slab_windows
 
 
 ROOT = Path(__file__).resolve().parents[2]
-AXIS_NAMES = ('nH', 'NH', 'dVdr')
 
 
 def parse_arguments(argv=None):
@@ -61,7 +61,11 @@ def measure_snapshot_axes(snapshot, slab_nx):
             count=0,
         )
 
-    for x_start, x_stop in slab_windows(snapshot.shape[0], slab_nx):
+    for x_start, x_stop in slab_windows(
+        x_start=0,
+        x_stop=snapshot.shape[0],
+        slab_nx=slab_nx,
+    ):
         slab = snapshot.read_slab(x_start=x_start, x_stop=x_stop)
         cells = slab.batch(start=0, stop=slab.cell_count)
 
@@ -99,10 +103,8 @@ def main(argv=None):
         'column_directions': settings.COLUMN_DENSITY_DIRECTIONS,
         'source': 'fresh snapshot fields; full z columns; periodic x/y velocity differences',
         # Source hashes identify this diagnostic run; they are not lookup requirements.
-        'physics_source_sha256': hashlib.sha256(Path(gas_fields.__file__).read_bytes()).hexdigest(),
-        'snapshot_reader_source_sha256': hashlib.sha256(
-            (ROOT / 'src/quokka2s/snapshot_reader.py').read_bytes()
-        ).hexdigest(),
+        'physics_source_sha256': file_sha256(gas_fields.__file__),
+        'snapshot_reader_source_sha256': file_sha256(ROOT / 'src/quokka2s/snapshot_reader.py'),
         'axes': stats,
         'units': {'nH': 'cm^-3', 'NH': 'cm^-2', 'dVdr': 's^-1'},
     }

@@ -9,6 +9,7 @@ Replot: python tools/figures/build_emission_phase_histograms.py
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 from datetime import datetime, timezone
 import json
 from pathlib import Path
@@ -24,13 +25,14 @@ if __package__ in (None, ''):
     sys.path.insert(0, str(ROOT / 'src'))
 
 from quokka2s.figures.emission_phase_histograms import plot_panels
+from quokka2s.physics.gas_fields import mixed_gas_temperature_K
 from quokka2s.processing_inputs import load_processing_inputs
 from quokka2s.products.emission_phase_histograms import (
     PANELS,
     DexHistogram,
     accumulate_emission_phase_histograms,
 )
-from quokka2s.run_settings import load_process_config
+from quokka2s.run_settings import DEFAULT_PROCESS_CONFIG, load_process_config
 from quokka2s.snapshot_reader import slab_windows
 
 
@@ -56,10 +58,10 @@ def accumulate_phase_batch(histograms, cells, emission_calculator):
     )
     mass = cells.density_g_cm3 * cells.cell_volume_cm3
     despotic_temperature = emission.despotic_temperature_K
-    mixed_temperature = np.where(
-        emission.cold_cells,
-        despotic_temperature,
-        cells.temperature_QUOKKA_K,
+    mixed_temperature = mixed_gas_temperature_K(
+        cold_cells=emission.cold_cells,
+        temperature_despotic_K=despotic_temperature,
+        temperature_quokka_K=cells.temperature_QUOKKA_K,
     )
     missing_despotic_temperature = ~np.isfinite(despotic_temperature) | (despotic_temperature <= 0.0)
     missing_mixed_temperature = ~np.isfinite(mixed_temperature) | (mixed_temperature <= 0.0)
@@ -85,7 +87,11 @@ def process_phase_histograms(snapshot, emission_calculator, settings):
         'missing_despotic_temperature_cells': 0,
         'missing_mixed_temperature_cells': 0,
     }
-    selected_slabs = list(slab_windows(snapshot.shape[0], settings.slab_nx))
+    selected_slabs = list(slab_windows(
+        x_start=0,
+        x_stop=snapshot.shape[0],
+        slab_nx=settings.slab_nx,
+    ))
     if settings.max_slabs is not None:
         selected_slabs = selected_slabs[:settings.max_slabs]
     began = time.monotonic()
@@ -94,12 +100,7 @@ def process_phase_histograms(snapshot, emission_calculator, settings):
             x_start=x_start,
             x_stop=x_stop,
         )
-        for start in range(0, slab.cell_count, settings.query_chunk):
-            stop = min(start + settings.query_chunk, slab.cell_count)
-            cells = slab.batch(
-                start=start,
-                stop=stop,
-            )
+        for cells in slab.iter_batches(batch_size=settings.query_chunk):
             batch_totals = accumulate_phase_batch(
                 histograms=histograms,
                 cells=cells,
@@ -171,7 +172,7 @@ def main():
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument('--config', type=Path, default=ROOT / 'configs/emission_process.yaml')
+    parser.add_argument('--config', type=Path, default=ROOT / DEFAULT_PROCESS_CONFIG)
     parser.add_argument('--output-dir', type=Path, required=True)
     parser.add_argument('--max-slabs', type=int, help='Limit this diagnostic run to its first N slabs')
     parser.add_argument('--plot-only', action='store_true', help='Render saved phase_histograms.npz only')
@@ -186,9 +187,11 @@ def main():
         panels = load_saved_phase_histograms(output_dir)
     else:
         settings = load_process_config(args.config)
-        settings.output_dir = output_dir
-        if args.max_slabs is not None:
-            settings.max_slabs = args.max_slabs
+        settings = replace(
+            settings,
+            output_dir=output_dir,
+            max_slabs=(settings.max_slabs if args.max_slabs is None else args.max_slabs),
+        )
         snapshot, emission_calculator = load_processing_inputs(settings)
         histograms, totals = process_phase_histograms(
             snapshot=snapshot,

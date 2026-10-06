@@ -1,12 +1,12 @@
 """Load run inputs: a native snapshot, two emission tables, and dust opacity."""
 from __future__ import annotations
 
-import numpy as np
-
 from quokka2s.cloudy.lookup import CloudyLookup
 from quokka2s.cloudy.cell_fields import CloudyCellReader
 from quokka2s.despotic.cell_fields import DespoticCellReader
 from quokka2s.physics.cell_emission import CellEmissionCalculator
+from quokka2s.physics.composition import ABUNDANCE_SETUP
+from quokka2s.physics.line_emissivity import CO_LINE_KEYS
 from quokka2s.physics.dust_attenuation import (
     extinction_cross_sections,
     load_draine_extinction,
@@ -14,33 +14,7 @@ from quokka2s.physics.dust_attenuation import (
 from quokka2s.snapshot_reader import Snapshot
 from quokka2s.despotic.table_files import load_table
 from quokka2s.despotic.lookup import DespoticLookup
-
-AXIS_NAMES = ('nH', 'NH', 'dVdr')
-
-
-def validate_snapshot_domain(table, shape, cfg):
-    """Check DESPOTIC metadata against the snapshot's physical setup.
-
-    table is the loaded DespoticTable, shape is its target (Nx, Ny, Nz), and cfg
-    is physics.settings. Reject incompatible geometry, hydrogen/column
-    settings, or table axis endpoints; source-file identity is not required."""
-    domain = (table.build_metadata or {}).get('snapshot_domain')
-    if not domain or domain.get('selection') != 'all simulation cells':
-        raise ValueError('DESPOTIC table lacks all-cell snapshot-domain metadata')
-    checks = {
-        'shape': list(shape), 'total_cells': int(np.prod(shape)),
-        'X_H': float(cfg.X_H), 'column_mean': cfg.COLUMN_DENSITY_MEAN,
-        'column_directions': cfg.COLUMN_DENSITY_DIRECTIONS,
-    }
-    for name, expected in checks.items():
-        if domain.get(name) != expected:
-            raise ValueError(f'DESPOTIC snapshot settings mismatch for {name}: '
-                             f'table={domain.get(name)!r}, current={expected!r}')
-    axes = (table.nH_values, table.col_density_values, table.dVdr_values)
-    for name, axis in zip(AXIS_NAMES, axes):
-        recorded = domain['axes'][name]
-        if axis[0] != recorded['minimum'] or axis[-1] != recorded['maximum']:
-            raise ValueError(f'Candidate {name} bounds differ from recorded snapshot extrema')
+from quokka2s.despotic.snapshot_domain import validate_snapshot_domain
 
 
 def load_processing_inputs(config):
@@ -107,7 +81,7 @@ def load_emission_calculator(config, snapshot: Snapshot) -> CellEmissionCalculat
     cloudy = CloudyLookup(
         path=config.cloudy_table,
     )
-    line_keys = tuple(cloudy.line_keys) + ('co10', 'co21')
+    line_keys = tuple(cloudy.line_keys) + CO_LINE_KEYS
     dust_cross_section_cm2_H = prepare_line_dust_cross_sections(
         table_path=config.dust_opacity_table,
         line_keys=line_keys,
@@ -134,7 +108,7 @@ def load_despotic_lookup(table_path, snapshot: Snapshot) -> DespoticLookup:
     from quokka2s.physics import settings as cfg
 
     table = load_table(table_path)
-    if table.build_metadata['composition']['setup'] != 'cloudy_c17_02_default_gow_default_v2':
+    if table.build_metadata['composition']['setup'] != ABUNDANCE_SETUP:
         raise ValueError('Expected native default DESPOTIC abundances')
     validate_snapshot_domain(
         table=table,

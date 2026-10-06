@@ -13,7 +13,8 @@ from quokka2s.constants import (
     SPEED_OF_LIGHT_KMS,
 )
 from quokka2s.physics.cell_emission import LineEmission
-from quokka2s.products.integrated_spectra import IntegratedSpectra, LINE_MASSES_AMU
+from quokka2s.line_definitions import LINE_DEFINITIONS
+from quokka2s.products.integrated_spectra import IntegratedSpectra
 from quokka2s.products.line_velocity_moments import LineVelocityMoments
 
 
@@ -172,7 +173,8 @@ class FullIntegratedLineMomentTests(unittest.TestCase):
         serial_payload, _ = serial.build_output(projected_area_cm2=10.)
         merged_payload, _ = merged.build_output(projected_area_cm2=10.)
         for row, key in enumerate(line_keys):
-            width = np.sqrt(BOLTZMANN_ERG_K * temperature[row] / (LINE_MASSES_AMU[key] * ATOMIC_MASS_UNIT_G)) / 1.e5
+            mass_g = LINE_DEFINITIONS[key].emitter_mass_amu * ATOMIC_MASS_UNIT_G
+            width = np.sqrt(BOLTZMANN_ERG_K * temperature[row] / mass_g) / 1.e5
             width *= 1.0 - velocity / SPEED_OF_LIGHT_KMS
             expected = direct_cell_moments(velocity, width, epsilon[row] * volume)
             for field, value in zip((
@@ -220,7 +222,7 @@ class FullIntegratedLineMomentTests(unittest.TestCase):
         expected = {}
         for key, line in lines.items():
             available = ~line.emissivity_is_missing
-            mass_g = LINE_MASSES_AMU[key] * ATOMIC_MASS_UNIT_G
+            mass_g = LINE_DEFINITIONS[key].emitter_mass_amu * ATOMIC_MASS_UNIT_G
             width = np.sqrt(BOLTZMANN_ERG_K * line.temperature_K[available] / mass_g) / 1.e5
             width *= 1.0 - velocity[available] / SPEED_OF_LIGHT_KMS
             expected[key] = []

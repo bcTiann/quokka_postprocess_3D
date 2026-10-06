@@ -10,7 +10,22 @@ from .settings import SIMULATION_DVDR_MIN_S
 
 # Keep yt/unyt units while deriving slab fields; convert to NumPy afterwards.
 HYDROGEN_MASS = unyt_quantity(HYDROGEN_MASS_G, 'g')
-VELOCITY_GRADIENT_FLOOR_S = SIMULATION_DVDR_MIN_S
+
+
+def mixed_gas_temperature_K(
+    *,
+    temperature_quokka_K: np.ndarray,
+    temperature_despotic_K: np.ndarray,
+    cold_cells: np.ndarray,
+) -> np.ndarray:
+    """Choose the temperature used for gas-phase mass and velocity products.
+
+    All inputs have shape (B,), in original batch order. cold_cells comes from
+    the QUOKKA branch: cold cells use DESPOTIC; hot cells use QUOKKA.
+    Returns a (B,) temperature array [K], preserving missing cold values as NaN.
+    Example: T_Q=[100, 1e6], T_D=[NaN, NaN] gives [NaN, 1e6].
+    """
+    return np.where(cold_cells, temperature_despotic_K, temperature_quokka_K)
 
 
 def hydrogen_number_density(density):
@@ -79,5 +94,5 @@ def velocity_gradient(grid, *, vx_left_cm_s=None, vx_right_cm_s=None):
     # Only the z boundary cells use first-order one-sided differences.
     dvz_dz = np.gradient(vz, dz, axis=2, edge_order=1)
     divergence = dvx_dx + dvy_dy + dvz_dz
-    gradient = np.maximum(np.abs(divergence) / 3.0, VELOCITY_GRADIENT_FLOOR_S)
+    gradient = np.maximum(np.abs(divergence) / 3.0, SIMULATION_DVDR_MIN_S)
     return gradient / s

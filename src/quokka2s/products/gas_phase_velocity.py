@@ -12,11 +12,14 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from quokka2s.physics.gas_fields import mixed_gas_temperature_K
+from quokka2s.physics.settings import EMISSION_TEMPERATURE_BOUNDARY_K
+
 
 # These are the established cuts in the CNM/UNM/WNM/WIM/HIM phase definition.
 # Keeping this numerical helper independent avoids loading the yt pipeline.
 PHASE_ORDER = ("CNM", "UNM", "WNM", "WIM", "HIM")
-PHASE_BOUNDS_K = (200.0, 3000.0, 1.0e4, 10.0**5.5)
+PHASE_BOUNDS_K = (200.0, EMISSION_TEMPERATURE_BOUNDARY_K, 1.0e4, 10.0**5.5)
 GROUP_ORDER = (*PHASE_ORDER, "total")
 PHASE_MASS_RTOL = 1e-10
 
@@ -422,10 +425,10 @@ class GasPhaseVelocityAccumulator:
         T_QUOKKA even when every line emissivity is missing.
         Example: T_Q=[100, 1e6], T_D=[NaN, NaN] gives [NaN, 1e6], [False, True].
         """
-        phase_temperature = np.where(
-            emission.cold_cells,
-            emission.despotic_temperature_K,
-            cells.temperature_QUOKKA_K,
+        phase_temperature = mixed_gas_temperature_K(
+            cold_cells=emission.cold_cells,
+            temperature_despotic_K=emission.despotic_temperature_K,
+            temperature_quokka_K=cells.temperature_QUOKKA_K,
         )
         gas_cells = np.isfinite(phase_temperature) & (phase_temperature > 0.0)
         return phase_temperature, gas_cells

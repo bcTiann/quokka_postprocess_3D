@@ -26,8 +26,15 @@ class CellEmissionDomainTests(unittest.TestCase):
             dVdr_values=np.array([1e-16, 1e-13]),
         )
         self.lookup = Mock(side_effect=LookupReached)
-        despotic = SimpleNamespace(table=self.table, temperature_and_co=self.lookup)
+        despotic = SimpleNamespace(
+            table=self.table,
+            temperature_and_co=self.lookup,
+            _EVAL_CHUNK=DespoticLookup._EVAL_CHUNK,
+        )
         despotic.clip_coordinates = lambda **coordinates: DespoticLookup.clip_coordinates(
+            despotic, **coordinates,
+        )
+        despotic.prepare_queries = lambda **coordinates: DespoticLookup.prepare_queries(
             despotic, **coordinates,
         )
         self.calculator = CellEmissionCalculator(
@@ -65,7 +72,13 @@ class CellEmissionDomainTests(unittest.TestCase):
                 }
                 with self.assertRaises(LookupReached):
                     self.calculator.calculate(cells=cells)
-                for actual, endpoint in zip(self.lookup.call_args.kwargs.values(), expected):
+                queries = self.lookup.call_args.kwargs['queries']
+                actual_coordinates = (
+                    queries.hydrogen_density_cm3,
+                    queries.shielding_NH_cm2,
+                    queries.velocity_gradient_s,
+                )
+                for actual, endpoint in zip(actual_coordinates, expected):
                     np.testing.assert_array_equal(actual, [endpoint])
                 for name, values in original.items():
                     np.testing.assert_array_equal(getattr(cells, name), values)

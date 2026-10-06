@@ -5,11 +5,17 @@ import argparse
 import hashlib
 from importlib.metadata import distribution
 from pathlib import Path
+import sys
 
 
-# Official DESPOTIC ed18e5669adb7306f795a3d30d8919995793bc61.
-ORIGINAL_SHA256 = "dd8b35a1bd8ea01f08a6884b2c34dd879d7c3deaa8bffcff6b320a994e9ae479"
-PATCHED_SHA256 = "c1376df46886bd8f7c2638df7323125a110631c17b3b9ccf8dc74d9aea9d7b09"
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
+
+from quokka2s.despotic.solver_settings import (
+    CHEMISTRY_ORIGINAL_SOURCE_SHA256,
+    CHECKED_CHEMISTRY_SOURCE_SHA256,
+)
+
 BEFORE = b"""        xOut = odeint(cloud.chemnetwork.dxdt, cloud.chemnetwork.x,
                       tOut1)
 """
@@ -66,17 +72,17 @@ def main() -> None:
     path = Path(distribution("despotic").locate_file("despotic/chemistry/chemEvol.py"))
     original = path.read_bytes()
     digest = hashlib.sha256(original).hexdigest()
-    if digest == PATCHED_SHA256:
+    if digest == CHECKED_CHEMISTRY_SOURCE_SHA256:
         print(f"Checked GOW integration is installed: {path}")
         return
-    if digest != ORIGINAL_SHA256:
+    if digest != CHEMISTRY_ORIGINAL_SOURCE_SHA256:
         raise SystemExit(f"Unrecognized chemEvol.py ({digest}); review before patching: {path}")
     if args.check:
         raise SystemExit("Checked GOW integration is not installed.")
     if original.count(BEFORE) != 1:
         raise SystemExit("Expected one fixed-temperature integration call.")
     updated = original.replace(BEFORE, AFTER)
-    if hashlib.sha256(updated).hexdigest() != PATCHED_SHA256:
+    if hashlib.sha256(updated).hexdigest() != CHECKED_CHEMISTRY_SOURCE_SHA256:
         raise SystemExit("Patched source does not match the reviewed change.")
     path.write_bytes(updated)
     print(f"Installed checked GOW integration: {path}")

@@ -7,13 +7,14 @@ from __future__ import annotations
 
 from types import MappingProxyType
 
+from .settings import X_H
 
 ABUNDANCE_SETUP = "cloudy_c17_02_default_gow_default_v2"
 SUPERSEDED_ABUNDANCE_SETUP = "quokka_xyz_cloudy_c17_02_default_v1"
 # Legacy simulation density conversion, retained independently of the table
 # compositions. Do not infer either code's elemental abundances from this XYZ.
 QUOKKA_MASS_FRACTIONS = MappingProxyType({
-    "X": 0.7157683773530885,
+    "X": X_H,
     "Y": 0.26423162264691147,
     "Z": 0.02,
 })

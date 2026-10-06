@@ -9,14 +9,28 @@ coefficient array. This builder never fills or smooths a failed node.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import re
 from pathlib import Path
 
 import numpy as np
 
-from quokka2s.cloudy.table_definition import HM12_LOG_NH, JEANS_CAP_CM, LINES, N_DENSITY, N_T, STEM, T_MAX_K, T_MIN_K
+from quokka2s.cloudy.table_definition import (
+    CMB_REDSHIFT,
+    COSMIC_RAY_H0_IONIZATION_RATE_S,
+    EXPECTED_AXIS_ORDER,
+    HM12_LOG_NH,
+    ISM_ATTENUATION_LOG_NH,
+    JEANS_CAP_CM,
+    LINES,
+    N_DENSITY,
+    N_T,
+    STEM,
+    T_MAX_K,
+    T_MIN_K,
+)
+from quokka2s.file_provenance import file_sha256
+
 ZERO_LIMIT = -90.0
 T_TOLERANCE_DEX = 5.1e-4
 RUN_RE = re.compile(r"_run([1-9][0-9]*)\.dat$")
@@ -30,14 +44,6 @@ JEANS_X_H_PARAMETER_RE = re.compile(
 DECIMAL_NUMBER_RE = re.compile(
     r"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?"
 )
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for block in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
 
 
 def _jeans_mass_fraction_metadata(parameter_file: Path) -> dict[str, float | str]:
@@ -240,7 +246,7 @@ def main() -> None:
     np.savez_compressed(
         output_path,
         schema_version=np.asarray(3, dtype=np.int32),
-        axis_order=np.asarray("line,log_NH_attenuation,log_nH,log_T"),
+        axis_order=np.asarray(EXPECTED_AXIS_ORDER),
         line_keys=np.asarray([item[0] for item in LINES]),
         line_labels=np.asarray([item[1] for item in LINES]),
         cloudy_version=np.asarray("17.02"),
@@ -251,14 +257,15 @@ def main() -> None:
         jeans_length_cap_cm=np.asarray(JEANS_CAP_CM),
         radiation_field=np.asarray(
             "HM2012 separately quick-extinguished over log NH=18..21; "
-            "table ISM separately quick-extinguished at log NH=21; CMB z=0"
+            "table ISM separately quick-extinguished at "
+            f"log NH={ISM_ATTENUATION_LOG_NH:g}; CMB z={CMB_REDSHIFT:g}"
         ),
         hm12_attenuation_method=np.asarray("extinguish column=<grid> leak=0"),
-        ism_log_NH_attenuation=np.asarray(21.0),
+        ism_log_NH_attenuation=np.asarray(ISM_ATTENUATION_LOG_NH),
         cmb_included=np.asarray(True),
-        cmb_redshift=np.asarray(0.0),
+        cmb_redshift=np.asarray(CMB_REDSHIFT),
         external_grackle_hm12_used=np.asarray(False),
-        cosmic_ray_h0_ionization_rate_s=np.asarray(2.0e-17),
+        cosmic_ray_h0_ionization_rate_s=np.asarray(COSMIC_RAY_H0_IONIZATION_RATE_S),
         composition_label=np.asarray("Cloudy 17.02 default abundances"),
         molecular_treatment=np.asarray(
             "Cloudy default simple molecular network; detailed H2 not requested"
@@ -273,7 +280,11 @@ def main() -> None:
         density_temperature_out_of_bounds_policy=np.asarray("raise"),
         failed_node_policy=np.asarray("unavailable; no numerical fill"),
         parameter_file=np.asarray(parameter_file.name),
-        parameter_file_sha256=np.asarray(_sha256(parameter_file)),
+        parameter_file_sha256=np.asarray(
+            file_sha256(
+                path=parameter_file,
+            )
+        ),
         **{key: np.asarray(value) for key, value in jeans_mass_fraction_metadata.items()},
         **_payload(raw),
     )
@@ -283,7 +294,7 @@ def main() -> None:
     report = {
         "product": str(output_path),
         "shape": list(raw.shape),
-        "axis_order": "line,log_NH_attenuation,log_nH,log_T",
+        "axis_order": EXPECTED_AXIS_ORDER,
         **jeans_mass_fraction_metadata,
         "union_failure_nodes": int(np.count_nonzero(union)),
         "line_failure_masks_identical": all(

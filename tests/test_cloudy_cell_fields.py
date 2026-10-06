@@ -7,7 +7,8 @@ from unittest.mock import patch
 import numpy as np
 
 from quokka2s.cloudy.cell_fields import CloudyCellReader
-from quokka2s.cloudy.lookup import CloudyLookup, CloudyFailureTouchError, EXPECTED_AXIS_ORDER
+from quokka2s.cloudy.lookup import CloudyLookup, CloudyFailureTouchError
+from quokka2s.cloudy.table_definition import EXPECTED_AXIS_ORDER
 from quokka2s.constants import HYDROGEN_MASS_G
 from quokka2s.physics.settings import X_H
 from quokka2s.snapshot_reader import CellBatch
@@ -172,6 +173,22 @@ class CloudyCellFieldsTests(unittest.TestCase):
         self.assertEqual(fields.column_clipped_cells, dict(below=0, above=1))
         np.testing.assert_array_equal(self.cells.shielding_NH_cm2, original_columns)
         np.testing.assert_array_equal(self.selected, original_selection)
+
+    def test_physical_column_clipping_counts_keep_nextafter_endpoint_excursions(self):
+        self.cells.shielding_NH_cm2[1] = np.nextafter(1e18, -np.inf)
+        self.cells.shielding_NH_cm2[2] = np.nextafter(1e21, np.inf)
+        lookup = self.lookup()
+        queried = lookup.interpolate_available(
+            temperature_K=self.cells.temperature_QUOKKA_K[self.selected],
+            hydrogen_density_cm3=self.cells.hydrogen_density_cm3[self.selected],
+            shielding_NH_cm2=self.cells.shielding_NH_cm2[self.selected],
+        )
+        # Logarithms round these excursions to the exact bounds. Reader counts
+        # retain the original physical-NH statistic, independently of those flags.
+        self.assertFalse(queried.attenuation_column_below_table.any())
+        self.assertFalse(queried.attenuation_column_above_table.any())
+        fields = self.query(lookup=lookup)
+        self.assertEqual(fields.column_clipped_cells, dict(below=1, above=1))
 
     def test_all_failed_skips_interpolation(self):
         self.payload['failure_mask'][:] = True

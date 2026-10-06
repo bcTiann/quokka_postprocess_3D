@@ -12,10 +12,13 @@ from pathlib import Path
 import time
 
 from quokka2s.physics.cell_emission import CellEmissionCalculator
-from quokka2s.run_settings import load_process_config
+from quokka2s.run_settings import DEFAULT_PROCESS_CONFIG, load_process_config
 from quokka2s.processing_inputs import load_processing_inputs
-from quokka2s.result_files import write_products_and_report, write_status
+from quokka2s.result_files import write_emission_results, write_status
+from quokka2s.result_metadata import ResultMetadata
+from quokka2s.processing_report import build_processing_report
 from quokka2s.products.emission_products import EmissionProducts
+from quokka2s.snapshot_reader import slab_windows
 
 
 def accumulate_batch(cells, emission_calculator: CellEmissionCalculator, products):
@@ -45,19 +48,15 @@ def process_parallel_batches(
     snapshot, emission_calculator, and slab are shared read-only inputs. Each
     worker owns its EmissionProducts; the main thread merges them in batch order.
     executor is reused across slabs. A successful return leaves no pending sums."""
-    starts = iter(range(0, slab.cell_count, config.query_chunk))
+    batches = slab.iter_batches(batch_size=config.query_chunk)
     pending = deque()
 
-    def compute(start, stop):
-        """Calculate slab[start:stop] into independent product sums."""
+    def compute(cells):
+        """Calculate one batch into independent product sums."""
         partial = EmissionProducts(
             snapshot=snapshot,
             line_keys=emission_calculator.line_keys,
             spectral_workers=config.spectral_workers,
-        )
-        cells = slab.batch(
-            start=start,
-            stop=stop,
         )
         accumulate_batch(
             cells=cells,
@@ -68,19 +67,19 @@ def process_parallel_batches(
 
     def submit_next():
         """Keep the pending queue bounded by submitting one remaining batch."""
-        start = next(starts, None)
-        if start is not None:
-            stop = min(start + config.query_chunk, slab.cell_count)
-            pending.append((executor.submit(compute, start, stop), start, stop))
+        cells = next(batches, None)
+        if cells is not None:
+            future = executor.submit(compute, cells)
+            pending.append((future, cells.first_cell_id, cells.last_cell_id))
 
     for _ in range(config.chunk_workers):
         submit_next()
     try:
         while pending:
-            future, start, stop = pending.popleft()
+            future, first_cell_id, last_cell_id = pending.popleft()
             products.failure_context = {
-                "first_cell_id": slab.cell_id_at(start),
-                "last_cell_id": slab.cell_id_at(stop - 1),
+                "first_cell_id": first_cell_id,
+                "last_cell_id": last_cell_id,
             }
             partial = future.result()
             products.merge(partial)
@@ -108,10 +107,11 @@ def select_slabs_to_process(config, snapshot):
     window's width; max_slabs optionally selects its first windows. read_slab()
     reads gradient neighbours from the original box, even outside the region."""
     region_x_start, region_x_stop = snapshot.xy_region["x"]
-    selected_slabs = []
-    for x_start in range(region_x_start, region_x_stop, config.slab_nx):
-        x_stop = min(x_start + config.slab_nx, region_x_stop)
-        selected_slabs.append((x_start, x_stop))
+    selected_slabs = list(slab_windows(
+        x_start=region_x_start,
+        x_stop=region_x_stop,
+        slab_nx=config.slab_nx,
+    ))
     if config.max_slabs is not None:
         selected_slabs = selected_slabs[:config.max_slabs]
     return selected_slabs
@@ -136,12 +136,7 @@ def process_serial_batches(config, emission_calculator, products, slab):
 
     config.query_chunk limits each batch's cell count. Batch arrays are views;
     release the final view before process_one_slab() releases the parent slab."""
-    for start in range(0, slab.cell_count, config.query_chunk):
-        stop = min(start + config.query_chunk, slab.cell_count)
-        cells = slab.batch(
-            start=start,
-            stop=stop,
-        )
+    for cells in slab.iter_batches(batch_size=config.query_chunk):
         accumulate_batch(
             cells=cells,
             emission_calculator=emission_calculator,
@@ -264,7 +259,7 @@ def main(argv=None):
     )
     parser.add_argument(
         '--config',
-        default=Path('configs/emission_process.yaml'),
+        default=DEFAULT_PROCESS_CONFIG,
         type=Path,
         help='Processing YAML file (default: configs/emission_process.yaml)',
     )
@@ -288,6 +283,7 @@ def main(argv=None):
         state='running',
     )
     try:
+        stage = "processing cells"
         process_snapshot(
             config=config,
             snapshot=snapshot,
@@ -295,16 +291,39 @@ def main(argv=None):
             products=products,
             began=began,
         )
+        stage = "building results"
         outputs = products.build_outputs()
+        metadata = ResultMetadata.from_processing_inputs(
+            snapshot=snapshot,
+            emission_calculator=emission_calculator,
+        )
+        outputs.add_metadata(metadata=metadata)
+        stage = "checking results"
         image_conservation = products.check_outputs(outputs)
-        write_products_and_report(
+        stage = "building report"
+        report = build_processing_report(
             config=config,
             snapshot=snapshot,
             emission_calculator=emission_calculator,
             products=products,
             outputs=outputs,
+            metadata=metadata,
             image_conservation=image_conservation,
             began=began,
+        )
+        stage = "saving results"
+        write_emission_results(
+            directory=config.output_dir,
+            outputs=outputs,
+            report=report,
+        )
+        write_status(
+            output_dir=config.output_dir,
+            counts=products.counts,
+            began=began,
+            state=report["status"],
+            processing_complete=outputs.processing_complete,
+            full_snapshot=outputs.full_snapshot,
         )
     except BaseException as exc:
         write_status(
@@ -313,7 +332,8 @@ def main(argv=None):
             began=began,
             state='failed',
             error=f'{type(exc).__name__}: {exc}',
-            failure_context=products.failure_context,
+            stage=stage,
+            failure_context=(products.failure_context if stage == "processing cells" else {}),
         )
         raise
 

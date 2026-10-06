@@ -27,12 +27,15 @@ from quokka2s.physics.hydrogen_emissivity import (
 from quokka2s.despotic.cell_fields import DespoticCellReader
 from quokka2s.despotic.lookup import DespoticTemperatureCO, DespoticLookup
 from quokka2s.cloudy.cell_fields import CloudyCellReader
-from quokka2s.cloudy.lookup import CloudyLookup, EXPECTED_AXIS_ORDER
+from quokka2s.cloudy.lookup import CloudyLookup
+from quokka2s.cloudy.table_definition import EXPECTED_AXIS_ORDER
 from quokka2s.snapshot_reader import CellBatch
 
 
 class StubDespotic:
     clip_coordinates = DespoticLookup.clip_coordinates
+    prepare_queries = DespoticLookup.prepare_queries
+    _EVAL_CHUNK = DespoticLookup._EVAL_CHUNK
 
     def __init__(self):
         self.table = SimpleNamespace(
@@ -45,7 +48,8 @@ class StubDespotic:
         self.bad_line = None
         self.bad_density = None
 
-    def temperature_and_co(self, hydrogen_density_cm3, shielding_NH_cm2, velocity_gradient_s):
+    def temperature_and_co(self, *, queries):
+        hydrogen_density_cm3 = queries.hydrogen_density_cm3
         self.calls.append(('temperature_and_co', hydrogen_density_cm3.copy()))
         co10 = np.full(hydrogen_density_cm3.shape, 3e-24)
         co21 = np.full(hydrogen_density_cm3.shape, 5e-24)
@@ -55,12 +59,14 @@ class StubDespotic:
             co21[:] = np.nan
         return DespoticTemperatureCO(self.temperature_K.copy(), co10, co21)
 
-    def line_field(self, species, field_name, hydrogen_density_cm3, shielding_NH_cm2, velocity_gradient_s):
+    def line_field(self, *, species, field_name, queries):
+        hydrogen_density_cm3 = queries.hydrogen_density_cm3
         self.calls.append((species, hydrogen_density_cm3.copy()))
         assert species == 'C+' and field_name == 'lumPerH'
         return np.full(hydrogen_density_cm3.shape, np.nan if self.bad_line == 'C+' else 2e-24)
 
-    def number_densities(self, species, hydrogen_density_cm3, shielding_NH_cm2, velocity_gradient_s):
+    def number_densities(self, *, species, queries):
+        hydrogen_density_cm3 = queries.hydrogen_density_cm3
         self.calls.append(('number_densities', hydrogen_density_cm3.copy()))
         factors = {'e-': .02, 'H+': .03, 'H': .7}
         return {

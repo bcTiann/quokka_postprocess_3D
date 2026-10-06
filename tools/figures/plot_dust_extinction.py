@@ -8,7 +8,8 @@ from pathlib import Path
 
 import numpy as np
 
-from quokka2s.physics.dust_attenuation import DEFAULT_DRAINE_TABLE, LINE_WAVELENGTH_MICRON, extinction_cross_sections, load_draine_extinction
+from quokka2s.line_definitions import LINE_DEFINITIONS
+from quokka2s.physics.dust_attenuation import DEFAULT_DRAINE_TABLE, extinction_cross_sections, load_draine_extinction
 
 
 GROUPS = (
@@ -27,7 +28,11 @@ def main():
     parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args()
     wavelength, sigma = load_draine_extinction()
-    keys = tuple(LINE_WAVELENGTH_MICRON)
+    keys = tuple(LINE_DEFINITIONS)
+    line_wavelength_micron = {
+        key: LINE_DEFINITIONS[key].rest_wavelength_micron
+        for key in keys
+    }
     line_sigma = dict(zip(keys, extinction_cross_sections(keys, wavelength, sigma)))
     if wavelength[0] != 1.e-4 or wavelength[-1] != 1.e4 or wavelength.size != 1077:
         raise ValueError("Unexpected Draine table wavelength grid")
@@ -49,12 +54,12 @@ def main():
             va="bottom", ha="left", fontsize=8, color="#545C65")
 
     for key, label, color in GROUPS:
-        ax.scatter(LINE_WAVELENGTH_MICRON[key], line_sigma[key], s=31,
+        ax.scatter(line_wavelength_micron[key], line_sigma[key], s=31,
                    facecolor=color, edgecolor="white", lw=.6, zorder=4)
     # Mark each member of the close UV doublets, though their labels are grouped.
     for key, color in (("civ_1551", "#C28A00"),
                        ("ciii_1909", "#D55E00")):
-        ax.scatter(LINE_WAVELENGTH_MICRON[key], line_sigma[key], s=21,
+        ax.scatter(line_wavelength_micron[key], line_sigma[key], s=21,
                    facecolor=color, edgecolor="white", lw=.5, zorder=4)
 
     for key, label, color, offset in (
@@ -63,11 +68,11 @@ def main():
         ("co21", "CO(2–1)", "#1479A9", (-33, 15)),
         ("co10", "CO(1–0)", "#1479A9", (-34, -17)),
     ):
-        ax.annotate(label, (LINE_WAVELENGTH_MICRON[key], line_sigma[key]),
+        ax.annotate(label, (line_wavelength_micron[key], line_sigma[key]),
                     xytext=offset, textcoords="offset points", color=color,
                     fontsize=8, arrowprops=dict(arrowstyle="-", color=color, lw=.6))
 
-    hi_wavelength = LINE_WAVELENGTH_MICRON["hi21"]
+    hi_wavelength = line_wavelength_micron["hi21"]
     ax.axvline(hi_wavelength, color="#67717A", ls=":", lw=1.1)
     ax.text(hi_wavelength, 5.e-25, "H I 21 cm: outside table", rotation=90,
             ha="right", va="center", color="#4D5861", fontsize=8)
@@ -87,11 +92,11 @@ def main():
     # The second panel resolves lines compressed together on the full-range axis.
     zoom.plot(wavelength, sigma, color="#232B33", lw=1.25)
     for key, label, color in GROUPS[:4]:
-        zoom.scatter(LINE_WAVELENGTH_MICRON[key], line_sigma[key], s=35,
+        zoom.scatter(line_wavelength_micron[key], line_sigma[key], s=35,
                      color=color, edgecolor="white", lw=.5, zorder=4)
     for key, color in (("civ_1551", "#C28A00"),
                        ("ciii_1909", "#D55E00")):
-        zoom.scatter(LINE_WAVELENGTH_MICRON[key], line_sigma[key], s=25,
+        zoom.scatter(line_wavelength_micron[key], line_sigma[key], s=25,
                      color=color, edgecolor="white", lw=.5, zorder=4)
     for key, label, color, position in (
         ("ciii_977", "C III 977 Å", "#D55E00", (.083, 3.1e-21)),
@@ -99,7 +104,7 @@ def main():
         ("ciii_1907", "C III 1907/1909 Å", "#D55E00", (.23, 1.6e-21)),
         ("halpha", r"H$\alpha$", "#C6414B", (.51, 7.0e-22)),
     ):
-        zoom.annotate(label, (LINE_WAVELENGTH_MICRON[key], line_sigma[key]),
+        zoom.annotate(label, (line_wavelength_micron[key], line_sigma[key]),
                       xytext=position, textcoords="data", color=color,
                       fontsize=7.5, arrowprops=dict(arrowstyle="-", color=color, lw=.6))
     zoom.set_xscale("log")
@@ -121,7 +126,7 @@ def main():
         "source": str(DEFAULT_DRAINE_TABLE),
         "table_rows": int(wavelength.size),
         "table_wavelength_micron": [float(wavelength[0]), float(wavelength[-1])],
-        "line_wavelength_micron": LINE_WAVELENGTH_MICRON,
+        "line_wavelength_micron": line_wavelength_micron,
         "line_sigma_ext_cm2_H": {key: float(value) for key, value in line_sigma.items()},
         "hi21": "Outside the 1 cm table limit; no dust attenuation applied",
     }

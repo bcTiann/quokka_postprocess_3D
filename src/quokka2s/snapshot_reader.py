@@ -412,6 +412,21 @@ class SlabArrays:
             native_y_size=self.native_y_size,
         )
 
+    def iter_batches(self, *, batch_size: int):
+        """Yield consecutive CellBatch views with at most batch_size cells.
+
+        Each batch keeps its slab indices, full-grid IDs and six field views.
+        The final batch can be shorter. Consumers calculate and discard these
+        views; only the parent slab owns the cell arrays.
+        Example: 250 cells with batch_size=100 gives 100, 100 and 50 cells.
+        """
+        for start in range(0, self.cell_count, batch_size):
+            stop = min(start + batch_size, self.cell_count)
+            yield self.batch(
+                start=start,
+                stop=stop,
+            )
+
 
 def native_cell_id(slab_index, x_start, y_start, slab_shape, native_y_size):
     """Map one C-order compact slab index to the original grid, with full z depth."""
@@ -424,13 +439,14 @@ def native_cell_id(slab_index, x_start, y_start, slab_shape, native_y_size):
     return int((x_index * native_y_size + y_index) * nz + z_index)
 
 
-def slab_windows(nx, slab_nx):
+def slab_windows(*, x_start: int, x_stop: int, slab_nx: int):
     """Yield the x layers to process in each slab.
 
     Parameters
     ----------
-    nx : int
-        Number of x cells to process; a selected region can be one cell wide.
+    x_start, x_stop : int
+        Global x bounds, with x_stop excluded. Full box: 0 and 256;
+        selected region example: 64 and 128.
     slab_nx : int
         Maximum number of core x cells in each slab.
 
@@ -442,14 +458,14 @@ def slab_windows(nx, slab_nx):
 
     Examples
     --------
-    >>> list(slab_windows(5, 3))
+    >>> list(slab_windows(x_start=0, x_stop=5, slab_nx=3))
     [(0, 3), (3, 5)]
     """
-    if nx < 1 or slab_nx < 1:
-        raise ValueError('x dimension and slab size must be positive')
-    for x_start in range(0, nx, slab_nx):
-        x_stop = min(x_start + slab_nx, nx)
-        yield x_start, x_stop
+    if x_start < 0 or x_stop <= x_start or slab_nx < 1:
+        raise ValueError('Require 0 <= x_start < x_stop and a positive slab size')
+    for start in range(x_start, x_stop, slab_nx):
+        stop = min(start + slab_nx, x_stop)
+        yield start, stop
 
 
 def read_x_velocity_plane(snapshot: Snapshot, x_index: int) -> np.ndarray:

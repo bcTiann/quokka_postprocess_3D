@@ -8,6 +8,7 @@ from unittest.mock import patch
 import weakref
 
 from quokka2s import process_snapshot as processing
+from quokka2s.snapshot_reader import SlabArrays
 
 
 class FakeProducts:
@@ -25,6 +26,8 @@ class FakeProducts:
 
 class FakeSlab:
     """Represent one slab; batches contain positions but no reference to the slab."""
+
+    iter_batches = SlabArrays.iter_batches
 
     def __init__(self, cell_count, first_cell_id):
         self.cell_count = cell_count

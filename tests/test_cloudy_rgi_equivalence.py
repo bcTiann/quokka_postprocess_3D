@@ -8,7 +8,8 @@ from unittest.mock import Mock, patch
 import numpy as np
 from scipy.interpolate import RegularGridInterpolator
 
-from quokka2s.cloudy.lookup import CloudyFailureTouchError, CloudyLookup, EXPECTED_AXIS_ORDER, TOUCH_EPS
+from quokka2s.cloudy.lookup import CloudyFailureTouchError, CloudyLookup, TOUCH_EPS
+from quokka2s.cloudy.table_definition import EXPECTED_AXIS_ORDER
 
 
 def legacy_corner_sample(lookup, temperature, density, column):

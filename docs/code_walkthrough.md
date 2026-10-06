@@ -28,21 +28,26 @@ The package has five purpose-specific folders:
 | `products/` | Numerical image, spectrum, gas-phase, and projection accumulation |
 | `figures/` | Draw figures from already calculated numerical arrays |
 
-## 1. Follow the seven stages in `main()`
+## 1. Follow the stages in `main()`
 
 | Stage | Function | What it produces |
 |---|---|---|
-| Read settings | `load_process_config()` | Input/output paths and execution settings from YAML |
+| Read settings | `load_process_config()` | A `ProcessSettings` record with input/output paths and execution settings |
 | Open inputs | `processing_inputs.load_processing_inputs(config)` | `snapshot`, `emission_calculator` |
 | Create output arrays | `EmissionProducts(...)` | Initially empty image, spectrum, and gas-phase accumulators |
 | Process cells | `process_snapshot()` | The accumulated numerical results |
 | Build outputs | `products.build_outputs()` | Image, spectrum and gas-phase arrays and summaries |
+| Add interpretation | `ResultMetadata.from_processing_inputs()` then `outputs.add_metadata()` | Selected pixel coordinates, region and ordered dust metadata |
 | Check outputs | `products.check_outputs(outputs)` | Conservation/accounting checks; image-conservation diagnostics |
-| Save | `result_files.write_products_and_report()` | Three NPZ files plus a JSON report and status |
+| Build report | `processing_report.build_processing_report()` | Readable settings, counts, luminosities and check results |
+| Save | `result_files.write_emission_results()` then `write_status()` | Three NPZ files, the JSON report, then completion status |
 
 The orchestration stays in [process_snapshot.py](../src/quokka2s/process_snapshot.py).
 Input loading belongs to [processing_inputs.py](../src/quokka2s/processing_inputs.py), and output writing
 belongs to [result_files.py](../src/quokka2s/result_files.py);
+[result_metadata.py](../src/quokka2s/result_metadata.py) describes saved geometry
+and dust values, and [processing_report.py](../src/quokka2s/processing_report.py)
+builds the human-readable summary.
 [products/emission_products.py](../src/quokka2s/products/emission_products.py) groups the accumulated products.
 The objects group related variables; they are not extra copies of the snapshot:
 
@@ -57,7 +62,8 @@ The objects group related variables; they are not extra copies of the snapshot:
   holds its fixed lookup table. These objects are created once and shared across
   batches; they do not store queried cell fields or emissivities.
 - `slab` owns six field arrays, its global x position, local shape, and cell
-  volume. `slab.batch(start, stop)` uses these to locate its zero-copy cell views.
+  volume. `slab.iter_batches(batch_size=...)` yields consecutive zero-copy cell
+  views; `slab.batch(start=..., stop=...)` selects one explicit range.
 - `cells` carries those batch views and their position. Its first/last full-grid
   cell IDs are calculated properties, so callers cannot provide conflicting IDs.
 - `products` holds the running sums: luminosity images, spectra, gas-phase
@@ -112,6 +118,25 @@ Full z columns are kept together for both column-density calculations.
 Call `snapshot.read_slab(x_start=0, x_stop=8)` for the first eight x layers.
 The caller supplies only the desired cells; the reader determines all neighbour
 indices and removes those neighbours from its returned arrays.
+
+`slab_windows()` supplies these global, half-open core bounds without reading
+any fields. For a full box:
+
+```python
+for x_start, x_stop in slab_windows(
+    x_start=0,
+    x_stop=256,
+    slab_nx=8,
+):
+    slab = snapshot.read_slab(
+        x_start=x_start,
+        x_stop=x_stop,
+    )
+    # Finish this slab's batches before reading the next slab.
+```
+
+For a selected region, pass its global x bounds instead. The last window may be
+shorter than `slab_nx`; neighbour selection still belongs to `read_slab()`.
 
 Read `read_slab()` from top to bottom as these steps:
 
@@ -168,10 +193,23 @@ range from first to last.
 ## 3. Calculate one batch: `emission_calculator.calculate()`
 
 With `query_chunk: 1000000`, this slab is processed in four batches of one
-million cells and one batch of 194,304 cells. `slab.batch(...)` creates a
-`CellBatch`: six array views plus the original grid position, cell volume,
-and first/last cell IDs. These views share the slab memory; selecting a batch
-does not copy its six arrays. Let `N` be its cell count.
+million cells and one batch of 194,304 cells. The serial caller uses:
+
+```python
+for cells in slab.iter_batches(batch_size=config.query_chunk):
+    accumulate_batch(
+        cells=cells,
+        emission_calculator=emission_calculator,
+        products=products,
+    )
+    del cells
+```
+
+Each `CellBatch` carries six array views plus the original grid position, cell
+volume, and first/last cell IDs. Selecting a batch does not copy its six arrays.
+Consume and discard these views: retaining a batch also keeps the underlying
+slab arrays alive. The caller drops the last batch before releasing its slab;
+only accumulated products survive. Let `N` be the current batch's cell count.
 
 `accumulate_batch()` first passes the current cells to the shared calculator
 from [physics/cell_emission.py](../src/quokka2s/physics/cell_emission.py):
@@ -188,9 +226,11 @@ The query results, masks, and emissivity arrays remain local to `calculate()`.
    using `rho * X_H / m_H`. It is computed on first access, cached on this batch,
    and read by both readers. The same read-only array is reused until the batch
    is released; nH is not passed beside `cells` to the readers.
-2. `cold_cells = cells.temperature_QUOKKA_K < 3000.0` classifies the batch.
-   This `(N,)` boolean array records only the QUOKKA temperature branch;
-   table availability does not change it.
+2. Select cells with `cells.temperature_QUOKKA_K` less than
+   `EMISSION_TEMPERATURE_BOUNDARY_K` from
+   [physics/settings.py](../src/quokka2s/physics/settings.py), currently 3000 K.
+   The resulting `(N,)` `cold_cells` array records only the QUOKKA temperature
+   branch; table availability does not change it.
 3. `self.despotic_reader.read_fields()` returns `despotic_fields`: temperature
    and CO `lumPerH` for all cells,
    then CII `lumPerH` and electron, ionized-H, and neutral-H number densities
@@ -239,10 +279,11 @@ formula functions; those functions do not receive lookup objects.
 
 Inside `DespoticCellReader.read_fields()`, follow five steps:
 
-1. `self.prepare_query_inputs()` prepares nH, shielding NH and dV/dr for
-   all N cells. Coordinate bounds and tiny endpoint clipping use the same rules.
-2. `self.lookup.temperature_and_co()` queries T_D, CO10 and CO21 together for all N
-   cells. Keep this existing bundled interpolation; it is already one clear action.
+1. `self.prepare_query_inputs()` checks and clips nH, shielding NH and dV/dr for
+   all N cells. `self.lookup.prepare_queries()` prepares their logarithmic
+   coordinates once. Subsequent field queries reuse this batch-local record.
+2. `self.lookup.temperature_and_co(queries=queries)` queries T_D, CO10 and CO21
+   together for all N cells at those coordinates.
 3. Mark unavailable/nonpositive T_D and select eligible cold cells using the
    caller's T_QUOKKA branch. These two masks stay local to `read_fields()`.
 4. `self.read_cii_and_hydrogen_densities()` queries CII lumPerH and e-/H+/H
@@ -254,7 +295,7 @@ Inside `DespoticCellReader.read_fields()`, follow five steps:
 
 Inside `CloudyCellReader.read_fields()`, follow this order:
 
-1. `self.prepare_query_inputs()` selects T, nH and shielding NH using
+1. The reader selects T, nH and shielding NH directly from `cells` using
    `selected_cells`, the caller's hot-cell mask. The three named arrays keep
    the selected cell order.
 2. `self.lookup.interpolate_available()` queries the current 3D table. It
@@ -319,10 +360,10 @@ same result to four explicit calls:
 
 ```python
 emission = emission_calculator.calculate(cells=cells)
-products.images.add_batch(cells, emission)
-products.spectra.add_batch(cells, emission)
-products.phases.add_batch(cells, emission)
-products.record_batch(cells, emission)
+products.images.add_batch(cells=cells, emission=emission)
+products.spectra.add_batch(cells=cells, emission=emission)
+products.phases.add_batch(cells=cells, emission=emission)
+products.record_batch(cells=cells, emission=emission)
 ```
 
 Images read each named line and select its available cell positions. Spectra
@@ -356,6 +397,8 @@ velocity and centered second moment, including each cell's full Gaussian.
 `merged()` combines these small totals across batches, workers and cold/hot
 branches. It also includes the separation between batch mean velocities.
 No extra cell arrays remain in memory.
+The channel integrator and full moments use the same
+`MINIMUM_GAUSSIAN_WIDTH_KMS` from `line_velocity_moments.py`: 1e-5 km/s.
 
 For one line, with cell luminosities L, velocities v and thermal widths s:
 
@@ -405,19 +448,30 @@ results in input order using `EmissionProducts.merge()`. It reads the next slab
 only after the current one is finished. `spectral_workers` controls additional
 spectral-integration threads inside each batch.
 
-The end of `main()` has three separate actions:
+The end of `main()` keeps construction, checking, reporting and writing separate:
 
 ```python
 outputs = products.build_outputs()
+metadata = ResultMetadata.from_processing_inputs(
+    snapshot=snapshot,
+    emission_calculator=emission_calculator,
+)
+outputs.add_metadata(metadata=metadata)
 image_conservation = products.check_outputs(outputs)
-write_products_and_report(
+report = build_processing_report(
     config=config,
     snapshot=snapshot,
     emission_calculator=emission_calculator,
     products=products,
     outputs=outputs,
+    metadata=metadata,
     image_conservation=image_conservation,
     began=began,
+)
+write_emission_results(
+    directory=config.output_dir,
+    outputs=outputs,
+    report=report,
 )
 ```
 
@@ -466,22 +520,24 @@ form:
 | `physical_settings` | `X_H`, column mean, and column directions |
 | `execution` | Slab size, query-batch size, and worker counts |
 | Counts, masses, and conservation checks | Per-line missing emissivities, unavailable gas temperatures, luminosity sums, and spectral-window losses |
+| `elapsed_seconds` | Time to build the report, before saving; final `status.json` includes file-writing time |
 
-`write_products_and_report()` receives the input settings, snapshot, calculator,
-accumulated products, and generated numerical payloads and the check report. Its steps are
-`add_output_metadata()`, `save_product_arrays()`, and
-`build_processing_report()`, followed by writing the report and completion
-status. `status.json` records progress or a failure; it is not a resume
-checkpoint.
+`write_emission_results()` receives only the output directory, finished payloads
+and report. It writes the three NPZ files and `emission_report.json`; it does not
+open yt, query tables, add metadata or perform checks. `main()` marks completion
+only after writing succeeds. `status.json` records progress or a failure,
+including the failed stage; it is not a resume checkpoint.
 
 ## 6. Follow `plot`
 
 Open [plot_emission_results.py](../src/quokka2s/plot_emission_results.py) and start at `main()`.
 The rendering functions are in [figures/emission_results.py](../src/quokka2s/figures/emission_results.py):
 
-1. `load_plot_config()` reads the product and figure directories.
-2. `load_plot_products()` reads the three saved NPZ files once into
-   `SavedEmissionProducts(images, spectra, gas_phases)`. It loads the fields
+1. `load_plot_config()` returns `PlotSettings` with product and figure directories.
+2. `read_emission_results()` in the root
+   [emission_results.py](../src/quokka2s/emission_results.py) reads the three
+   saved NPZ files once into `EmissionResults(images, spectra, gas_phases, ...)`.
+   It loads the fields
    needed for drawing; process has already checked the scientific products.
 3. `draw_emission_products()` calls `plot_line_images()`,
    `plot_line_spectra()`, and `plot_gas_phase_comparisons()` in that order.
@@ -501,13 +557,57 @@ regimes. Curves use the saved velocity axis. Sigma labels use the full-profile
 moments, including emission outside the saved channel window. Both full and
 window moments remain available in the saved numerical products.
 
+The results object selects arrays by name rather than requiring callers to
+remember packed-axis indices:
+
+```python
+image = results.images.for_line(line="halpha", dust_state="attenuated")
+line = results.spectra.for_line(line="halpha", dust_state="attenuated")
+cnm = results.gas_phases.for_phase(phase="CNM")
+```
+
+The image is a `(Nx, Ny)` view in erg/s per pixel. `line` carries the saved
+velocity/profile arrays and full/window moments. `cnm` uses the gas-phase
+file's own channel edges. A branch query uses its saved regime name, for example
+`T_QUOKKA_ge_3000K`, and returns `None` for full moments because these are saved
+only for the total line.
+
+[products/gas_phase_velocity.py](../src/quokka2s/products/gas_phase_velocity.py)
+owns the phase names and temperature bounds and saves them as `phase_keys` and
+`phase_boundaries_K`. `GasPhaseResults` carries these values; the comparison
+figure's phase footer uses the saved definitions.
+
 ## Shared physical helpers and additional figures
 
-[physics/settings.py](../src/quokka2s/physics/settings.py) defines X_H, the measured velocity-gradient floor, and the shielding-column
-choice. [physics/gas_fields.py](../src/quokka2s/physics/gas_fields.py) calculates nH, NH, and
-dV/dr from unit-aware snapshot fields. [physics/hydrogen_emissivity.py](../src/quokka2s/physics/hydrogen_emissivity.py)
+[physics/settings.py](../src/quokka2s/physics/settings.py) defines X_H, the
+QUOKKA temperature branch boundary, the measured velocity-gradient floor, and
+the shielding-column choice. Snapshot processing and table-domain checks use
+these same settings. Paths and worker counts belong to the YAML configuration.
+[physics/gas_fields.py](../src/quokka2s/physics/gas_fields.py) calculates nH, NH,
+and dV/dr from unit-aware snapshot fields. Its `mixed_gas_temperature_K()`
+selects DESPOTIC temperature for cold cells and QUOKKA temperature for hot cells,
+preserving missing cold temperatures. Gas-phase statistics, projection maps,
+and phase histograms share this rule. Each line's thermal broadening still uses
+its own emitting-state temperature.
+[physics/hydrogen_emissivity.py](../src/quokka2s/physics/hydrogen_emissivity.py)
 contains the two analytic cold hydrogen emissivities. Physical constants are
 centralized in [constants.py](../src/quokka2s/constants.py).
+
+Table tools also have specific shared owners:
+
+- [cloudy/table_definition.py](../src/quokka2s/cloudy/table_definition.py)
+  supplies the ordered Cloudy line labels, grid and radiation recipe to the
+  builder and packager. [cloudy/incident_spectrum.py](../src/quokka2s/cloudy/incident_spectrum.py)
+  reads incident-continuum exports for both the SED generator and radiation
+  figures, keeping photon energy in Ryd and intensity in erg/cm²/s.
+- [despotic/solver_settings.py](../src/quokka2s/despotic/solver_settings.py)
+  supplies adopted solver defaults and reviewed source identities.
+  [despotic/table_data.py](../src/quokka2s/despotic/table_data.py) owns table
+  records and line-result field names; [despotic/snapshot_domain.py](../src/quokka2s/despotic/snapshot_domain.py)
+  checks the recorded full-snapshot geometry, physical settings and axis bounds.
+- [file_provenance.py](../src/quokka2s/file_provenance.py) calculates file hashes
+  for table-build and diagnostic file identities. Process-time table
+  compatibility uses the physical-domain checks above, not file hashes.
 
 Figure 1 and the emission phase diagrams have explicit callers:
 

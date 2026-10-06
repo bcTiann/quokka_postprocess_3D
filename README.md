@@ -364,7 +364,11 @@ src/quokka2s/
   run_settings.py           reads process/plot YAML settings
   processing_inputs.py      opens the snapshot and emission tables
   snapshot_reader.py        snapshot → slabs → cell batches
-  result_files.py            saves numerical products and reports
+  line_definitions.py       the ten lines' wavelengths and emitter masses
+  result_metadata.py        pixel geometry and ordered dust metadata
+  processing_report.py      builds the readable processing report
+  result_files.py           writes finished products and run status
+  emission_results.py       reads saved products by line and phase name
   constants.py              physical constants in the chosen units
   physics/                  derived fields, line emissivities, dust
   cloudy/                   three-dimensional Cloudy lookup and cell queries
@@ -372,6 +376,27 @@ src/quokka2s/
   products/                 numerical images, spectra and gas statistics
   figures/                  plotting functions
 ```
+
+The ten lines share one definition file. Dust attenuation, thermal widths, and
+UV plot labels read it instead of maintaining separate wavelength/mass lists.
+Cloudy input tokens remain in its table-building definition.
+
+Saved results can also be read without opening the snapshot or lookup tables:
+
+```python
+from quokka2s.emission_results import read_emission_results
+
+results = read_emission_results("output/plt0655228/processed")
+image = results.images.for_line(line="halpha", dust_state="attenuated")
+spectrum = results.spectra.for_line(line="halpha", dust_state="attenuated")
+cnm = results.gas_phases.for_phase(phase="CNM")
+```
+
+`image` contains luminosity per native pixel in erg/s. `spectrum` contains its
+saved velocity channels, profile, and separate full/window moments. `cnm` uses
+the gas-phase file's own velocity coordinates. Selecting a single temperature
+regime uses its exact saved name, such as `T_QUOKKA_ge_3000K`; full moments are
+saved for total lines only.
 
 Figure 1 and emission phase histograms are separate tools using the same
 snapshot reader and cell-emission functions:

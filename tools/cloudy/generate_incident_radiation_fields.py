@@ -23,10 +23,15 @@ from pathlib import Path
 
 import numpy as np
 
+from quokka2s.cloudy.incident_spectrum import read_incident_spectrum
+from quokka2s.cloudy.table_definition import (
+    HM12_LOG_NH,
+    ISM_ATTENUATION_LOG_NH,
+    SED_DIRECTORY_NAME,
+)
+
 
 RYDBERG_HZ = 3.2898419602508e15
-HM12_ATTENUATION_LOG_NH = (18.0, 18.5, 19.0, 19.5, 20.0, 20.5, 21.0)
-ISM_ATTENUATION_LOG_NH = 21.0
 NORMALIZATION_ENERGY_RYD = 0.5
 # Cloudy's table-SED interpolation and text continuum export introduce a
 # sub-per-mille round-trip difference near sharp edges.  This gate still
@@ -57,15 +62,6 @@ stop zone 1
 set dr 0
 save incident continuum "{save_name}"
 """
-
-
-def load_incident(path: Path) -> np.ndarray:
-    data = np.loadtxt(path)
-    if data.ndim != 2 or data.shape[1] < 2:
-        raise ValueError(f"unexpected save incident continuum format: {path}")
-    if np.any(np.diff(data[:, 0]) <= 0.0):
-        raise ValueError(f"non-increasing energy mesh: {path}")
-    return data
 
 
 def _number_token(value: float) -> str:
@@ -167,13 +163,13 @@ def main() -> None:
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=runtime_grackle / "HM12_ATTENUATION_ISM_NH21",
+        default=runtime_grackle / SED_DIRECTORY_NAME,
     )
     parser.add_argument(
         "--hm12-log-nh",
         type=float,
         nargs="+",
-        default=HM12_ATTENUATION_LOG_NH,
+        default=HM12_LOG_NH,
         help="HM2012 extinguish-column grid in log10(cm^-2)",
     )
     parser.add_argument("--ism-log-nh", type=float, default=ISM_ATTENUATION_LOG_NH)
@@ -211,7 +207,9 @@ def main() -> None:
             "export_ism_extinguished_nh21.inc",
         ),
     )
-    ism_data = load_incident(ism_path)
+    ism_data = read_incident_spectrum(
+        path=ism_path,
+    )
     energy = ism_data[:, 0]
     ism_extinguished = ism_data[:, 1]
 
@@ -230,7 +228,9 @@ def main() -> None:
                 f"export_hm12_extinguished_nh{root_label}.inc",
             ),
         )
-        hm12_data = load_incident(hm12_path)
+        hm12_data = read_incident_spectrum(
+            path=hm12_path,
+        )
         if not np.array_equal(energy, hm12_data[:, 0]):
             raise ValueError(f"Cloudy energy mesh differs for HM12 log NH={label}")
 
@@ -268,7 +268,9 @@ def main() -> None:
                 f"verify_combined_nh{root_label}.inc",
             ),
         )
-        roundtrip = load_incident(roundtrip_path)
+        roundtrip = read_incident_spectrum(
+            path=roundtrip_path,
+        )
         if not np.array_equal(energy, roundtrip[:, 0]):
             raise ValueError(f"round-trip energy mesh differs for log NH={label}")
         errors = _roundtrip_errors(serialized_sed, roundtrip[:, 1])

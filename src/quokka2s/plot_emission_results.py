@@ -4,8 +4,9 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from quokka2s.run_settings import load_plot_config
-from quokka2s.figures.emission_results import draw_emission_products, load_plot_products
+from quokka2s.run_settings import DEFAULT_PLOT_CONFIG, load_plot_config
+from quokka2s.emission_results import read_emission_results
+from quokka2s.figures.emission_results import draw_emission_products
 
 
 def main(argv=None) -> None:
@@ -20,7 +21,7 @@ def main(argv=None) -> None:
     )
     parser.add_argument(
         '--config',
-        default=Path('configs/emission_plot.yaml'),
+        default=DEFAULT_PLOT_CONFIG,
         type=Path,
         help='Plotting YAML file (default: configs/emission_plot.yaml)',
     )
@@ -29,7 +30,7 @@ def main(argv=None) -> None:
         config = load_plot_config(config_path)
     except (ValueError, OSError) as exc:
         parser.error(str(exc))
-    products = load_plot_products(config.products)
+    products = read_emission_results(directory=config.products)
     # raw_luminosity selects erg/s/(km/s) instead of dividing by projected area.
     # It does not select intrinsic versus dust-attenuated emission.
     draw_emission_products(

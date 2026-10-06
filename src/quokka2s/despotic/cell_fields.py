@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 if TYPE_CHECKING:
-    from quokka2s.despotic.lookup import DespoticLookup, DespoticTemperatureCO
+    from quokka2s.despotic.lookup import DespoticLookup, DespoticQueries, DespoticTemperatureCO
     from quokka2s.snapshot_reader import CellBatch
 
 
@@ -80,8 +80,8 @@ class DespoticCellFields:
     coordinate_clipped : dict of str to ndarray of bool
         'nH', 'NH', 'dVdr' flags from the reader's coordinate preparation, each (B,).
 
-    DespoticCellReader.read_fields() returns this object. Example: electron_density_cm3[7]
-    describes the eighth original cell, even if only two cold cells were queried.
+    DespoticCellReader.read_fields() returns this object. Every returned field
+    keeps the original batch shape (B,) and cell order; unqueried values are NaN.
     """
 
     temperature_K: np.ndarray
@@ -142,12 +142,15 @@ class DespoticCellReader:
         query_inputs = self.prepare_query_inputs(
             cells=cells,
         )
-
-        # 2. Read temperature and both CO lines at the same coordinates for all cells.
-        temperature_and_co = self.lookup.temperature_and_co(
+        queries = self.lookup.prepare_queries(
             hydrogen_density_cm3=query_inputs.hydrogen_density_cm3,
             shielding_NH_cm2=query_inputs.shielding_NH_cm2,
             velocity_gradient_s=query_inputs.velocity_gradient_s,
+        )
+
+        # 2. Read temperature and both CO lines at the same coordinates for all cells.
+        temperature_and_co = self.lookup.temperature_and_co(
+            queries=queries,
         )
 
         # 3. Keep the caller's temperature branch; require usable T_D for cold queries.
@@ -157,7 +160,7 @@ class DespoticCellReader:
 
         # 4. Read CII and e-/H+/H densities only for those selected cold cells.
         cold_fields = self.read_cii_and_hydrogen_densities(
-            query_inputs=query_inputs,
+            queries=queries,
             cold_cells_to_query=cold_cells_to_query,
         )
 
@@ -241,13 +244,14 @@ class DespoticCellReader:
     def read_cii_and_hydrogen_densities(
         self,
         *,
-        query_inputs: DespoticQueryInputs,
+        queries: DespoticQueries,
         cold_cells_to_query: np.ndarray,
     ) -> DespoticColdFields:
         """Read CII luminosity per H and e-/H+/H densities for selected cold cells.
 
-        query_inputs contains all B prepared coordinates. cold_cells_to_query is
-        the (B,) selection from read_fields(). Returns four (Q,) arrays: CII
+        queries contains all B checked, clipped coordinates and their cached
+        log points. cold_cells_to_query is the (B,) selection from read_fields().
+        Returns four (Q,) arrays: CII
         [erg/s/H nucleus] and particle densities [cm^-3], using clipped query nH.
         Example: [True, False, True] reads cells 0 and 2; an empty selection returns
         empty arrays without accessing the table.
@@ -260,21 +264,15 @@ class DespoticCellReader:
                 neutral_hydrogen_density_cm3=np.empty(0),
             )
 
-        cold_hydrogen_density_cm3 = query_inputs.hydrogen_density_cm3[cold_cells_to_query]
-        cold_shielding_NH_cm2 = query_inputs.shielding_NH_cm2[cold_cells_to_query]
-        cold_velocity_gradient_s = query_inputs.velocity_gradient_s[cold_cells_to_query]
+        cold_queries = queries.select(selected_cells=cold_cells_to_query)
         cii_luminosity_per_H = self.lookup.line_field(
             species='C+',
             field_name='lumPerH',
-            hydrogen_density_cm3=cold_hydrogen_density_cm3,
-            shielding_NH_cm2=cold_shielding_NH_cm2,
-            velocity_gradient_s=cold_velocity_gradient_s,
+            queries=cold_queries,
         )
         number_densities = self.lookup.number_densities(
             species=('e-', 'H+', 'H'),
-            hydrogen_density_cm3=cold_hydrogen_density_cm3,
-            shielding_NH_cm2=cold_shielding_NH_cm2,
-            velocity_gradient_s=cold_velocity_gradient_s,
+            queries=cold_queries,
         )
         return DespoticColdFields(
             cii_luminosity_per_H=cii_luminosity_per_H,

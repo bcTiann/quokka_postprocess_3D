@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import contextlib
 import copy
-import hashlib
 import importlib.util
 from importlib.metadata import distribution
 import io
@@ -17,20 +16,37 @@ from typing import Mapping, Sequence
 
 import numpy as np
 
+from quokka2s.file_provenance import file_sha256
 from quokka2s.physics.composition import GOW_ELEMENTAL_ABUNDANCES, abundance_metadata
-from quokka2s.despotic.table_data import AttemptRecord, LINE_RESULT_FIELDS, LineLumResult, ThermalSolveError
+from quokka2s.despotic.table_data import (
+    AttemptRecord,
+    LINE_RESULT_FIELDS,
+    LineLumResult,
+    NAN_LINE_RESULT,
+    ThermalSolveError,
+)
+from quokka2s.despotic.solver_settings import (
+    CHECKED_CHEMISTRY_SOURCE_SHA256,
+    CHEMISTRY_MAX_TIME_S,
+    CHEMISTRY_RELATIVE_TOLERANCE,
+    DEFAULT_ABUNDANCE_SPECIES,
+    DEFAULT_EMITTERS,
+    DERIVED_COMPOSITION_RELATIVE_TOLERANCE,
+    DESPOTIC_REQUIRED_COMMIT,
+    ELEMENT_TOTAL_RELATIVE_TOLERANCE,
+    FALLBACK_GAS_BRACKET_UPPER_K,
+    FINAL_THERMAL_RESIDUAL_TOLERANCE,
+    GOW_REFRESH_SOURCE_SHA256,
+    INITIAL_GAS_TEMPERATURE_K,
+    MAX_GAS_BRACKET_EXPANSIONS,
+    MAX_TEMPERATURE_ITERATIONS,
+    NONTHERMAL_VELOCITY_CM_S,
+)
 
 
 LOGGER = logging.getLogger(__name__)
-DEFAULT_EMITTERS = ("CO", "C", "C+", "HCO+", "O")
 LVG_GEOMETRY = "LVG"
 CO21_TABLE_TOKEN = "CO21"
-DESPOTIC_REQUIRED_COMMIT = "ed18e5669adb7306f795a3d30d8919995793bc61"
-GOW_REFRESH_SOURCE_SHA256 = "0abcc94bd0a7e72d0fc1c8f826fa1aad45b5ad0f7bff41ba178a8ed20f1b1ed3"
-CHECKED_CHEMISTRY_SOURCE_SHA256 = "c1376df46886bd8f7c2638df7323125a110631c17b3b9ccf8dc74d9aea9d7b09"
-FALLBACK_GAS_BRACKET_UPPER_K = 1000.0
-FINAL_THERMAL_RESIDUAL_TOLERANCE = 1e-4
-ELEMENT_TOTAL_RELATIVE_TOLERANCE = 1e-8
 
 warnings.filterwarnings(
     "ignore",
@@ -39,7 +55,6 @@ warnings.filterwarnings(
     module=r"despotic\.emitterData",
 )
 
-_NAN_LINE_RESULT = LineLumResult(*([float("nan")] * len(LINE_RESULT_FIELDS)))
 _PointResult = tuple[
     Mapping[str, LineLumResult], Mapping[str, float], float, float, float, float,
     Mapping[str, float], bool,
@@ -50,7 +65,7 @@ def validated_solver_metadata() -> dict[str, object]:
     """Check the reviewed DESPOTIC patches and record build provenance."""
     package = distribution("despotic")
     source = Path(package.locate_file("despotic/chemistry/GOW.py"))
-    digest = hashlib.sha256(source.read_bytes()).hexdigest()
+    digest = file_sha256(source)
     if digest != GOW_REFRESH_SOURCE_SHA256:
         raise RuntimeError(
             "DESPOTIC table builds require the reviewed GOW composition refresh. "
@@ -58,7 +73,7 @@ def validated_solver_metadata() -> dict[str, object]:
             f"Python environment before rebuilding. Found GOW.py SHA256 {digest}."
         )
     chemistry_source = Path(package.locate_file("despotic/chemistry/chemEvol.py"))
-    chemistry_digest = hashlib.sha256(chemistry_source.read_bytes()).hexdigest()
+    chemistry_digest = file_sha256(chemistry_source)
     if chemistry_digest != CHECKED_CHEMISTRY_SOURCE_SHA256:
         raise RuntimeError(
             "DESPOTIC table builds require checked GOW chemical integrations. "
@@ -77,11 +92,12 @@ def validated_solver_metadata() -> dict[str, object]:
             "scipy_version": distribution("scipy").version,
         },
         "numerical_settings": {
-            "chemistry_tolerance": 1e-6,
+            "chemistry_tolerance": CHEMISTRY_RELATIVE_TOLERANCE,
             "chemistry_acceptance": "native setChemEq relative species-change and temperature criteria",
-            "chemistry_max_time_s": 1e22,
-            "max_temperature_iterations": 200,
-            "initial_gas_temperature_K": 100.0,
+            "chemistry_max_time_s": CHEMISTRY_MAX_TIME_S,
+            "max_temperature_iterations": MAX_TEMPERATURE_ITERATIONS,
+            "initial_gas_temperature_K": INITIAL_GAS_TEMPERATURE_K,
+            # These describe the fixed source patch verified by its SHA above.
             "odeint": {
                 "rtol": 1e-8, "atol": 1e-12, "mxstep": 10000,
                 "acceptance": "Integration successful; complete finite output",
@@ -91,13 +107,16 @@ def validated_solver_metadata() -> dict[str, object]:
                 "trigger": "thermal subsolve failure only",
                 "state": "restart whole point on a fresh cloud",
                 "initial_gas_bracket_upper_K": FALLBACK_GAS_BRACKET_UPPER_K,
-                "expansion": "decades until a valid sign change; at most 12 expansions",
+                "expansion": (
+                    "decades until a valid sign change; "
+                    f"at most {MAX_GAS_BRACKET_EXPANSIONS} expansions"
+                ),
             },
         },
         "final_validation": {
             "thermal_relative_residual_tolerance": FINAL_THERMAL_RESIDUAL_TOLERANCE,
             "element_total_relative_tolerance": ELEMENT_TOTAL_RELATIVE_TOLERANCE,
-            "derived_relative_tolerance": 1e-12,
+            "derived_relative_tolerance": DERIVED_COMPOSITION_RELATIVE_TOLERANCE,
             "level_populations": "native dEdt LVG retries; finite normalized populations required",
             "line_output": "noRecompute; same populations as final thermal residual",
             "failed_points": "NaN physical outputs; original failure retained in attempt log",
@@ -135,7 +154,7 @@ def _nan_line_results(species: Sequence[str]) -> dict[str, LineLumResult]:
     names = list(species)
     if "CO" in names:
         names.append(CO21_TABLE_TOKEN)
-    return {name: _NAN_LINE_RESULT for name in names}
+    return {name: NAN_LINE_RESULT for name in names}
 
 
 def _extract_line_result(
@@ -143,7 +162,7 @@ def _extract_line_result(
     index: int = 0,
 ) -> LineLumResult:
     if index < 0 or index >= len(transitions):
-        return _NAN_LINE_RESULT
+        return NAN_LINE_RESULT
     entry = transitions[index]
     return LineLumResult(*(float(entry.get(field, float("nan"))) for field in LINE_RESULT_FIELDS))
 
@@ -161,7 +180,7 @@ def _extract_transition_result(
             return LineLumResult(
                 *(float(entry.get(field, float("nan"))) for field in LINE_RESULT_FIELDS)
             )
-    return _NAN_LINE_RESULT
+    return NAN_LINE_RESULT
 
 
 def _log_despotic_stdout(output: io.StringIO) -> None:
@@ -249,7 +268,7 @@ def _validate_final_state(cell, species: Sequence[str]) -> dict[str, float]:
     for name in ("mu", "muH", "qIon"):
         actual, expected = float(getattr(cell.comp, name)), float(getattr(derived, name))
         if not np.isfinite(actual) or not np.isfinite(expected) or not np.isclose(
-            actual, expected, rtol=1e-12, atol=0.0
+            actual, expected, rtol=DERIVED_COMPOSITION_RELATIVE_TOLERANCE, atol=0.0
         ):
             raise RuntimeError(f"Final composition-derived {name} is inconsistent with the abundances")
 
@@ -291,13 +310,13 @@ def _solve_gow_lvg_point_once(
     dvdr_val: float,
     *,
     species: Sequence[str] = DEFAULT_EMITTERS,
-    abundance_only: Sequence[str] = ("e-", "H+", "H2", "H"),
+    abundance_only: Sequence[str] = DEFAULT_ABUNDANCE_SPECIES,
     log_failures: bool = True,
     row_idx: int | None = None,
     col_idx: int | None = None,
     dvdr_idx: int | None = None,
-    Tg_init: float = 100.0,
-    sigma_nt_cms: float = 2.0e5,
+    Tg_init: float = INITIAL_GAS_TEMPERATURE_K,
+    sigma_nt_cms: float = NONTHERMAL_VELOCITY_CM_S,
     attempt_log: list[AttemptRecord] | None = None,
     initial_gas_upper: float | None = None,
 ) -> tuple[_PointResult, bool]:
@@ -357,9 +376,9 @@ def _solve_gow_lvg_point_once(
             converged = cell.setChemEq(
                 network=GOW,
                 evolveTemp="iterateDust",
-                tol=1e-6,
-                maxTime=1e22,
-                maxTempIter=200,
+                tol=CHEMISTRY_RELATIVE_TOLERANCE,
+                maxTime=CHEMISTRY_MAX_TIME_S,
+                maxTempIter=MAX_TEMPERATURE_ITERATIONS,
                 tempEqParam={"escapeProbGeom": LVG_GEOMETRY},
             )
         _log_despotic_stdout(output)
@@ -460,13 +479,13 @@ def solve_gow_lvg_point(
     dvdr_val: float,
     *,
     species: Sequence[str] = DEFAULT_EMITTERS,
-    abundance_only: Sequence[str] = ("e-", "H+", "H2", "H"),
+    abundance_only: Sequence[str] = DEFAULT_ABUNDANCE_SPECIES,
     log_failures: bool = True,
     row_idx: int | None = None,
     col_idx: int | None = None,
     dvdr_idx: int | None = None,
-    Tg_init: float = 100.0,
-    sigma_nt_cms: float = 2.0e5,
+    Tg_init: float = INITIAL_GAS_TEMPERATURE_K,
+    sigma_nt_cms: float = NONTHERMAL_VELOCITY_CM_S,
     attempt_log: list[AttemptRecord] | None = None,
 ) -> _PointResult:
     """Solve a point, retrying a failed thermal bracket on a fresh cloud.

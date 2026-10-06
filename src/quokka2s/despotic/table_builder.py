@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol, Sequence
+from typing import Sequence
 
 import numpy as np
 from joblib import Parallel, delayed, parallel_config
@@ -13,8 +13,9 @@ from tqdm import tqdm
 from quokka2s.despotic.table_data import (
     AttemptRecord,
     DespoticTable,
+    ExplicitGrid,
     LINE_RESULT_FIELDS,
-    LineLumResult,
+    NAN_LINE_RESULT,
     SpeciesLineGrid,
     SpeciesRecord,
 )
@@ -24,14 +25,14 @@ from quokka2s.despotic.cell_solver import (
     solve_gow_lvg_point,
     validated_solver_metadata,
 )
+from quokka2s.despotic.solver_settings import (
+    DEFAULT_ABUNDANCE_SPECIES,
+    DEFAULT_EMITTERS,
+    INITIAL_GAS_TEMPERATURE_K,
+)
 
 
 LOGGER = logging.getLogger(__name__)
-DEFAULT_LINE_RESULT = LineLumResult(*([float("nan")] * len(LINE_RESULT_FIELDS)))
-
-
-class GridSpec(Protocol):
-    def sample(self) -> np.ndarray: ...
 
 
 @dataclass(frozen=True)
@@ -41,22 +42,15 @@ class SpeciesSpec:
 
 
 GOW_LVG_SPECIES: tuple[SpeciesSpec, ...] = (
-    SpeciesSpec("CO", True),
-    SpeciesSpec("C", True),
-    SpeciesSpec("C+", True),
-    SpeciesSpec("HCO+", True),
-    SpeciesSpec("O", True),
-    SpeciesSpec("e-", False),
-    SpeciesSpec("H+", False),
-    SpeciesSpec("H2", False),
-    SpeciesSpec("H", False),
+    *(SpeciesSpec(name=name, is_emitter=True) for name in DEFAULT_EMITTERS),
+    *(SpeciesSpec(name=name, is_emitter=False) for name in DEFAULT_ABUNDANCE_SPECIES),
 )
 
 
 def build_gow_lvg_table(
-    nH_grid: GridSpec,
-    col_grid: GridSpec,
-    dVdr_grid: GridSpec,
+    nH_grid: ExplicitGrid,
+    col_grid: ExplicitGrid,
+    dVdr_grid: ExplicitGrid,
     *,
     species_specs: Sequence[SpeciesSpec] = GOW_LVG_SPECIES,
     show_progress: bool = True,
@@ -93,7 +87,10 @@ def build_gow_lvg_table(
             "species": [[spec.name, spec.is_emitter] for spec in specs],
             "solver_metadata": build_metadata,
             "source_metadata": source_metadata(),
-            "configuration": {"Tg_init": 100.0, "context": checkpoint_context},
+            "configuration": {
+                "Tg_init": INITIAL_GAS_TEMPERATURE_K,
+                "context": checkpoint_context,
+            },
         }
         with PointCheckpoints.open(Path(checkpoint_dir), manifest) as checkpoints:
             return _build_sampled_table(nH_vals, col_vals, dvdr_vals,
@@ -110,10 +107,17 @@ def _solve_point(indices, coordinates, emitter_names, abundance_only, checkpoint
         attempts: list[AttemptRecord] = []
         row, col, dvdr = indices
         result = solver(
-            nH_val=coordinates[0], colDen_val=coordinates[1], dvdr_val=coordinates[2],
-            species=emitter_names, abundance_only=abundance_only,
-            row_idx=row, col_idx=col, dvdr_idx=dvdr, Tg_init=100.0,
-            log_failures=True, attempt_log=attempts,
+            nH_val=coordinates[0],
+            colDen_val=coordinates[1],
+            dvdr_val=coordinates[2],
+            species=emitter_names,
+            abundance_only=abundance_only,
+            row_idx=row,
+            col_idx=col,
+            dvdr_idx=dvdr,
+            Tg_init=INITIAL_GAS_TEMPERATURE_K,
+            log_failures=True,
+            attempt_log=attempts,
         )
         if checkpoints:
             checkpoints.save(indices, coordinates, result, attempts)
@@ -185,7 +189,7 @@ def _build_sampled_table(nH_vals, col_vals, dvdr_vals, *, specs, build_metadata,
                 for spec in specs:
                     abundance_map[spec.name][indices] = chem_abunds.get(spec.name, np.nan)
                 for name in line_output_names:
-                    line = line_results.get(name, DEFAULT_LINE_RESULT)
+                    line = line_results.get(name, NAN_LINE_RESULT)
                     for field in LINE_RESULT_FIELDS:
                         line_buffers[name][field][indices] = getattr(line, field)
                 for position, (term, value) in enumerate(energy_terms.items()):
@@ -214,23 +218,23 @@ def _build_sampled_table(nH_vals, col_vals, dvdr_vals, *, specs, build_metadata,
         line = None
         if spec.is_emitter:
             fields = line_buffers[spec.name]
-            line = SpeciesLineGrid(
-                freq=fields["freq"], intIntensity=fields["intIntensity"], intTB=fields["intTB"],
-                lumPerH=fields["lumPerH"], tau=fields["tau"], tauDust=fields["tauDust"],
-                abundance=abundance,
-            )
-        species_data[spec.name] = SpeciesRecord(spec.name, abundance, line, spec.is_emitter)
+            line = SpeciesLineGrid(**fields)
+        species_data[spec.name] = SpeciesRecord(
+            name=spec.name,
+            abundance=abundance,
+            line=line,
+            is_emitter=spec.is_emitter,
+        )
 
     if CO21_TABLE_TOKEN in line_buffers:
         fields = line_buffers[CO21_TABLE_TOKEN]
         co_abundance = abundance_map["CO"]
-        line = SpeciesLineGrid(
-            freq=fields["freq"], intIntensity=fields["intIntensity"], intTB=fields["intTB"],
-            lumPerH=fields["lumPerH"], tau=fields["tau"], tauDust=fields["tauDust"],
-            abundance=co_abundance,
-        )
+        line = SpeciesLineGrid(**fields)
         species_data[CO21_TABLE_TOKEN] = SpeciesRecord(
-            CO21_TABLE_TOKEN, co_abundance, line, True,
+            name=CO21_TABLE_TOKEN,
+            abundance=co_abundance,
+            line=line,
+            is_emitter=True,
         )
 
     return DespoticTable(

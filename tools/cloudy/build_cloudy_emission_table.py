@@ -19,12 +19,25 @@ from pathlib import Path
 
 import numpy as np
 
-from quokka2s.cloudy.table_definition import HM12_LOG_NH, JEANS_CAP_CLOUDY, LINES as LINE_SPEC, LOG_NH_DENSITY, N_T, SED_DIRECTORY_NAME, STEM, T_MAX_CLOUDY, T_MIN_CLOUDY
+from quokka2s.cloudy.table_definition import (
+    CMB_REDSHIFT,
+    COSMIC_RAY_H0_IONIZATION_RATE_S,
+    HM12_LOG_NH,
+    JEANS_CAP_CLOUDY,
+    LINES as LINE_SPEC,
+    LOG_NH_DENSITY,
+    N_T,
+    SED_DIRECTORY_NAME,
+    STEM,
+    T_MAX_CLOUDY,
+    T_MIN_CLOUDY,
+)
 from quokka2s.physics.composition import QUOKKA_MASS_FRACTIONS
 
 
-# Retain the existing public script constant used by build-workflow checks.
-LINES = tuple(line[1] for line in LINE_SPEC)
+# CIAOLoop needs only the ordered parameter labels, while the packager uses
+# each complete (key, parameter label, map header) record from LINE_SPEC.
+CLOUDY_LINE_LABELS = tuple(line[1] for line in LINE_SPEC)
 
 
 def _require_file(path: Path, description: str) -> Path:
@@ -50,6 +63,7 @@ def _write_parameter_file(
     smoke: bool,
 ) -> None:
     title = "seven-point smoke" if smoke else "7x10x21 production"
+    cosmic_ray_log_rate = np.log10(COSMIC_RAY_H0_IONIZATION_RATE_S)
     lines = [
         "#########################################################################",
         f"## Eight-line Jeans {title}: HM2012 attenuation grid + ISM + CMB + CR",
@@ -62,7 +76,7 @@ def _write_parameter_file(
         "runStartIndex = 1",
         "test = 0",
         "cloudyRunMode = 4",
-        *(f"lineMapLine = {line}" for line in LINES),
+        *(f"lineMapLine = {line}" for line in CLOUDY_LINE_LABELS),
         f"coolingMapTmin = {'1e5' if smoke else T_MIN_CLOUDY}",
         f"coolingMapTmax = {'1e5' if smoke else T_MAX_CLOUDY}",
         f"coolingMapTpoints = {1 if smoke else N_T}",
@@ -72,10 +86,10 @@ def _write_parameter_file(
         f"coolingMapMaximumJeansLength = {JEANS_CAP_CLOUDY}",
         "command iterate to convergence",
         "command stop temperature off",
-        "command cosmic rays rate -16.698970",
+        f"command cosmic rays rate {cosmic_ray_log_rate:.6f}",
         "# Cloudy's default simple molecular network and charge transfer remain on.",
         "# No grains, turbulence, or custom elemental abundances are added.",
-        "command CMB redshift 0",
+        f"command CMB redshift {CMB_REDSHIFT:g}",
         "loop [hden] "
         + (
             "0"
@@ -139,7 +153,7 @@ def _validate_smoke_output(directory: Path) -> None:
     # CIAOLoop applies a few label-specific formatting rules. Read the first
     # file's exact eight labels and require the same ordered header in all seven.
     canonical_header = None
-    line_maxima = np.full(len(LINES), -np.inf)
+    line_maxima = np.full(len(CLOUDY_LINE_LABELS), -np.inf)
     for path in files:
         lines = path.read_text().splitlines()
         found_init.update(line for line in lines if line.startswith("# init "))
@@ -151,7 +165,7 @@ def _validate_smoke_output(directory: Path) -> None:
         elif header != canonical_header:
             raise ValueError(f"inconsistent smoke-map line header: {path}")
         rows = [line for line in lines if line.strip() and not line.startswith("#")]
-        if len(rows) != 1 or len(rows[0].split()) != 1 + len(LINES):
+        if len(rows) != 1 or len(rows[0].split()) != 1 + len(CLOUDY_LINE_LABELS):
             raise ValueError(f"smoke map does not contain one complete row: {path}")
         values = [float(value) for value in rows[0].split()]
         if not all(np.isfinite(values)):

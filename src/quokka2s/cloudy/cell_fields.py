@@ -12,28 +12,6 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True)
-class CloudyQueryInputs:
-    """Physical lookup coordinates for the Q cells selected from this batch.
-
-    Attributes
-    ----------
-    temperature_K : ndarray, shape (Q,)
-        Selected QUOKKA temperatures [K] from cells.temperature_QUOKKA_K.
-    hydrogen_density_cm3 : ndarray, shape (Q,)
-        Selected physical hydrogen-nuclei densities [cm^-3].
-    shielding_NH_cm2 : ndarray, shape (Q,)
-        Selected +/-z harmonic-mean columns [cm^-2], before lookup-axis clipping.
-
-    CloudyCellReader.prepare_query_inputs() retains the caller's selection order. For
-    selected_cells=[False, True, False, True], entry 0 describes batch cell 1.
-    """
-
-    temperature_K: np.ndarray
-    hydrogen_density_cm3: np.ndarray
-    shielding_NH_cm2: np.ndarray
-
-
-@dataclass(frozen=True)
 class CloudyCellFields:
     """Cloudy lookup results restored to every original position in the batch.
 
@@ -109,49 +87,29 @@ class CloudyCellReader:
             and order; unqueried fields and failed emissivities are NaN.
         """
         # 1. Take T, nH and shielding NH for the cells selected by the caller.
-        query_inputs = self.prepare_query_inputs(
-            cells=cells,
-            selected_cells=selected_cells,
-        )
+        query_temperature_K = cells.temperature_QUOKKA_K[selected_cells]
+        query_hydrogen_density_cm3 = cells.hydrogen_density_cm3[selected_cells]
+        query_shielding_NH_cm2 = cells.shielding_NH_cm2[selected_cells]
 
         # 2. Read the three table axes; raw lookup handles NH-axis clipping.
         queried_fields = self.lookup.interpolate_available(
-            temperature_K=query_inputs.temperature_K,
-            hydrogen_density_cm3=query_inputs.hydrogen_density_cm3,
-            shielding_NH_cm2=query_inputs.shielding_NH_cm2,
+            temperature_K=query_temperature_K,
+            hydrogen_density_cm3=query_hydrogen_density_cm3,
+            shielding_NH_cm2=query_shielding_NH_cm2,
         )
 
         # 3. Count successful queries whose physical NH lies outside the lookup axis.
         column_clipped_cells = self.count_column_clipping(
-            shielding_NH_cm2=query_inputs.shielding_NH_cm2,
+            shielding_NH_cm2=query_shielding_NH_cm2,
             failed_queries=queried_fields.failed_queries,
         )
 
         # 4. Put each named result back at its original cell position in the batch.
         return self.restore_batch_positions(
             queried_fields=queried_fields,
-            query_inputs=query_inputs,
+            query_temperature_K=query_temperature_K,
             selected_cells=selected_cells,
             column_clipped_cells=column_clipped_cells,
-        )
-
-    def prepare_query_inputs(
-        self,
-        *,
-        cells: CellBatch,
-        selected_cells: np.ndarray,
-    ) -> CloudyQueryInputs:
-        """Take the selected cells' physical coordinates for the 3D lookup.
-
-        cells is the original B-cell batch; cells.hydrogen_density_cm3 supplies
-        cached physical nH [cm^-3]. selected_cells is the caller's (B,) bool mask.
-        Returns three (Q,) arrays: T [K], nH [cm^-3], NH [cm^-2], without clipping
-        or logarithms. Example: [True, False, True] takes cells 0 and 2, in order.
-        """
-        return CloudyQueryInputs(
-            temperature_K=cells.temperature_QUOKKA_K[selected_cells],
-            hydrogen_density_cm3=cells.hydrogen_density_cm3[selected_cells],
-            shielding_NH_cm2=cells.shielding_NH_cm2[selected_cells],
         )
 
     def count_column_clipping(
@@ -167,6 +125,9 @@ class CloudyCellReader:
         Returns integer 'below'/'above' counts using the loaded lookup's bounds.
         Example: [1e17, 1e19, 1e22], bounds (1e18, 1e21), and no failures give
         {'below': 1, 'above': 1}. No simulation column is changed.
+
+        These physical-NH statistics differ from the lookup's log-NH flags at
+        nextafter endpoints: log10 may round a tiny excursion back to the bound.
         """
         successful_queries = ~failed_queries
         lower_column, upper_column = self.lookup.attenuation_column_bounds_cm2
@@ -181,14 +142,15 @@ class CloudyCellReader:
         self,
         *,
         queried_fields: CloudyQueryResult,
-        query_inputs: CloudyQueryInputs,
+        query_temperature_K: np.ndarray,
         selected_cells: np.ndarray,
         column_clipped_cells: dict[str, int],
     ) -> CloudyCellFields:
         """Put each selected result back at its original batch cell index.
 
-        The lookup returned emissivity_per_nH2 for Q selected cells; query_inputs
-        holds their actual query temperatures. We create full-batch NaN arrays
+        The lookup returned emissivity_per_nH2 for Q selected cells;
+        query_temperature_K (Q,) [K] holds their actual query temperatures.
+        We create full-batch NaN arrays
         and put these values at the True positions of selected_cells, shape (B,).
         Returned fields keep the original cell shape and order. Unqueried fields
         remain NaN; failure flags are False there. column_clipped_cells holds
@@ -201,7 +163,7 @@ class CloudyCellReader:
         failed_cells = np.zeros(cell_count, dtype=bool)
 
         restored_emissivity_per_nH2[:, selected_cells] = queried_fields.emissivity_per_nH2
-        temperature_K[selected_cells] = query_inputs.temperature_K
+        temperature_K[selected_cells] = query_temperature_K
         failed_cells[selected_cells] = queried_fields.failed_queries
 
         # Each named array is a row view; naming the lines creates no data copies.

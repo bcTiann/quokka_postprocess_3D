@@ -9,6 +9,7 @@ Replot: python tools/figures/build_table_input_slice.py --output-dir output/figu
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 from datetime import datetime, timezone
 import json
 from pathlib import Path
@@ -28,8 +29,9 @@ from quokka2s.figures.table_input_slices import (
     plot_table_input_slice,
 )
 from quokka2s.physics.settings import X_H
+from quokka2s.physics.gas_fields import mixed_gas_temperature_K
 from quokka2s.processing_inputs import load_processing_inputs
-from quokka2s.run_settings import load_process_config
+from quokka2s.run_settings import DEFAULT_PROCESS_CONFIG, load_process_config
 
 
 def calculate_slice_fields(snapshot, emission_calculator, slice_index, query_chunk):
@@ -54,18 +56,15 @@ def calculate_slice_fields(snapshot, emission_calculator, slice_index, query_chu
     )
     temperature_despotic = np.empty(slab.cell_count)
     valid = np.empty(slab.cell_count, dtype=bool)
-    for start in range(0, slab.cell_count, query_chunk):
-        stop = min(start + query_chunk, slab.cell_count)
-        cells = slab.batch(
-            start=start,
-            stop=stop,
-        )
+    for cells in slab.iter_batches(batch_size=query_chunk):
+        start = cells.batch_start
+        stop = start + cells.cell_count
         emission = emission_calculator.calculate(cells=cells)
         temperature_despotic[start:stop] = emission.despotic_temperature_K
-        mixed_temperature = np.where(
-            emission.cold_cells,
-            emission.despotic_temperature_K,
-            cells.temperature_QUOKKA_K,
+        mixed_temperature = mixed_gas_temperature_K(
+            cold_cells=emission.cold_cells,
+            temperature_despotic_K=emission.despotic_temperature_K,
+            temperature_quokka_K=cells.temperature_QUOKKA_K,
         )
         valid[start:stop] = np.isfinite(mixed_temperature) & (mixed_temperature > 0.0)
 
@@ -136,7 +135,7 @@ def main():
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument('--config', type=Path, default=ROOT / 'configs/emission_process.yaml')
+    parser.add_argument('--config', type=Path, default=ROOT / DEFAULT_PROCESS_CONFIG)
     parser.add_argument('--output-dir', type=Path, required=True)
     parser.add_argument('--slice-index', type=int, default=216)
     parser.add_argument('--plot-only', action='store_true', help='Render saved slice_data.npz only')
@@ -153,7 +152,7 @@ def main():
         return
 
     settings = load_process_config(args.config)
-    settings.output_dir = output_dir
+    settings = replace(settings, output_dir=output_dir)
     snapshot, emission_calculator = load_processing_inputs(settings)
     payload = calculate_slice_fields(
         snapshot=snapshot,

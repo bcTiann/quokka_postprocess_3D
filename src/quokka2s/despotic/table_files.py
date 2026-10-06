@@ -140,7 +140,7 @@ def load_table(path: str | Path, *, allow_superseded_composition: bool = False) 
                     field: np.asarray(blob[f"{name}_{field}"], dtype=float)
                     for field in LINE_RESULT_FIELDS
                 }
-                line = SpeciesLineGrid(**fields, abundance=abundance)
+                line = SpeciesLineGrid(**fields)
             species_data[name] = SpeciesRecord(name, abundance, line, bool(is_emitter))
 
         energy_terms = None

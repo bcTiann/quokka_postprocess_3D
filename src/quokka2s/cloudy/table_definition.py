@@ -2,11 +2,24 @@
 
 The runner writes these Cloudy labels to CIAOLoop's parameter file. The
 packager uses the same order and checks the corresponding map-file headers.
+The generator uses the same attenuation nodes and SED directory. The lookup
+and packager share the serialized array order without changing its spelling.
 """
 
 STEM = "hm2012_attgrid_ism_nh21_cmb_cr_defaultabund_eightline_jeans"
 SED_DIRECTORY_NAME = "HM12_ATTENUATION_ISM_NH21"
 HM12_LOG_NH = (18.0, 18.5, 19.0, 19.5, 20.0, 20.5, 21.0)
+# Fixed incident-radiation recipe used by the builder and bundle metadata.
+# ISM attenuation is log10(NH [cm^-2]); redshift is dimensionless; the
+# nominal H0 cosmic-ray ionization rate is in s^-1. The parameter writer
+# keeps the original six-decimal log10 rate command for this nominal value.
+ISM_ATTENUATION_LOG_NH = 21.0
+CMB_REDSHIFT = 0.0
+COSMIC_RAY_H0_IONIZATION_RATE_S = 2.0e-17
+# NPZ values have shape (line, attenuation column, density, temperature).
+# Each coordinate axis stores log10 of its physical value, using cm^-2,
+# cm^-3, and K respectively. Keep this exact serialized metadata string.
+EXPECTED_AXIS_ORDER = "line,log_NH_attenuation,log_nH,log_T"
 LOG_NH_DENSITY = (
     -4.71428571428571,
     -3.52380952380952,

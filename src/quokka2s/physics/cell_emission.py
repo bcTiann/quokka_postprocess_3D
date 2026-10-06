@@ -20,6 +20,7 @@ from quokka2s.physics.line_emissivity import (
     check_field_values,
 )
 from quokka2s.physics.dust_attenuation import attenuate_emissivities
+from quokka2s.physics.settings import EMISSION_TEMPERATURE_BOUNDARY_K
 from quokka2s.snapshot_reader import CellBatch
 
 
@@ -168,7 +169,7 @@ class CellEmissionCalculator:
         No cell arrays are retained on this shared calculator after returning.
         """
         # 1. Choose the QUOKKA temperature branch once for this batch.
-        cold_cells = cells.temperature_QUOKKA_K < 3000.0
+        cold_cells = cells.temperature_QUOKKA_K < EMISSION_TEMPERATURE_BOUNDARY_K
 
         # 2. Read DESPOTIC T and CO for all cells, plus cold CII and H/e- densities.
         despotic_fields = self.despotic_reader.read_fields(

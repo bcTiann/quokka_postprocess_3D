@@ -6,6 +6,10 @@ from dataclasses import dataclass
 import numpy as np
 
 
+# Preserve the adopted 1 cm/s floor in both full moments and channel integrals.
+MINIMUM_GAUSSIAN_WIDTH_KMS = 1.0e-5
+
+
 @dataclass(frozen=True)
 class LineVelocityMoments:
     """Small running totals for one line, dust state and gas-temperature branch.
@@ -43,7 +47,10 @@ class LineVelocityMoments:
         luminosity = luminosity_erg_s[emitting_cells]
         velocity = velocity_kms[emitting_cells]
         # Use the same 1 cm/s Gaussian-width floor as the channel kernel.
-        thermal_width = np.maximum(thermal_width_kms[emitting_cells], 1.0e-5)
+        thermal_width = np.maximum(
+            thermal_width_kms[emitting_cells],
+            MINIMUM_GAUSSIAN_WIDTH_KMS,
+        )
         total_luminosity = float(np.sum(luminosity, dtype=np.float64))
 
         # Shift velocities before summing to preserve a narrow width even when

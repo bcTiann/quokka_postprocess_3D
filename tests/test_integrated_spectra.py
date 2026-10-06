@@ -11,12 +11,12 @@ from astropy import units as u
 from scipy.special import erf
 
 from quokka2s.products.integrated_spectra import (
-    LINE_MASSES_AMU,
     IntegratedSpectra,
     accumulate_velocity_spectra,
     check_spectrum_luminosity,
 )
 from quokka2s.constants import ATOMIC_MASS_UNIT_G, BOLTZMANN_ERG_K, SPEED_OF_LIGHT_KMS
+from quokka2s.line_definitions import LINE_DEFINITIONS
 from quokka2s.figures.emission_results import plot_line_spectra
 from quokka2s.physics.cell_emission import LineEmission
 
@@ -197,7 +197,7 @@ class IntegratedSpectraTests(unittest.TestCase):
                         velocity = cells.velocity_z_kms[selected]
                         width = np.sqrt(
                             BOLTZMANN_ERG_K * line.temperature_K[selected]
-                            / (LINE_MASSES_AMU[key] * ATOMIC_MASS_UNIT_G)
+                            / (LINE_DEFINITIONS[key].emitter_mass_amu * ATOMIC_MASS_UNIT_G)
                         ) / 1.e5
                         width *= 1. - velocity / SPEED_OF_LIGHT_KMS
                         luminosity = np.column_stack((
@@ -267,7 +267,7 @@ class IntegratedSpectraTests(unittest.TestCase):
                 selected = available & branch_cells
                 width = np.sqrt(
                     BOLTZMANN_ERG_K * temperature[line_index, selected]
-                    / (LINE_MASSES_AMU[key] * ATOMIC_MASS_UNIT_G)
+                    / (LINE_DEFINITIONS[key].emitter_mass_amu * ATOMIC_MASS_UNIT_G)
                 ) / 1.e5
                 width *= 1. - velocity[selected] / SPEED_OF_LIGHT_KMS
                 standardized_edges = (edges[:, None] - velocity[selected]) / (np.sqrt(2.) * width)
@@ -387,7 +387,9 @@ class IntegratedSpectraTests(unittest.TestCase):
         )
         accumulator.add_batch(cells=cells, emission=emission)
         payload, _ = accumulator.build_output(projected_area_cm2=10.)
-        line_mass = np.array([LINE_MASSES_AMU[key] for key in keys]) * const.u
+        line_mass = np.array([
+            LINE_DEFINITIONS[key].emitter_mass_amu for key in keys
+        ]) * const.u
         sigma = np.sqrt(const.k_B * temperature * u.K / line_mass).to(u.km / u.s)
         cell_velocity = velocity * u.km / u.s
         sigma *= 1. - (cell_velocity / const.c).to_value(u.dimensionless_unscaled)
@@ -453,7 +455,7 @@ class IntegratedSpectraTests(unittest.TestCase):
                         retained = np.flatnonzero(selected[part] & branch_cells[part]) + part.start
                         width = np.sqrt(
                             BOLTZMANN_ERG_K * temperature[line_index, retained]
-                            / (LINE_MASSES_AMU[key] * ATOMIC_MASS_UNIT_G)
+                            / (LINE_DEFINITIONS[key].emitter_mass_amu * ATOMIC_MASS_UNIT_G)
                         ) / 1.e5
                         width *= 1. - velocity[retained] / SPEED_OF_LIGHT_KMS
                         for dust_index, epsilon in enumerate((intrinsic, attenuated)):
@@ -542,9 +544,26 @@ class IntegratedSpectraTests(unittest.TestCase):
             np.savez_compressed(Path(tmp) / "spectra.npz", **payload)
             with np.load(Path(tmp) / "spectra.npz", allow_pickle=False) as saved:
                 np.testing.assert_array_equal(saved["line_keys"], keys)
+            from quokka2s.emission_results import SpectralResults
+            spectra = SpectralResults(
+                line_keys=keys,
+                dust_state_keys=tuple(str(key) for key in payload["dust_state_keys"]),
+                regime_keys=tuple(str(key) for key in payload["regime_keys"]),
+                axis_order=str(payload["axis_order"]),
+                velocity_edges_kms=payload["velocity_edges_kms"],
+                velocity_kms=payload["velocity_kms"],
+                dL_dv_erg_s_per_kms=payload["dL_dv_erg_s_per_kms"],
+                total_dL_dv_erg_s_per_kms=payload["total_dL_dv_erg_s_per_kms"],
+                projected_area_cm2=float(payload["projected_area_cm2"]),
+                line_centroid_window_kms=payload["line_centroid_window_kms"],
+                line_sigma_window_kms=payload["line_sigma_window_kms"],
+                line_centroid_full_kms=payload["line_centroid_full_kms"],
+                line_sigma_full_kms=payload["line_sigma_full_kms"],
+                line_centroid_window_by_regime_kms=payload["line_centroid_window_by_regime_kms"],
+                line_sigma_window_by_regime_kms=payload["line_sigma_window_by_regime_kms"],
+            )
             paths = plot_line_spectra(
-                keys=keys,
-                spectra=payload,
+                spectra=spectra,
                 output=Path(tmp),
                 per_projected_area=False,
                 diagnostic_suffix="",

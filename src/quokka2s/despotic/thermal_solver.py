@@ -14,9 +14,9 @@ from despotic import cloud as _Cloud
 from despotic.despoticError import despoticError
 
 from quokka2s.despotic.table_data import ThermalSolveError
+from quokka2s.despotic.solver_settings import MAX_GAS_BRACKET_EXPANSIONS
 
 _native = importlib.import_module("despotic.cloud")
-MAX_GAS_BRACKET_EXPANSIONS = 12
 _THERMAL_ERRORS = (despoticError, RuntimeError, ValueError, ArithmeticError)
 
 

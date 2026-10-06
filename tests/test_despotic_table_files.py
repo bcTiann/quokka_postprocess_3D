@@ -20,7 +20,7 @@ def _table(include_co21=False) -> DespoticTable:
     values = np.arange(1, 9, dtype=float).reshape(shape)
     line = SpeciesLineGrid(
         freq=values, intIntensity=values, intTB=values, lumPerH=values,
-        tau=values, tauDust=values, abundance=values,
+        tau=values, tauDust=values,
     )
     attempt = AttemptRecord(
         0, 0, 1.0, 1e20, 100.0, 50.0, True,
@@ -32,7 +32,6 @@ def _table(include_co21=False) -> DespoticTable:
         co21_line = SpeciesLineGrid(
             freq=co21_values, intIntensity=co21_values, intTB=co21_values,
             lumPerH=co21_values, tau=co21_values, tauDust=co21_values,
-            abundance=values,
         )
         species["CO21"] = SpeciesRecord("CO21", values, co21_line, True)
     return DespoticTable(
@@ -61,7 +60,12 @@ class DespoticTableFileTests(unittest.TestCase):
         self.assertEqual(loaded.attempts[0].dvdr, 1e-14)
         self.assertIsNone(loaded.build_metadata)
         lookup = DespoticLookup(loaded)
-        actual = lookup.temperature(10.0, 1e21, 1e-14)
+        queries = lookup.prepare_queries(
+            hydrogen_density_cm3=10.0,
+            shielding_NH_cm2=1e21,
+            velocity_gradient_s=1e-14,
+        )
+        actual = lookup.temperature(queries=queries)
         self.assertEqual(float(actual), float(source.tg_final[1, 1, 1]))
 
     def test_superseded_composition_requires_historical_opt_in(self):
@@ -126,7 +130,16 @@ class DespoticTableFileTests(unittest.TestCase):
             loaded.species_data["CO"].abundance,
         )
         lookup = DespoticLookup(loaded)
-        actual = lookup.line_field("CO21", "lumPerH", 10.0, 1e21, 1e-14)
+        queries = lookup.prepare_queries(
+            hydrogen_density_cm3=10.0,
+            shielding_NH_cm2=1e21,
+            velocity_gradient_s=1e-14,
+        )
+        actual = lookup.line_field(
+            species="CO21",
+            field_name="lumPerH",
+            queries=queries,
+        )
         self.assertEqual(float(actual), float(values[1, 1, 1]))
 
     def test_extracts_second_transition_without_schema_dimension(self):

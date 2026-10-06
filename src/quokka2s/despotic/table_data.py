@@ -16,24 +16,6 @@ class ThermalSolveError(RuntimeError):
 
 
 @dataclass(frozen=True)
-class LogGrid:
-    min_value: float
-    max_value: float
-    num_points: int
-
-    def __post_init__(self) -> None:
-        if self.min_value <= 0 or self.max_value <= 0:
-            raise ValueError("LogGrid bounds must be positive")
-        if self.min_value >= self.max_value:
-            raise ValueError("LogGrid min_value must be smaller than max_value")
-        if self.num_points < 2:
-            raise ValueError("LogGrid num_points must be at least 2")
-
-    def sample(self) -> np.ndarray:
-        return np.logspace(np.log10(self.min_value), np.log10(self.max_value), self.num_points)
-
-
-@dataclass(frozen=True)
 class ExplicitGrid:
     """A positive, strictly increasing grid with caller-supplied nodes."""
 
@@ -62,15 +44,19 @@ class LineLumResult:
     tauDust: float
 
 
+NAN_LINE_RESULT = LineLumResult(*([float("nan")] * len(LINE_RESULT_FIELDS)))
+
+
 @dataclass(frozen=True)
 class SpeciesLineGrid:
+    """Six stored line fields; the enclosing SpeciesRecord owns abundance."""
+
     freq: np.ndarray
     intIntensity: np.ndarray
     intTB: np.ndarray
     lumPerH: np.ndarray
     tau: np.ndarray
     tauDust: np.ndarray
-    abundance: np.ndarray
 
 
 @dataclass(frozen=True)
@@ -150,13 +136,3 @@ class DespoticTable:
             return self.species_data[name]
         except KeyError as exc:
             raise ValueError(f"Species '{name}' not found; available: {', '.join(self.species)}") from exc
-
-    def clone_species_fields(self) -> dict[str, dict[str, np.ndarray]]:
-        return {
-            name: {
-                field: np.array(getattr(record.line, field), copy=True)
-                for field in ("freq", "intIntensity", "intTB", "lumPerH", "tau", "tauDust")
-            }
-            for name, record in self.species_data.items()
-            if record.line is not None
-        }

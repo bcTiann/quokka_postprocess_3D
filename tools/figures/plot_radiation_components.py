@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Plot quick-extinguished HM2012 plus a fixed quick-extinguished ISM field."""
+"""Plot quick-extinguished HM2012 plus a fixed quick-extinguished ISM field.
+
+Inputs are the historical exports in runtime/cloudy_eightline/sed: native
+HM12, attenuation columns 19 through 23, and export_ism_filtered.inc. These
+figure labels and filenames differ from the current Jeans-table SED bundle,
+whose attenuation grid is 18 through 21. --data-dir must retain this figure's
+original component definitions; sharing the text reader does not change them.
+"""
 
 from __future__ import annotations
 
@@ -13,41 +20,19 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
+from quokka2s.cloudy.incident_spectrum import read_incident_spectrum
+from quokka2s.figures.radiation_fields import (
+    EIGHT_EV_RYD,
+    RADIATION_X_MAX_RYD,
+    RADIATION_X_MIN_EV,
+    RADIATION_X_MIN_RYD,
+    RADIATION_Y_DYNAMIC_RANGE_DEX,
+    add_eight_ev_marker,
+    positive,
+)
 
-EV_PER_RYD = 13.605693122994
-EIGHT_EV_RYD = 8.0 / EV_PER_RYD
-RADIATION_X_MIN_EV = 7.0
-RADIATION_X_MIN_RYD = RADIATION_X_MIN_EV / EV_PER_RYD
-RADIATION_X_MAX_RYD = 1.0e3
-RADIATION_Y_DYNAMIC_RANGE_DEX = 8.0
+
 HM12_COLUMN_LABELS = (0, 19, 20, 21, 22, 23)
-
-
-def load_incident(path: Path) -> np.ndarray:
-    data = np.loadtxt(path, comments="#", usecols=(0, 1))
-    if data.ndim != 2 or np.any(np.diff(data[:, 0]) <= 0.0):
-        raise ValueError(f"unexpected Cloudy incident continuum: {path}")
-    return data
-
-
-def positive(values: np.ndarray) -> np.ndarray:
-    return np.where(values > 0.0, values, np.nan)
-
-
-def add_eight_ev_marker(axis: plt.Axes, *, label_line: bool = False) -> None:
-    axis.axvline(EIGHT_EV_RYD, color="0.35", linestyle=":", linewidth=1.2)
-    if label_line:
-        axis.text(
-            EIGHT_EV_RYD,
-            0.04,
-            "8 eV",
-            rotation=90,
-            transform=axis.get_xaxis_transform(),
-            ha="right",
-            va="bottom",
-            color="0.35",
-            fontsize=8,
-        )
 
 
 def main() -> None:
@@ -77,7 +62,10 @@ def main() -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     ism_path = data_dir / "export_ism_filtered.inc"
-    ism_data = load_incident(ism_path)
+    ism_data = read_incident_spectrum(
+        path=ism_path,
+        usecols=(0, 1),
+    )
     energy = ism_data[:, 0]
     ism_nh21 = ism_data[:, 1]
 
@@ -89,7 +77,10 @@ def main() -> None:
             if label == 0
             else data_dir / f"export_hm12_extinguished_nh{label}.inc"
         )
-        data = load_incident(path)
+        data = read_incident_spectrum(
+            path=path,
+            usecols=(0, 1),
+        )
         if not np.array_equal(energy, data[:, 0]):
             raise ValueError(f"Cloudy energy mesh differs for {path}")
         hm12_paths[label] = path
@@ -143,7 +134,7 @@ def main() -> None:
         for marker_offset, label in enumerate(HM12_COLUMN_LABELS):
             absolute_ax.loglog(
                 energy,
-                positive(combined[label]),
+                positive(values=combined[label]),
                 color=colors[label],
                 linestyle=linestyles[label],
                 linewidth=2.3,
@@ -155,7 +146,7 @@ def main() -> None:
 
     component_ax.loglog(
         energy,
-        positive(ism_nh21),
+        positive(values=ism_nh21),
         color="black",
         linestyle="--",
         linewidth=2.2,
@@ -164,7 +155,7 @@ def main() -> None:
     for label in HM12_COLUMN_LABELS:
         component_ax.loglog(
             energy,
-            positive(hm12[label]),
+            positive(values=hm12[label]),
             color=colors[label],
             linestyle="-" if args.components_only else linestyles[label],
             linewidth=1.8,
@@ -173,7 +164,7 @@ def main() -> None:
 
     for axis in axes:
         add_eight_ev_marker(
-            axis,
+            axis=axis,
             label_line=args.components_only or axis is absolute_ax,
         )
         axis.set_xlim(RADIATION_X_MIN_RYD, RADIATION_X_MAX_RYD)

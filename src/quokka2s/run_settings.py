@@ -6,12 +6,58 @@ current working directory. Environment variables are never expanded.
 """
 from __future__ import annotations
 
-from argparse import Namespace
+from dataclasses import MISSING, dataclass, fields
 from pathlib import Path
 
 import yaml
 
 from quokka2s.physics.dust_attenuation import DEFAULT_DRAINE_TABLE
+
+
+# Relative names only: the entry points use the working directory; standalone
+# Figure tools explicitly anchor these same names to their repository root.
+DEFAULT_PROCESS_CONFIG = Path("configs/emission_process.yaml")
+DEFAULT_PLOT_CONFIG = Path("configs/emission_plot.yaml")
+
+
+@dataclass(frozen=True)
+class ProcessSettings:
+    """Resolved inputs and execution settings for one snapshot process.
+
+    Paths are absolute. Slab/query sizes count cells; workers count threads.
+    Each concurrent batch can use spectral_workers integration threads:
+    chunk_workers=2 and spectral_workers=3 allow at most six spectral tasks.
+    Index ranges are [start, stop), or None for the full native axis.
+    """
+
+    dataset: Path
+    despotic_table: Path
+    cloudy_table: Path
+    output_dir: Path
+    dust_opacity_table: Path = DEFAULT_DRAINE_TABLE
+    slab_nx: int = 8
+    query_chunk: int = 100000
+    chunk_workers: int = 1
+    spectral_workers: int = 6
+    max_slabs: int | None = None
+    x_index_range: tuple[int, int] | None = None
+    y_index_range: tuple[int, int] | None = None
+
+
+@dataclass(frozen=True)
+class PlotSettings:
+    """Saved-result paths and display choices; no snapshot or table inputs.
+
+    image_downsample_factor=2 sums 2x2 native pixels only when rendering.
+    A missing titled_output_dir omits the separate standalone figure version.
+    """
+
+    products: Path
+    output_dir: Path
+    titled_output_dir: Path | None = None
+    raw_luminosity: bool = False
+    allow_partial: bool = False
+    image_downsample_factor: int = 1
 
 
 _PROCESS_REQUIRED_PATHS = (
@@ -21,21 +67,18 @@ _PROCESS_OPTIONAL_PATHS = ("dust_opacity_table",)
 _PROCESS_INTEGERS = ("slab_nx", "query_chunk", "chunk_workers", "spectral_workers", "max_slabs")
 _PROCESS_INDEX_RANGES = ("x_index_range", "y_index_range")
 _PROCESS_DEFAULTS = {
-    "dust_opacity_table": str(DEFAULT_DRAINE_TABLE),
-    "slab_nx": 8,
-    "query_chunk": 100000,
-    "chunk_workers": 1,
-    "spectral_workers": 6,
-    "max_slabs": None,
-    "x_index_range": None,
-    "y_index_range": None,
+    field.name: field.default
+    for field in fields(ProcessSettings)
+    if field.default is not MISSING
 }
+# YAML path conversion accepts strings; retain the same bundled default path.
+_PROCESS_DEFAULTS["dust_opacity_table"] = str(DEFAULT_DRAINE_TABLE)
 _PLOT_REQUIRED_PATHS = ("products", "output_dir")
 _PLOT_OPTIONAL_PATHS = ("titled_output_dir",)
 _PLOT_DEFAULTS = {
-    "raw_luminosity": False,
-    "allow_partial": False,
-    "image_downsample_factor": 1,
+    field.name: field.default
+    for field in fields(PlotSettings)
+    if field.default is not MISSING
 }
 
 
@@ -99,7 +142,7 @@ def _index_range(name: str, value: object) -> tuple[int, int] | None:
     return start, stop
 
 
-def load_process_config(path: str | Path) -> Namespace:
+def load_process_config(path: str | Path) -> ProcessSettings:
     """Read snapshot/table/output Paths and execution settings from process YAML.
 
     Paths are relative to the YAML directory. Slab and query sizes count cells;
@@ -122,10 +165,10 @@ def load_process_config(path: str | Path) -> Namespace:
         values[name] = _index_range(name, values[name])
     if values["query_chunk"] > 1000000:
         raise ValueError("query_chunk must be at most 1000000 cells")
-    return Namespace(**values)
+    return ProcessSettings(**values)
 
 
-def load_plot_config(path: str | Path) -> Namespace:
+def load_plot_config(path: str | Path) -> PlotSettings:
     """Read saved-product Paths and display settings from plot YAML.
 
     Paths are relative to the YAML directory. image_downsample_factor counts
@@ -143,4 +186,4 @@ def load_plot_config(path: str | Path) -> Namespace:
             raise ValueError(f"{name} must be true or false")
     values["image_downsample_factor"] = _positive_int(
         "image_downsample_factor", values["image_downsample_factor"])
-    return Namespace(**values)
+    return PlotSettings(**values)

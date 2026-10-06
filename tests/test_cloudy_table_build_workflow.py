@@ -8,7 +8,7 @@ from quokka2s.physics.composition import QUOKKA_MASS_FRACTIONS
 
 from tools.cloudy.build_cloudy_emission_table import (
     HM12_LOG_NH,
-    LINES,
+    CLOUDY_LINE_LABELS,
     LOG_NH_DENSITY,
     _write_parameter_file,
 )
@@ -43,7 +43,8 @@ class CloudyTableBuildWorkflowTests(unittest.TestCase):
                 text,
             )
             self.assertIn("command CMB redshift 0", text)
-            self.assertEqual(text.count("lineMapLine = "), len(LINES))
+            self.assertIn("command cosmic rays rate -16.698970", text)
+            self.assertEqual(text.count("lineMapLine = "), len(CLOUDY_LINE_LABELS))
 
     def test_bundle_loader_uses_headers_not_run_order(self):
         with tempfile.TemporaryDirectory() as temporary:

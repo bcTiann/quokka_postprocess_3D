@@ -6,10 +6,16 @@ groups their results and checks each product against its own cell totals.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
+from typing import TYPE_CHECKING
 
 import numpy as np
 
+if TYPE_CHECKING:
+    from quokka2s.result_metadata import ResultMetadata
+
 from quokka2s.physics.line_emissivity import CIII_CIV_LINE_KEYS
+from quokka2s.physics.gas_fields import mixed_gas_temperature_K
 from quokka2s.products.integrated_spectra import IntegratedSpectra, check_spectrum_luminosity
 from quokka2s.products.gas_phase_velocity import GasPhaseVelocityAccumulator, check_phase_accounting
 from quokka2s.products.line_luminosity_images import (
@@ -50,6 +56,27 @@ class EmissionOutputs:
     phase_payload: dict
     spectral_report: dict
     phase_report: dict
+
+    def add_metadata(self, *, metadata: ResultMetadata) -> None:
+        """Complete the result payloads with geometry and ordered dust values.
+
+        metadata comes from ResultMetadata.from_processing_inputs(). Adds only
+        saved interpretation fields; no emissivities or luminosities change.
+        Call before products.check_outputs() and write_emission_results().
+        """
+        for payload in (self.image_payload, self.spectrum_payload, self.phase_payload):
+            payload["full_snapshot"] = np.asarray(self.full_snapshot)
+            payload["processing_complete"] = np.asarray(self.processing_complete)
+            payload["processing_region"] = np.asarray(json.dumps(metadata.processing_region))
+
+        for payload in (self.image_payload, self.spectrum_payload):
+            payload["dust_sigma_ext_cm2_H"] = metadata.dust_cross_section_cm2_H.copy()
+            payload["dust_rest_wavelength_micron"] = metadata.rest_wavelength_micron.copy()
+            payload["dust_observer_side"] = np.asarray(metadata.dust_observer_side)
+
+        self.image_payload["x_edges_kpc"] = metadata.x_edges_kpc
+        self.image_payload["y_edges_kpc"] = metadata.y_edges_kpc
+        self.image_payload["line_of_sight"] = np.asarray("z")
 
 
 class EmissionProducts:
@@ -226,10 +253,10 @@ class EmissionProducts:
         cells need T_DESPOTIC to enter the gas-phase histogram.
         """
         cold_cells = emission.cold_cells
-        mixed_temperature = np.where(
-            cold_cells,
-            emission.despotic_temperature_K,
-            cells.temperature_QUOKKA_K,
+        mixed_temperature = mixed_gas_temperature_K(
+            cold_cells=cold_cells,
+            temperature_despotic_K=emission.despotic_temperature_K,
+            temperature_quokka_K=cells.temperature_QUOKKA_K,
         )
         missing_temperature = ~np.isfinite(mixed_temperature) | (mixed_temperature <= 0)
         self.counts["all"] += cold_cells.size

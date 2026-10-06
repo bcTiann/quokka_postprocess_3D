@@ -10,6 +10,10 @@ from unittest.mock import patch
 
 import numpy as np
 
+from quokka2s.despotic.solver_settings import (
+    CHEMISTRY_ORIGINAL_SOURCE_SHA256,
+    CHECKED_CHEMISTRY_SOURCE_SHA256,
+)
 
 _ROOT = Path(__file__).resolve().parents[1]
 _INSTALLER = _ROOT / "tools/despotic/install_checked_gow_integration.py"
@@ -30,10 +34,10 @@ class CheckedGOWIntegrationTests(unittest.TestCase):
         spec.loader.exec_module(installer)
         source = Path(native.__file__).read_bytes()
         digest = hashlib.sha256(source).hexdigest()
-        if digest == installer.ORIGINAL_SHA256:
+        if digest == CHEMISTRY_ORIGINAL_SOURCE_SHA256:
             # Exercise the exact installable patch without changing the package.
             source = source.replace(installer.BEFORE, installer.AFTER)
-        if hashlib.sha256(source).hexdigest() != installer.PATCHED_SHA256:
+        if hashlib.sha256(source).hexdigest() != CHECKED_CHEMISTRY_SOURCE_SHA256:
             raise AssertionError("DESPOTIC chemEvol source differs from the reviewed patch")
 
         cls.module = ModuleType("despotic.chemistry._checked_integration_test")

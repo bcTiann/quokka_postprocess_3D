@@ -12,25 +12,11 @@ from pathlib import Path
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
-from quokka2s.constants import SPEED_OF_LIGHT_CM_S
+from quokka2s.line_definitions import LINE_DEFINITIONS
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_DRAINE_TABLE = REPO_ROOT / "vendor/draine/kext_albedo_WD_MW_3.1_60_D03.all"
-
-# Cloudy labels for the atomic lines; DESPOTIC's CO transition frequencies.
-LINE_WAVELENGTH_MICRON = {
-    "cii": 157.636,
-    "halpha": 6562.81e-4,
-    "hi21": 21.1207e4,
-    "ciii_977": 977.020e-4,
-    "ciii_1907": 1906.68e-4,
-    "ciii_1909": 1908.73e-4,
-    "civ_1548": 1548.19e-4,
-    "civ_1551": 1550.78e-4,
-    "co10": SPEED_OF_LIGHT_CM_S / 115.271e9 * 1e4,
-    "co21": SPEED_OF_LIGHT_CM_S / 230.538e9 * 1e4,
-}
 
 
 def load_draine_extinction(path=DEFAULT_DRAINE_TABLE):
@@ -85,7 +71,7 @@ def extinction_cross_sections(
     Parameters
     ----------
     line_keys : list or tuple of str
-        Requested line names; rest wavelengths come from LINE_WAVELENGTH_MICRON.
+        Requested line names; rest wavelengths come from LINE_DEFINITIONS.
     wavelength_micron : array-like, shape (N,)
         Sorted table wavelengths [micron], returned as the first output
         of load_draine_extinction(). N is the number of table rows.
@@ -109,12 +95,12 @@ def extinction_cross_sections(
     sigma_cm2_H = np.asarray(sigma_cm2_H, dtype=float)
     result = []
     for key in line_keys:
-        if key not in LINE_WAVELENGTH_MICRON:
+        if key not in LINE_DEFINITIONS:
             raise ValueError(f"No adopted rest wavelength for {key}")
         if key == "hi21":
             result.append(0.)
             continue
-        wavelength = LINE_WAVELENGTH_MICRON[key]
+        wavelength = LINE_DEFINITIONS[key].rest_wavelength_micron
         if not wavelength_micron[0] <= wavelength <= wavelength_micron[-1]:
             raise ValueError(f"Line {key} lies outside the Draine opacity grid")
         value = np.exp(np.interp(np.log(wavelength), np.log(wavelength_micron),

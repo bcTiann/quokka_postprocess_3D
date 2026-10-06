@@ -1,115 +1,47 @@
 """Compare saved line spectra with gas mass velocity distributions."""
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 
+from quokka2s.emission_results import GasPhaseResults, SpectralResults
 from quokka2s.figures.line_labels import LINE_TITLES
 from quokka2s.figures.figure_files import save_figure_formats
+from quokka2s.products import HOT_REGIME_KEY
 
 
 LINE_ORDER = (
     'halpha', 'hi21', 'cii', 'ciii_977', 'ciii_1907', 'ciii_1909',
     'civ_1548', 'civ_1551', 'co10', 'co21',
 )
-PHASE_ORDER = ('CNM', 'UNM', 'WNM', 'WIM', 'HIM')
-PHASE_COLORS = ('#0072B2', '#56B4E9', '#009E73', '#E69F00', '#D55E00')
+PHASE_COLORS = {
+    'CNM': '#0072B2',
+    'UNM': '#56B4E9',
+    'WNM': '#009E73',
+    'WIM': '#E69F00',
+    'HIM': '#D55E00',
+}
 # Peaks use the saved channels; sigma labels use the complete Gaussian moments.
 DISPLAY_VELOCITY_LIMITS_KMS = (-50., 50.)
 
 
-@dataclass(frozen=True)
-class LineSpectraForComparison:
-    """One dust state's saved spectra, before choosing displayed components.
+def select_display_profiles(line_spectra: SpectralResults) -> dict[str, np.ndarray]:
+    """Select attenuated total Halpha/HI/CII/CO and hot CIII/CIV profiles.
 
-    Attributes
-    ----------
-    line_keys : tuple of str, length L
-        Saved line order, normally the ten transitions in LINE_ORDER.
-    velocity_kms : numpy.ndarray, shape (V,)
-        Saved channel centres [km/s], normally V = 400.
-    dL_dv_erg_s_per_kms : numpy.ndarray, shape (L, 2, V)
-        One dust state's line spectra [erg/s/(km/s)]. The process/plot
-        command selects dust-attenuated spectra before constructing this object.
-        Axis 1 is cold, then hot; no cell emission is recalculated here.
-    line_centroid_window_kms : numpy.ndarray, shape (L,)
-        Process-calculated total-line centroid [km/s] within the saved channels.
-        Retained as profile metadata; drawing uses the saved velocity axis.
-    line_sigma_full_kms : numpy.ndarray, shape (L,)
-        Process-calculated whole-box dispersion [km/s], including each cell's
-        complete Gaussian and emission outside the saved channels. Used in
-        the line legend. Cold and hot luminosities are combined for every line.
-
-    Examples
-    --------
-    ``spectra.dL_dv_erg_s_per_kms[0, 1]`` is the first line's hot profile.
-    """
-
-    line_keys: tuple[str, ...]
-    velocity_kms: np.ndarray
-    dL_dv_erg_s_per_kms: np.ndarray
-    line_centroid_window_kms: np.ndarray
-    line_sigma_full_kms: np.ndarray
-
-
-@dataclass(frozen=True)
-class GasPhaseVelocityProfiles:
-    """Saved gas histograms and dispersions used beside each line profile.
-
-    Attributes
-    ----------
-    histogram_mass_g : numpy.ndarray, shape (6, V)
-        Gas mass [g per channel]; rows are CNM, UNM, WNM, WIM, HIM, all gas.
-    sigma_about_global_mean_kms : numpy.ndarray, shape (6,)
-        Each group's dispersion about the common gas mean [km/s]. The first
-        five entries provide the phase labels.
-    sigma_internal_kms : numpy.ndarray, shape (6,)
-        Each group's dispersion about its own mean [km/s]. The final entry
-        provides the all-gas label.
-
-    Examples
-    --------
-    ``gas_phases.histogram_mass_g[0]`` is the CNM mass profile; the final
-    row is the all-gas mass profile.
-    """
-
-    histogram_mass_g: np.ndarray
-    sigma_about_global_mean_kms: np.ndarray
-    sigma_internal_kms: np.ndarray
-
-
-def select_display_profiles(
-    line_spectra: LineSpectraForComparison,
-) -> dict[str, np.ndarray]:
-    """Choose total Halpha/HI/CII/CO and hot CIII/CIV profiles.
-
-    Parameters
-    ----------
-    line_spectra : LineSpectraForComparison
-        One dust state's saved spectra; the process/plot command uses the
-        attenuated state. See the class for array shapes and units.
-
-    Returns
-    -------
-    dict of str to numpy.ndarray, each shape (V,)
-        Independent profile copies [erg/s/(km/s)], keyed by line name.
-
-    Examples
-    --------
-    ``profiles = select_display_profiles(line_spectra)`` then
-    ``profiles['co10']`` contains the cold + hot CO(1-0) spectrum.
+    line_spectra holds saved line/dust/regime names and packed spectra.
+    Returns independent (V,) display copies [erg/s/(km/s)], keyed by line.
+    Example: profiles["co10"] contains the saved cold+hot CO(1-0) spectrum.
     """
     profiles = {}
     for key in LINE_ORDER:
-        line_index = line_spectra.line_keys.index(key)
-        cold_and_hot = line_spectra.dL_dv_erg_s_per_kms[line_index]
-        if key.startswith(('ciii_', 'civ_')):
-            profile = cold_and_hot[1]
-        else:
-            profile = cold_and_hot.sum(axis=0)
-        profiles[key] = profile.copy()
+        regime = HOT_REGIME_KEY if display_branch_for_line(key) == "hot" else "total"
+        selected = line_spectra.for_line(
+            line=key,
+            dust_state="attenuated",
+            regime=regime,
+        )
+        profiles[key] = selected.dL_dv_erg_s_per_kms.copy()
     return profiles
 
 
@@ -120,38 +52,25 @@ def display_branch_for_line(key: str) -> str:
     return 'total'
 
 
-def read_display_profile_statistics(
-    line_spectra: LineSpectraForComparison,
-) -> dict[str, dict]:
-    """Read the saved full-profile sigma and window-centroid metadata.
+def read_display_profile_statistics(line_spectra: SpectralResults) -> dict[str, dict]:
+    """Read total-line full sigma and window-centroid metadata [km/s].
 
-    Parameters
-    ----------
-    line_spectra : LineSpectraForComparison
-        Saved whole-box line statistics [km/s], calculated by process.
-
-    Returns
-    -------
-    dict of str to dict
-        Each line's displayed branch, mean_velocity_kms, and
-        sigma_line_full_kms. No moments are recalculated by plot. CIII/CIV
-        have zero cold emission, so their whole-box moments equal hot moments.
-
-    Examples
-    --------
-    ``statistics['co10']['sigma_line_full_kms']`` is CO(1-0)'s full
-    whole-box dispersion, combining its cold and hot emission.
+    Saved total-line full moments include emission beyond the velocity window.
+    CIII/CIV have zero cold light, so total full sigma also describes their hot
+    display profile. Drawing keeps saved velocity coordinates without recentering.
+    Example: statistics["co10"]["sigma_line_full_kms"] is its saved full sigma.
     """
     statistics = {}
     for key in LINE_ORDER:
-        line_index = line_spectra.line_keys.index(key)
-        branch = display_branch_for_line(key)
-        centroid = line_spectra.line_centroid_window_kms[line_index]
-        sigma = line_spectra.line_sigma_full_kms[line_index]
+        total = line_spectra.for_line(
+            line=key,
+            dust_state="attenuated",
+            regime="total",
+        )
         statistics[key] = {
-            "display_branch": branch,
-            "mean_velocity_kms": float(centroid),
-            "sigma_line_full_kms": float(sigma),
+            "display_branch": display_branch_for_line(key),
+            "mean_velocity_kms": total.centroid_window_kms,
+            "sigma_line_full_kms": total.sigma_full_kms,
         }
     return statistics
 
@@ -189,43 +108,47 @@ def create_phase_comparison_figure(*, full):
 def draw_gas_mass_profile_curves(
     ax,
     line_key: str,
-    velocity_kms: np.ndarray,
-    gas_phases: GasPhaseVelocityProfiles,
+    gas_phases: GasPhaseResults,
 ):
-    """Draw phase/all-gas mass profiles and return their legend handles and labels.
+    """Draw named phase/all-gas profiles on their own saved coordinates.
 
-    gas_phases supplies (6, V) histograms [g per channel] and (6,)
-    dispersions [km/s]. Each curve is divided by its own full-window peak;
-    WIM/HIM are faint only for CO figures.
+    gas_phases provides mass [g per channel] and dispersions [km/s]. Each
+    display curve is divided by its full-window peak; WIM/HIM are faint for CO.
+    Returns legend handles/labels. Underlying saved arrays are unchanged.
     """
     from matplotlib.lines import Line2D
 
     handles = []
     labels = []
-    for phase_index, (phase, color) in enumerate(zip(PHASE_ORDER, PHASE_COLORS)):
-        values = gas_phases.histogram_mass_g[phase_index]
+    for phase in gas_phases.phase_keys:
+        if phase == 'total':
+            continue
+        color = PHASE_COLORS[phase]
+        saved_phase = gas_phases.for_phase(phase=phase)
+        values = saved_phase.histogram_mass_g
         peak = values.max()
         if peak <= 0:
             continue
         alpha = 1.
         if line_key in ('co10', 'co21') and phase in ('WIM', 'HIM'):
             alpha = .25
-        ax.plot(velocity_kms, values / peak, color=color, lw=1.3, alpha=alpha)
-        sigma = gas_phases.sigma_about_global_mean_kms[phase_index]
+        ax.plot(saved_phase.velocity_kms, values / peak, color=color, lw=1.3, alpha=alpha)
+        sigma = saved_phase.sigma_about_global_mean_kms
         handles.append(Line2D([], [], color=color, lw=1.6, alpha=alpha))
         labels.append(phase + '\n' + rf'$\sigma_{{z,p}}={sigma:.1f}$ km/s')
 
-    all_gas_profile = gas_phases.histogram_mass_g[-1]
+    all_gas = gas_phases.for_phase(phase="total")
+    all_gas_profile = all_gas.histogram_mass_g
     if all_gas_profile.max() > 0:
         ax.plot(
-            velocity_kms,
+            all_gas.velocity_kms,
             all_gas_profile / all_gas_profile.max(),
             color='.45',
             ls='--',
             lw=1.5,
         )
         handles.append(Line2D([], [], color='.45', ls='--', lw=1.6))
-        sigma = gas_phases.sigma_internal_kms[-1]
+        sigma = all_gas.sigma_internal_kms
         labels.append('All gas\n' + rf'$\sigma_z={sigma:.1f}$ km/s')
     return handles, labels
 
@@ -265,7 +188,7 @@ def draw_phase_comparison_curves(
     legend_ax,
     key,
     velocity,
-    gas_phases: GasPhaseVelocityProfiles,
+    gas_phases: GasPhaseResults,
     profile,
     line_statistics,
 ):
@@ -273,7 +196,6 @@ def draw_phase_comparison_curves(
     handles, labels = draw_gas_mass_profile_curves(
         ax=ax,
         line_key=key,
-        velocity_kms=velocity,
         gas_phases=gas_phases,
     )
     line_handle, line_label = draw_line_profile_curve(
@@ -299,7 +221,41 @@ def draw_phase_comparison_curves(
 
 
 
-def format_phase_comparison_figure(fig, ax, key, *, full):
+def format_phase_temperature_boundary(temperature_K: float) -> str:
+    """Format a saved phase cut using the figure's established LaTeX style.
+
+    Lower cuts use plain kelvin values; cuts at 10^4 K and above use powers
+    of ten. Examples: 200 -> "200", 1e4 -> "10^4", 10**5.5 -> "10^{5.5}".
+    Only the display text changes; phase selection belongs to the producer.
+    """
+    if temperature_K < 1.0e4:
+        return f'{temperature_K:g}'
+    exponent = f'{np.log10(temperature_K):g}'
+    if len(exponent) == 1:
+        return f'10^{exponent}'
+    return f'10^{{{exponent}}}'
+
+
+def format_phase_cut_footer(gas_phases: GasPhaseResults) -> str:
+    """Describe the saved producer's phase names and lower-inclusive cuts.
+
+    phase_keys contains the temperature phases in ascending order and total.
+    phase_boundaries_K separates those phases. The saved values, rather than
+    a second set of physical definitions in this renderer, supply the text.
+    """
+    phase_keys = tuple(key for key in gas_phases.phase_keys if key != 'total')
+    cuts = tuple(
+        format_phase_temperature_boundary(temperature_K=float(boundary))
+        for boundary in gas_phases.phase_boundaries_K
+    )
+    descriptions = [rf'{phase_keys[0]} $<{cuts[0]}$']
+    for phase, lower, upper in zip(phase_keys[1:-1], cuts[:-1], cuts[1:]):
+        descriptions.append(rf'{phase} ${lower}$-${upper}$')
+    descriptions.append(rf'{phase_keys[-1]} $\geq{cuts[-1]}$')
+    return 'Phase cuts [K]: ' + '; '.join(descriptions) + '.'
+
+
+def format_phase_comparison_figure(fig, ax, key, *, gas_phases: GasPhaseResults, full):
     """Apply the display zoom, axes, and optional title and phase-cut footer."""
     ax.set_xlim(*DISPLAY_VELOCITY_LIMITS_KMS)
     ax.set_ylim(-.035, 1.07)
@@ -311,16 +267,13 @@ def format_phase_comparison_figure(fig, ax, key, *, full):
     if full:
         fig.suptitle(LINE_TITLES[key], fontsize=15, y=.965)
         fig.text(.5, .902, 'LOS z', ha='center', fontsize=10)
-        footer = (
-            r'Phase cuts [K]: CNM $<200$; UNM $200$-$3000$; WNM $3000$-$10^4$; '
-            r'WIM $10^4$-$10^{5.5}$; HIM $\geq10^{5.5}$.'
-        )
+        footer = format_phase_cut_footer(gas_phases=gas_phases)
         fig.text(.5, .052, footer, ha='center', va='center', fontsize=8.4)
 
 
 def plot_phase_spectrum_overlay(
-    line_spectra: LineSpectraForComparison,
-    gas_phases: GasPhaseVelocityProfiles,
+    line_spectra: SpectralResults,
+    gas_phases: GasPhaseResults,
     output_stem: str | Path,
     *,
     line_keys=LINE_ORDER,
@@ -331,10 +284,10 @@ def plot_phase_spectrum_overlay(
 
     Parameters
     ----------
-    line_spectra : LineSpectraForComparison
-        One dust state's saved spectral arrays. process/plot uses attenuated
-        spectra. No summed-profile or channel-centre copies are needed.
-    gas_phases : GasPhaseVelocityProfiles
+    line_spectra : SpectralResults
+        Saved spectral arrays with named dust/regime axes. This renderer
+        selects attenuated light; line coordinates remain unchanged.
+    gas_phases : GasPhaseResults
         Saved histograms and dispersions from phase_velocity.npz.
     output_stem : str or pathlib.Path
         Destination without an extension; filenames append each line key.
@@ -387,7 +340,13 @@ def plot_phase_spectrum_overlay(
             profile=profiles[key],
             line_statistics=line_statistics[key],
         )
-        format_phase_comparison_figure(fig, ax, key, full=full)
+        format_phase_comparison_figure(
+            fig=fig,
+            ax=ax,
+            key=key,
+            gas_phases=gas_phases,
+            full=full,
+        )
         line_stem = stem.with_name(f'{stem.name}_{key}')
         paths.extend(save_figure_formats(
             figure=fig,

@@ -134,7 +134,7 @@ class SnapshotCoverageTests(unittest.TestCase):
         # receives only the non-overlapping x bounds it needs to scan.
         for slab_nx in (1, 2, 3, 20):
             counts = np.zeros(7, dtype=int)
-            for x_start, x_stop in coverage.slab_windows(7, slab_nx):
+            for x_start, x_stop in coverage.slab_windows(x_start=0, x_stop=7, slab_nx=slab_nx):
                 counts[x_start:x_stop] += 1
             np.testing.assert_array_equal(counts, 1)
 
@@ -208,17 +208,17 @@ class SnapshotCoverageTests(unittest.TestCase):
         )
         table = replace(table, build_metadata={"snapshot_domain": domain})
         # A source-code refactor or relocating the files does not alter physics.
-        self.assertEqual(coverage._validate_scan_provenance(table, (2, 2, 2)), domain)
+        self.assertEqual(coverage.validate_snapshot_domain(table, (2, 2, 2), coverage.settings), domain)
         with self.assertRaisesRegex(ValueError, "shape"):
-            coverage._validate_scan_provenance(table, (2, 2, 3))
+            coverage.validate_snapshot_domain(table, (2, 2, 3), coverage.settings)
         original_XH = domain["X_H"]
         domain["X_H"] = .5
         with self.assertRaisesRegex(ValueError, "X_H"):
-            coverage._validate_scan_provenance(table, (2, 2, 2))
+            coverage.validate_snapshot_domain(table, (2, 2, 2), coverage.settings)
         domain["X_H"] = original_XH
         domain["axes"]["NH"]["maximum"] = 11.
         with self.assertRaisesRegex(ValueError, "bounds differ"):
-            coverage._validate_scan_provenance(table, (2, 2, 2))
+            coverage.validate_snapshot_domain(table, (2, 2, 2), coverage.settings)
 
 
 if __name__ == "__main__":

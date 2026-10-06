@@ -12,23 +12,19 @@ import numpy as np
 from scipy.special import erf as scipy_erf
 
 from quokka2s.constants import ATOMIC_MASS_UNIT_G, BOLTZMANN_ERG_K, SPEED_OF_LIGHT_KMS
-from quokka2s.products import DUST_STATES
-from quokka2s.products.line_velocity_moments import LineVelocityMoments
+from quokka2s.line_definitions import LINE_DEFINITIONS
+from quokka2s.products import DUST_STATES, REGIME_KEYS
+from quokka2s.products.line_velocity_moments import (
+    LineVelocityMoments,
+    MINIMUM_GAUSSIAN_WIDTH_KMS,
+)
 
 
-REGIME_KEYS = ("T_QUOKKA_lt_3000K", "T_QUOKKA_ge_3000K")
 # Allow measured float64 summation-order differences between independent sums.
 SPECTRUM_LUMINOSITY_RTOL = 1e-10
 # Bound temporary (velocity channel, emitting cell) arrays per integration task.
 # This controls memory and task size, not the physical Gaussian calculation.
 DEFAULT_SPECTRAL_CELL_CHUNK = 8192
-LINE_MASSES_AMU = {
-    "cii": 12.01, "halpha": 1.00794, "hi21": 1.00794,
-    "ciii_977": 12.01, "ciii_1907": 12.01, "ciii_1909": 12.01,
-    "civ_1548": 12.01, "civ_1551": 12.01,
-    "co10": 28.009, "co21": 28.009,
-}
-
 
 
 def accumulate_velocity_spectra(
@@ -89,7 +85,10 @@ def accumulate_velocity_spectra(
         cell1 = min(cell0 + cell_chunk, velocity.size)
         centers = velocity[cell0:cell1][None, :]
         values = luminosity[cell0:cell1]
-        sigma = np.maximum(thermal[cell0:cell1], 1.0e-5)[None, :]
+        sigma = np.maximum(
+            thermal[cell0:cell1],
+            MINIMUM_GAUSSIAN_WIDTH_KMS,
+        )[None, :]
         denominator = np.sqrt(2.0) * sigma
         partial = np.zeros(output_shape, dtype=float)
         for channel0 in range(0, output_shape[0], channel_chunk):
@@ -267,7 +266,7 @@ class IntegratedSpectra:
             for dust_state in DUST_STATES
         }
         masses_g = np.array([
-            LINE_MASSES_AMU[line_key] for line_key in line_keys
+            LINE_DEFINITIONS[line_key].emitter_mass_amu for line_key in line_keys
         ]) * ATOMIC_MASS_UNIT_G
         for branch_index, branch_cells in enumerate((cold, ~cold)):
             if not np.any(branch_cells):

@@ -9,11 +9,11 @@ import numpy as np
 from quokka2s.physics.cell_emission import CellEmissionCalculator
 from quokka2s.physics.line_emissivity import ATOMIC_LINE_KEYS, CO_LINE_KEYS
 from quokka2s.despotic.cell_fields import DespoticCellReader
+from quokka2s.despotic.snapshot_domain import validate_snapshot_domain
 from quokka2s.cloudy.cell_fields import CloudyCellReader
 from quokka2s.processing_inputs import (
     load_emission_calculator,
     prepare_line_dust_cross_sections,
-    validate_snapshot_domain,
 )
 
 

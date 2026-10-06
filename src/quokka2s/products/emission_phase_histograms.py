@@ -5,6 +5,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from quokka2s.physics.gas_fields import mixed_gas_temperature_K
+
 
 PANELS = (
     ('mass_T_QK', 'QUOKKA', 'mass'),
@@ -177,10 +179,10 @@ def prepare_gas_mass_panel_values(
     volume = cell_volume_cm3
     mass = rho * volume
     despotic_temperature_cells = np.isfinite(td) & (td > 0.0)
-    mixed_temperature_K = np.where(
-        cold_cells,
-        td,
-        tq,
+    mixed_temperature_K = mixed_gas_temperature_K(
+        cold_cells=cold_cells,
+        temperature_despotic_K=td,
+        temperature_quokka_K=tq,
     )
     mixed_temperature_cells = np.isfinite(mixed_temperature_K) & (mixed_temperature_K > 0.0)
     return [

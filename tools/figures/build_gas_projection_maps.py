@@ -9,6 +9,7 @@ Replot: python tools/figures/build_gas_projection_maps.py
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 from datetime import datetime, timezone
 import json
 from pathlib import Path
@@ -25,10 +26,11 @@ if __package__ in (None, ''):
 
 from quokka2s.constants import HYDROGEN_MASS_G
 from quokka2s.figures.gas_projections import plot_gas_projection_maps
-from quokka2s.physics.settings import X_H
+from quokka2s.physics.settings import X_H, EMISSION_TEMPERATURE_BOUNDARY_K
+from quokka2s.physics.gas_fields import mixed_gas_temperature_K
 from quokka2s.processing_inputs import load_processing_inputs
 from quokka2s.products.gas_projections import MultiviewAccumulator
-from quokka2s.run_settings import load_process_config
+from quokka2s.run_settings import DEFAULT_PROCESS_CONFIG, load_process_config
 from quokka2s.snapshot_reader import slab_windows
 
 
@@ -49,17 +51,14 @@ def accumulate_projection_slab(
     )
     mixed_temperature = np.empty(slab.cell_count)
     valid = np.empty(slab.cell_count, dtype=bool)
-    for start in range(0, slab.cell_count, query_chunk):
-        stop = min(start + query_chunk, slab.cell_count)
-        cells = slab.batch(
-            start=start,
-            stop=stop,
-        )
+    for cells in slab.iter_batches(batch_size=query_chunk):
+        start = cells.batch_start
+        stop = start + cells.cell_count
         emission = emission_calculator.calculate(cells=cells)
-        batch_temperature = np.where(
-            emission.cold_cells,
-            emission.despotic_temperature_K,
-            cells.temperature_QUOKKA_K,
+        batch_temperature = mixed_gas_temperature_K(
+            cold_cells=emission.cold_cells,
+            temperature_despotic_K=emission.despotic_temperature_K,
+            temperature_quokka_K=cells.temperature_QUOKKA_K,
         )
         mixed_temperature[start:stop] = batch_temperature
         valid[start:stop] = np.isfinite(batch_temperature) & (batch_temperature > 0.0)
@@ -81,7 +80,7 @@ def accumulate_projection_slab(
     )
 
     # Independent cell totals are used to check the projected map integrals.
-    cold = temperature_quokka < 3000.0
+    cold = temperature_quokka < EMISSION_TEMPERATURE_BOUNDARY_K
     counts = {}
     masses = {}
     selections = {
@@ -111,7 +110,11 @@ def process_gas_projection_maps(snapshot, emission_calculator, settings):
     )
     counts = {name: 0 for name in ('all', 'cold', 'hot', 'excluded', 'retained', 'excluded_cold')}
     masses = {name: 0.0 for name in ('all', 'cold', 'hot', 'excluded', 'retained')}
-    selected_slabs = list(slab_windows(snapshot.shape[0], settings.slab_nx))
+    selected_slabs = list(slab_windows(
+        x_start=0,
+        x_stop=snapshot.shape[0],
+        slab_nx=settings.slab_nx,
+    ))
     began = time.monotonic()
     for number, (x_start, x_stop) in enumerate(selected_slabs, start=1):
         slab_counts, slab_masses = accumulate_projection_slab(
@@ -221,7 +224,7 @@ def main():
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument('--config', type=Path, default=ROOT / 'configs/emission_process.yaml')
+    parser.add_argument('--config', type=Path, default=ROOT / DEFAULT_PROCESS_CONFIG)
     parser.add_argument('--output-dir', type=Path, required=True)
     parser.add_argument('--figure-stem', type=Path)
     parser.add_argument('--plot-only', action='store_true', help='Render saved multiview_maps.npz only')
@@ -237,7 +240,7 @@ def main():
             payload = {key: np.array(data[key]) for key in data.files}
     else:
         settings = load_process_config(args.config)
-        settings.output_dir = output_dir
+        settings = replace(settings, output_dir=output_dir)
         if settings.max_slabs is not None:
             parser.error('Gas projections require the full snapshot; remove max_slabs from the config')
         snapshot, emission_calculator = load_processing_inputs(settings)

@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Plot unattenuated Cloudy-native HM2012, Black/ISM, and their sum."""
+"""Plot unattenuated Cloudy-native HM2012, Black/ISM, and their sum.
+
+Inputs are the historical exports in runtime/cloudy_eightline/sed, including
+the plain ISM and native HM12 continua. The current Jeans-table SED generator
+exports attenuated continua to a different bundle; it does not produce these
+unattenuated inputs. --data-dir must supply this figure's original exports.
+"""
 
 from __future__ import annotations
 
@@ -13,24 +19,15 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-
-EV_PER_RYD = 13.605693122994
-RADIATION_X_MIN_EV = 7.0
-RADIATION_X_MIN_RYD = RADIATION_X_MIN_EV / EV_PER_RYD
-EIGHT_EV_RYD = 8.0 / EV_PER_RYD
-RADIATION_X_MAX_RYD = 1.0e3
-RADIATION_Y_DYNAMIC_RANGE_DEX = 8.0
-
-
-def load_incident(path: Path) -> np.ndarray:
-    data = np.loadtxt(path, comments="#", usecols=(0, 1))
-    if data.ndim != 2 or np.any(np.diff(data[:, 0]) <= 0.0):
-        raise ValueError(f"unexpected Cloudy incident continuum: {path}")
-    return data
-
-
-def positive(values: np.ndarray) -> np.ndarray:
-    return np.where(values > 0.0, values, np.nan)
+from quokka2s.cloudy.incident_spectrum import read_incident_spectrum
+from quokka2s.figures.radiation_fields import (
+    RADIATION_X_MAX_RYD,
+    RADIATION_X_MIN_EV,
+    RADIATION_X_MIN_RYD,
+    RADIATION_Y_DYNAMIC_RANGE_DEX,
+    add_eight_ev_marker,
+    positive,
+)
 
 
 def main() -> None:
@@ -64,8 +61,14 @@ def main() -> None:
     if args.include_cmb:
         hm12_path = data_dir / "export_hm12_native_plus_cmb.inc"
 
-    hm12_data = load_incident(hm12_path)
-    ism_data = load_incident(ism_path)
+    hm12_data = read_incident_spectrum(
+        path=hm12_path,
+        usecols=(0, 1),
+    )
+    ism_data = read_incident_spectrum(
+        path=ism_path,
+        usecols=(0, 1),
+    )
     if not np.array_equal(hm12_data[:, 0], ism_data[:, 0]):
         raise ValueError("HM2012 and ISM Cloudy energy meshes differ")
 
@@ -87,7 +90,7 @@ def main() -> None:
     fig, ax = plt.subplots(figsize=(8.4, 5.2))
     ax.loglog(
         energy,
-        positive(combined),
+        positive(values=combined),
         color="black",
         linewidth=2.4,
         label="HM2012 + CMB + ISM" if args.include_cmb else "HM2012 + ISM",
@@ -95,7 +98,7 @@ def main() -> None:
     )
     ax.loglog(
         energy,
-        positive(hm12),
+        positive(values=hm12),
         color="#0072B2",
         linestyle="--",
         linewidth=2.0,
@@ -108,24 +111,16 @@ def main() -> None:
     )
     ax.loglog(
         energy,
-        positive(ism),
+        positive(values=ism),
         color="#D55E00",
         linestyle="--",
         linewidth=2.0,
         label="Cloudy table ISM unattenuated",
         zorder=4,
     )
-    ax.axvline(EIGHT_EV_RYD, color="0.35", linestyle=":", linewidth=1.2)
-    ax.text(
-        EIGHT_EV_RYD,
-        0.04,
-        "8 eV",
-        rotation=90,
-        transform=ax.get_xaxis_transform(),
-        ha="right",
-        va="bottom",
-        color="0.35",
-        fontsize=8,
+    add_eight_ev_marker(
+        axis=ax,
+        label_line=True,
     )
     ax.set_xlim(RADIATION_X_MIN_RYD, RADIATION_X_MAX_RYD)
     ax.set_ylim(y_min, y_max)

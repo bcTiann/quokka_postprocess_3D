@@ -7,7 +7,6 @@ solver results, including high-temperature results, are preserved bit for bit.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 from pathlib import Path
 import tempfile
@@ -15,26 +14,21 @@ import tempfile
 import numpy as np
 from scipy.interpolate import griddata
 
+from quokka2s.despotic.table_data import LINE_RESULT_FIELDS
+from quokka2s.file_provenance import file_sha256
 
 ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_SOURCE = ROOT / "inputs" / "tables" / "despotic" / "raw.npz"
 DEFAULT_OUTPUT = ROOT / "inputs" / "tables" / "despotic" / "interpolated.npz"
 CORE_FIELDS = ("tg_final", "mu_values", "cv_values", "Eint_values")
-LINE_VALUE_FIELDS = ("intIntensity", "intTB", "lumPerH", "tau", "tauDust")
+# Frequencies are restored from existing nodes, never numerically interpolated.
+LINE_VALUE_FIELDS = tuple(name for name in LINE_RESULT_FIELDS if name != "freq")
 METADATA_FIELDS = {
     "version", "chemistry_network", "escape_geometry", "temperature_mode",
     "nH_values", "col_density_values", "dVdr_values", "species_names",
     "species_is_emitter", "attempts", "failure_mask", "build_metadata_json",
     "energy_term_names",
 }
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as source:
-        for block in iter(lambda: source.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
 
 
 def _fill_in_hull(values: np.ndarray, log_axes: tuple[np.ndarray, ...]) -> np.ndarray:
@@ -96,7 +90,7 @@ def interpolate_table(source: Path, output: Path, *, force: bool = False) -> dic
         raise ValueError("Source and output must be different files")
     if output.exists() and not force:
         raise FileExistsError(f"Refusing to overwrite {output}; pass --force to replace it")
-    source_hash = _sha256(source)
+    source_hash = file_sha256(source)
     with np.load(source, allow_pickle=True) as raw:
         data = {key: raw[key].copy() for key in raw.files}
     if "interpolation_target_mask" in data:
@@ -178,7 +172,7 @@ def interpolate_table(source: Path, output: Path, *, force: bool = False) -> dic
     }
     data["build_metadata_json"] = np.array(json.dumps(metadata, sort_keys=True))
 
-    if _sha256(source) != source_hash:
+    if file_sha256(source) != source_hash:
         raise ValueError("Source table changed during interpolation")
     output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(

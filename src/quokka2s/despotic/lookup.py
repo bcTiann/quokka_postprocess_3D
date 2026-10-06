@@ -21,8 +21,8 @@ class DespoticTemperatureCO:
     co10_luminosity_per_H, co21_luminosity_per_H : ndarray, shape S
         CO(1-0) and CO(2-1) luminosities [erg/s/H nucleus].
 
-    DespoticLookup.temperature_and_co() returns these arrays with the broadcast
-    query shape S, including shape () for scalar coordinates.
+    DespoticLookup.temperature_and_co(queries=...) returns arrays with the
+    prepared query shape S, including shape () for scalar coordinates.
     """
 
     temperature_K: np.ndarray
@@ -31,25 +31,25 @@ class DespoticTemperatureCO:
 
 
 @dataclass(frozen=True)
-class DespoticInterpolationCoordinates:
-    """Flattened physical coordinates and the shape to restore after querying.
+class DespoticQueries:
+    """Batch-local physical coordinates and reusable log10 interpolation rows.
 
-    Attributes
-    ----------
-    hydrogen_density_cm3, shielding_NH_cm2, velocity_gradient_s : ndarray, shape (Q,)
-        Broadcast input values [cm^-3], [cm^-2], [s^-1], in their original order.
-    query_shape : tuple of int
-        Input broadcast shape S; for a batch of B cells this is (B,).
-        Scalar inputs use (), while arrays of shape (2, 3) produce Q=6 queries.
+    density/column/gradient have Q flattened entries [cm^-3], [cm^-2], [s^-1].
+    query_shape restores the input broadcast shape S. Small query lists cache
+    points (Q, 3); larger diagnostic lists form only one bounded chunk at a time.
+    No lookup or reader retains this object after its caller releases it.
     """
 
     hydrogen_density_cm3: np.ndarray
     shielding_NH_cm2: np.ndarray
     velocity_gradient_s: np.ndarray
     query_shape: tuple[int, ...]
+    _logarithmic_points: np.ndarray | None
 
-    def logarithmic_points(self, start, stop):
-        """Return one chunk's log10 (nH, NH, dV/dr) rows, shape (stop-start, 3)."""
+    def logarithmic_points(self, start: int, stop: int) -> np.ndarray:
+        """Return log10 nH/NH/dVdr rows (stop-start, 3) for one query chunk."""
+        if self._logarithmic_points is not None:
+            return self._logarithmic_points[start:stop]
         return np.column_stack(
             (
                 np.log10(self.hydrogen_density_cm3[start:stop]),
@@ -58,46 +58,33 @@ class DespoticInterpolationCoordinates:
             )
         )
 
+    def select(self, selected_cells: np.ndarray) -> DespoticQueries:
+        """Select Q queries with an original-shape Boolean mask, keeping order.
 
-def prepare_despotic_interpolation_coordinates(
-    hydrogen_density_cm3, shielding_NH_cm2, velocity_gradient_s,
-):
-    """Broadcast physical coordinates and flatten them for SciPy interpolation.
-
-    Parameters
-    ----------
-    hydrogen_density_cm3, shielding_NH_cm2, velocity_gradient_s : array-like, broadcastable to S
-        Physical density [cm^-3], shielding column [cm^-2] and gradient [s^-1].
-        DespoticLookup query methods supply these, normally already clipped by
-        DespoticCellReader.prepare_query_inputs(); this action does not clip or select cells.
-
-    Returns
-    -------
-    DespoticInterpolationCoordinates
-        Three flattened arrays with Q entries and the original broadcast shape S.
-        Example: coordinates.logarithmic_points(0, 2) gives the first two rows
-        passed to RegularGridInterpolator, in (log10 nH, log10 NH, log10 dV/dr) order.
-    """
-    density, column, gradient = np.broadcast_arrays(
-        np.asarray(hydrogen_density_cm3, dtype=float),
-        np.asarray(shielding_NH_cm2, dtype=float),
-        np.asarray(velocity_gradient_s, dtype=float),
-    )
-    return DespoticInterpolationCoordinates(
-        hydrogen_density_cm3=density.ravel(),
-        shielding_NH_cm2=column.ravel(),
-        velocity_gradient_s=gradient.ravel(),
-        query_shape=density.shape,
-    )
+        For selected_cells=[True, False, True], output rows describe cells 0
+        and 2, with query_shape=(2,). Cached logarithms are selected, not recomputed.
+        """
+        selected = selected_cells.ravel()
+        density = self.hydrogen_density_cm3[selected]
+        points = None
+        if self._logarithmic_points is not None:
+            points = self._logarithmic_points[selected]
+        return DespoticQueries(
+            hydrogen_density_cm3=density,
+            shielding_NH_cm2=self.shielding_NH_cm2[selected],
+            velocity_gradient_s=self.velocity_gradient_s[selected],
+            query_shape=density.shape,
+            _logarithmic_points=points,
+        )
 
 
 class DespoticLookup:
     """Interpolate table values linearly in log10 (nH, NH, dV/dr) coordinates.
 
-    Query methods take physical coordinates: hydrogen_density_cm3 [H nuclei/cm^3], shielding_NH_cm2
-    [H nuclei/cm^2], and velocity_gradient_s [s^-1]. Arrays broadcast to a common shape S;
-    returned scalar-field arrays have shape S. Outside the grid, interpolation
-    returns NaN. Coordinate clipping belongs to the caller.
+    prepare_queries() broadcasts physical nH/NH/dVdr into shape S. Every field
+    method takes that same batch-local query object and returns shape S. Each
+    field keeps its own SciPy interpolator and NaN support. Outside the table,
+    queries return NaN; coordinate clipping belongs to the caller.
 
     Parameters
     ----------
@@ -110,11 +97,60 @@ class DespoticLookup:
     With a configured DESPOTIC table path::
 
         lookup = DespoticLookup(load_table(config.despotic_table))
-        temperature = lookup.temperature(nH, NH, dvdr)
+        queries = lookup.prepare_queries(
+            hydrogen_density_cm3=nH,
+            shielding_NH_cm2=NH,
+            velocity_gradient_s=dvdr,
+        )
+        temperature = lookup.temperature(queries=queries)
     """
 
     # Bound temporary log-coordinate arrays for large diagnostic query lists.
     _EVAL_CHUNK = 4_000_000
+
+    def prepare_queries(
+        self,
+        *,
+        hydrogen_density_cm3,
+        shielding_NH_cm2,
+        velocity_gradient_s,
+    ) -> DespoticQueries:
+        """Broadcast physical coordinates and prepare shared interpolation rows.
+
+        Inputs are broadcastable to S, in cm^-3, cm^-2 and s^-1. Cell readers
+        supply checked, clipped coordinates; diagnostic callers may query
+        uncovered values. This method does not clip or reject those values.
+
+        Return batch-local DespoticQueries. Lists up to _EVAL_CHUNK cache their
+        log10 rows once; larger lists retain physical views and create bounded
+        log chunks during evaluation. Example: scalar NH/dVdr and three nH
+        values produce query_shape=(3,), reused by temperature and species queries.
+        """
+        density, column, gradient = np.broadcast_arrays(
+            np.asarray(hydrogen_density_cm3, dtype=float),
+            np.asarray(shielding_NH_cm2, dtype=float),
+            np.asarray(velocity_gradient_s, dtype=float),
+        )
+        query_shape = density.shape
+        density = density.ravel()
+        column = column.ravel()
+        gradient = gradient.ravel()
+        points = None
+        if density.size <= self._EVAL_CHUNK:
+            points = np.column_stack(
+                (
+                    np.log10(density),
+                    np.log10(column),
+                    np.log10(gradient),
+                )
+            )
+        return DespoticQueries(
+            hydrogen_density_cm3=density,
+            shielding_NH_cm2=column,
+            velocity_gradient_s=gradient,
+            query_shape=query_shape,
+            _logarithmic_points=points,
+        )
 
     def clip_coordinates(
         self,
@@ -205,10 +241,6 @@ class DespoticLookup:
                         token=f"species:{name}:line:{field}",
                         values=getattr(record.line, field),
                     )
-                self._register_field(
-                    token=f"species:{name}:lumPerH",
-                    values=record.line.lumPerH,
-                )
 
     def _register_energy_fields(self):
         """Make any saved heating and cooling terms queryable."""
@@ -258,7 +290,7 @@ class DespoticLookup:
     def _interpolate_query_values(self, interpolator, coordinates, output_shape=()):
         """Evaluate flattened queries in chunks, then restore their input shape.
 
-        coordinates comes from prepare_despotic_interpolation_coordinates().
+        coordinates comes from prepare_queries().
         output_shape is () for one field or (3,) for the T/CO bundle; returned
         values have shape (*coordinates.query_shape, *output_shape). No physical
         coordinate is clipped here, and uncovered queries remain NaN.
@@ -271,176 +303,55 @@ class DespoticLookup:
             values[start:stop] = interpolator(points)
         return values.reshape((*coordinates.query_shape, *output_shape))
 
-    def _interpolate_field(
-        self, token, hydrogen_density_cm3, shielding_NH_cm2, velocity_gradient_s,
-    ):
-        """Read one registered field at physical coordinates, retaining their shape."""
+    def _interpolate_field(self, *, token: str, queries: DespoticQueries) -> np.ndarray:
+        """Read one registered scalar field with the prepared broadcast shape S."""
         if token not in self._interpolators:
             raise KeyError(f"Field '{token}' is not registered")
-        coordinates = prepare_despotic_interpolation_coordinates(
-            hydrogen_density_cm3=hydrogen_density_cm3,
-            shielding_NH_cm2=shielding_NH_cm2,
-            velocity_gradient_s=velocity_gradient_s,
-        )
         return self._interpolate_query_values(
             interpolator=self._interpolators[token],
-            coordinates=coordinates,
+            coordinates=queries,
         )
 
-    def mu(
-        self,
-        hydrogen_density_cm3,
-        shielding_NH_cm2,
-        velocity_gradient_s,
-    ) -> np.ndarray:
-        """Interpolate the dimensionless mean molecular weight.
+    def mu(self, *, queries: DespoticQueries) -> np.ndarray:
+        """Return mean molecular weight with shape S, in hydrogen-mass units.
 
-        Parameters
-        ----------
-        hydrogen_density_cm3, shielding_NH_cm2, velocity_gradient_s : array-like, broadcastable to shape S
-            Hydrogen density [cm^-3], hydrogen column [cm^-2], and gradient [s^-1].
-
-        Returns
-        -------
-        ndarray, shape S
-            Values from table.mu_values, in hydrogen-mass units.
-
-        Examples
-        --------
-        With lookup and cell coordinates already loaded::
-
-            mu = lookup.mu(nH, NH, dvdr)
+        queries comes from prepare_queries(). Example: lookup.mu(queries=queries).
         """
         return self._interpolate_field(
             token="mu",
-            hydrogen_density_cm3=hydrogen_density_cm3,
-            shielding_NH_cm2=shielding_NH_cm2,
-            velocity_gradient_s=velocity_gradient_s,
+            queries=queries,
         )
 
-    def cv(
-        self,
-        hydrogen_density_cm3,
-        shielding_NH_cm2,
-        velocity_gradient_s,
-    ) -> np.ndarray:
-        """Interpolate the dimensionless heat capacity per H nucleus.
+    def cv(self, *, queries: DespoticQueries) -> np.ndarray:
+        """Return heat capacity with shape S, in k_B per H nucleus.
 
-        Parameters
-        ----------
-        hydrogen_density_cm3, shielding_NH_cm2, velocity_gradient_s : array-like, broadcastable to shape S
-            Hydrogen density [cm^-3], hydrogen column [cm^-2], and gradient [s^-1].
-
-        Returns
-        -------
-        ndarray, shape S
-            table.cv_values; multiplying by k_B gives heat capacity
-            [erg/K/H nucleus], following DESPOTIC composition.computeCv().
-
-        Examples
-        --------
-        With lookup and cell coordinates already loaded::
-
-            cv = lookup.cv(nH, NH, dvdr)
+        Multiplying by k_B gives erg/K/H, following composition.computeCv().
         """
         return self._interpolate_field(
             token="cv",
-            hydrogen_density_cm3=hydrogen_density_cm3,
-            shielding_NH_cm2=shielding_NH_cm2,
-            velocity_gradient_s=velocity_gradient_s,
+            queries=queries,
         )
 
-    def Eint(
-        self,
-        hydrogen_density_cm3,
-        shielding_NH_cm2,
-        velocity_gradient_s,
-    ) -> np.ndarray:
-        """Interpolate the dimensionless internal-energy coefficient per H nucleus.
-
-        Parameters
-        ----------
-        hydrogen_density_cm3, shielding_NH_cm2, velocity_gradient_s : array-like, broadcastable to shape S
-            Hydrogen density [cm^-3], hydrogen column [cm^-2], and gradient [s^-1].
-
-        Returns
-        -------
-        ndarray, shape S
-            table.Eint_values, stored in units of k_B*T per H nucleus by
-            DESPOTIC composition.computeEint(); these are not energies in erg.
-
-        Examples
-        --------
-        With lookup and cell coordinates already loaded::
-
-            eint_coefficient = lookup.Eint(nH, NH, dvdr)
-        """
+    def Eint(self, *, queries: DespoticQueries) -> np.ndarray:
+        """Return internal-energy coefficient with shape S, in k_B*T per H."""
         return self._interpolate_field(
             token="Eint",
-            hydrogen_density_cm3=hydrogen_density_cm3,
-            shielding_NH_cm2=shielding_NH_cm2,
-            velocity_gradient_s=velocity_gradient_s,
+            queries=queries,
         )
 
-    def temperature(
-        self,
-        hydrogen_density_cm3,
-        shielding_NH_cm2,
-        velocity_gradient_s,
-    ) -> np.ndarray:
-        """Interpolate the DESPOTIC gas temperature.
-
-        Parameters
-        ----------
-        hydrogen_density_cm3, shielding_NH_cm2, velocity_gradient_s : array-like, broadcastable to shape S
-            Hydrogen density [cm^-3], hydrogen column [cm^-2], and gradient [s^-1].
-
-        Returns
-        -------
-        ndarray, shape S
-            Temperature [K] from table.tg_final, preserving query order.
-
-        Examples
-        --------
-        With lookup and cell coordinates already loaded::
-
-            temperature_K = lookup.temperature(nH, NH, dvdr)
-        """
+    def temperature(self, *, queries: DespoticQueries) -> np.ndarray:
+        """Return gas temperature with shape S [K] from the table's tg_final."""
         return self._interpolate_field(
             token="tg_final",
-            hydrogen_density_cm3=hydrogen_density_cm3,
-            shielding_NH_cm2=shielding_NH_cm2,
-            velocity_gradient_s=velocity_gradient_s,
+            queries=queries,
         )
 
-    def temperature_and_co(
-        self,
-        hydrogen_density_cm3,
-        shielding_NH_cm2,
-        velocity_gradient_s,
-    ) -> DespoticTemperatureCO:
-        """Sample temperature and both CO lines in one interpolation pass.
+    def temperature_and_co(self, *, queries: DespoticQueries) -> DespoticTemperatureCO:
+        """Read T [K] and CO(1-0)/(2-1) [erg/s/H] at the same prepared queries.
 
-        Parameters
-        ----------
-        hydrogen_density_cm3, shielding_NH_cm2, velocity_gradient_s : array-like, broadcastable to shape S
-            Hydrogen density [cm^-3], hydrogen column [cm^-2], and gradient [s^-1].
-            CellEmissionCalculator.calculate() supplies clipped cell coordinates.
-
-        Returns
-        -------
-        DespoticTemperatureCO
-            Three arrays of shape S: temperature [K], CO(1-0) and CO(2-1)
-            luminosities [erg/s/H nucleus], at identical coordinates.
-            Both CO and CO21 line records must be present in the table.
-            Out-of-bounds coordinates return NaN, as in the scalar methods.
-
-        Examples
-        --------
-        With lookup and cell coordinates already loaded::
-
-            fields = lookup.temperature_and_co(nH, NH, dvdr)
-            temperature_K = fields.temperature_K
+        Returns DespoticTemperatureCO, with each array retaining shape S.
+        Uses the existing three-output RGI; missing support remains per field.
+        Example: fields = lookup.temperature_and_co(queries=queries).
         """
         interpolator = self._temperature_and_co_interpolator
         if interpolator is None:
@@ -451,14 +362,9 @@ class DespoticLookup:
                     missing.append(name)
             raise ValueError(f"Temperature/CO lookup requires line data for {', '.join(missing)}")
 
-        coordinates = prepare_despotic_interpolation_coordinates(
-            hydrogen_density_cm3=hydrogen_density_cm3,
-            shielding_NH_cm2=shielding_NH_cm2,
-            velocity_gradient_s=velocity_gradient_s,
-        )
         values = self._interpolate_query_values(
             interpolator=interpolator,
-            coordinates=coordinates,
+            coordinates=queries,
             output_shape=(3,),
         )
         return DespoticTemperatureCO(
@@ -467,146 +373,57 @@ class DespoticLookup:
             co21_luminosity_per_H=np.asarray(values[..., 2]),
         )
 
-    def abundance(
-        self,
-        species: str,
-        hydrogen_density_cm3,
-        shielding_NH_cm2,
-        velocity_gradient_s,
-    ) -> np.ndarray:
-        """Interpolate one species' abundance relative to hydrogen nuclei.
-
-        Parameters
-        ----------
-        species : str
-            SpeciesRecord key, for example 'H', 'H+', 'e-' or 'CO'.
-        hydrogen_density_cm3, shielding_NH_cm2, velocity_gradient_s : array-like, broadcastable to shape S
-            Hydrogen density [cm^-3], hydrogen column [cm^-2], and gradient [s^-1].
-
-        Returns
-        -------
-        ndarray, shape S
-            Dimensionless number abundance from table.species_data[species].
-
-        Examples
-        --------
-        With lookup and cell coordinates already loaded::
-
-            electron_fraction = lookup.abundance('e-', nH, NH, dvdr)
-        """
+    def abundance(self, *, species: str, queries: DespoticQueries) -> np.ndarray:
+        """Return one species' dimensionless abundance relative to H, shape S."""
         return self._interpolate_field(
             token=f"species:{species}:abundance",
-            hydrogen_density_cm3=hydrogen_density_cm3,
-            shielding_NH_cm2=shielding_NH_cm2,
-            velocity_gradient_s=velocity_gradient_s,
+            queries=queries,
         )
 
-    def field(
-        self,
-        token: str,
-        hydrogen_density_cm3,
-        shielding_NH_cm2,
-        velocity_gradient_s,
-    ) -> np.ndarray:
-        """Interpolate a field by its registered token.
+    def field(self, *, token: str, queries: DespoticQueries) -> np.ndarray:
+        """Read a registered field with shape S in its stored units.
 
-        Parameters
-        ----------
-        token : str
-            Field key such as 'tg_final', 'species:CO:line:lumPerH', or
-            'energy:<name>'; available keys depend on the loaded table.
-        hydrogen_density_cm3, shielding_NH_cm2, velocity_gradient_s : array-like, broadcastable to shape S
-            Hydrogen density [cm^-3], hydrogen column [cm^-2], and gradient [s^-1].
-
-        Returns
-        -------
-        ndarray, shape S
-            Interpolated values in the selected field's original units.
-
-        Examples
-        --------
-        With lookup and cell coordinates already loaded::
-
-            temperature_K = lookup.field('tg_final', nH, NH, dvdr)
+        token can be 'tg_final', 'species:CO:line:lumPerH' or 'energy:<name>'.
+        queries comes from prepare_queries(); no coordinates are prepared again.
         """
         return self._interpolate_field(
             token=token,
-            hydrogen_density_cm3=hydrogen_density_cm3,
-            shielding_NH_cm2=shielding_NH_cm2,
-            velocity_gradient_s=velocity_gradient_s,
+            queries=queries,
         )
 
     def number_densities(
         self,
+        *,
         species: Sequence[str],
-        hydrogen_density_cm3,
-        shielding_NH_cm2,
-        velocity_gradient_s,
+        queries: DespoticQueries,
     ) -> dict[str, np.ndarray]:
-        """Convert selected species abundances to number densities.
+        """Return each species' number density with shape S [cm^-3].
 
-        Parameters
-        ----------
-        species : sequence of str
-            SpeciesRecord keys, in the desired dictionary insertion order.
-        hydrogen_density_cm3 : float or ndarray, broadcastable to shape S
-            Hydrogen-nuclei density [cm^-3], multiplied by each abundance.
-        shielding_NH_cm2, velocity_gradient_s : array-like, broadcastable to shape S
-            Hydrogen column [cm^-2] and LVG gradient [s^-1].
-
-        Returns
-        -------
-        dict of str to ndarray, shape S
-            One species number density [cm^-3] for each requested key.
-
-        Examples
-        --------
-        With lookup and cell coordinates already loaded::
-
-            number = lookup.number_densities(('e-', 'H+', 'H'), nH, NH, dvdr)
+        Multiply each independently interpolated abundance by the prepared nH.
+        Example: species=("e-", "H+", "H") returns those three named arrays.
         """
+        hydrogen_density_cm3 = queries.hydrogen_density_cm3.reshape(queries.query_shape)
         number_densities = {}
         for name in species:
             abundance = self.abundance(
                 species=name,
-                hydrogen_density_cm3=hydrogen_density_cm3,
-                shielding_NH_cm2=shielding_NH_cm2,
-                velocity_gradient_s=velocity_gradient_s,
+                queries=queries,
             )
             number_densities[name] = hydrogen_density_cm3 * abundance
         return number_densities
 
     def line_field(
         self,
+        *,
         species: str,
         field_name: str,
-        hydrogen_density_cm3,
-        shielding_NH_cm2,
-        velocity_gradient_s,
+        queries: DespoticQueries,
     ) -> np.ndarray:
-        """Interpolate one stored emission-line quantity for a species.
+        """Read one species' line quantity with shape S at the prepared queries.
 
-        Parameters
-        ----------
-        species : str
-            Emitter key; the emission pipeline uses 'C+', 'CO' and 'CO21'.
-        field_name : str
-            One of LINE_RESULT_FIELDS: freq, intIntensity, intTB, lumPerH,
-            tau or tauDust.
-        hydrogen_density_cm3, shielding_NH_cm2, velocity_gradient_s : array-like, broadcastable to shape S
-            Hydrogen density [cm^-3], hydrogen column [cm^-2], and gradient [s^-1].
-
-        Returns
-        -------
-        ndarray, shape S
-            Requested values: freq [Hz], intIntensity [erg/cm^2/s/sr],
-            intTB [K km/s], lumPerH [erg/s/H nucleus], or dimensionless tau/tauDust.
-
-        Examples
-        --------
-        With lookup and cell coordinates already loaded::
-
-            co_per_H = lookup.line_field('CO', 'lumPerH', nH, NH, dvdr)
+        field_name selects freq [Hz], intIntensity [erg/cm^2/s/sr], intTB
+        [K km/s], lumPerH [erg/s/H], or dimensionless tau/tauDust.
+        Example: species="C+", field_name="lumPerH" returns CII luminosity per H.
         """
         record = self._species_records.get(species)
         if record is None or record.line is None:
@@ -615,32 +432,5 @@ class DespoticLookup:
             raise ValueError(f"Unknown line field '{field_name}'; expected one of {LINE_RESULT_FIELDS}")
         return self._interpolate_field(
             token=f"species:{species}:line:{field_name}",
-            hydrogen_density_cm3=hydrogen_density_cm3,
-            shielding_NH_cm2=shielding_NH_cm2,
-            velocity_gradient_s=velocity_gradient_s,
+            queries=queries,
         )
-
-    def species_record(self, species: str) -> SpeciesRecord:
-        """Return one stored species record without interpolating it.
-
-        Parameters
-        ----------
-        species : str
-            Key in table.species_data, such as 'CO'.
-
-        Returns
-        -------
-        SpeciesRecord
-            Original record with abundance and optional line-field grids of
-            shape (N_nH, N_NH, N_gradient).
-
-        Examples
-        --------
-        With a loaded lookup::
-
-            co_grid = lookup.species_record('CO')
-        """
-        try:
-            return self._species_records[species]
-        except KeyError as exc:
-            raise ValueError(f"Species '{species}' not found; available: {', '.join(self._species_records)}") from exc

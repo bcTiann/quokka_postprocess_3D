@@ -22,7 +22,7 @@ def synthetic_table():
         line = SpeciesLineGrid(freq=np.ones(temperature.shape),
             intIntensity=luminosity.copy(), intTB=luminosity.copy(),
             lumPerH=luminosity, tau=np.ones(temperature.shape),
-            tauDust=np.zeros(temperature.shape), abundance=abundance)
+            tauDust=np.zeros(temperature.shape))
         species[name] = SpeciesRecord(name, abundance, line, True)
     return DespoticTable(species_data=species, tg_final=temperature,
         nH_values=axes[0], col_density_values=axes[1], dVdr_values=axes[2],
@@ -32,13 +32,22 @@ def synthetic_table():
 
 class DespoticLookupTests(unittest.TestCase):
     def assert_matches_scalar(self, lookup, *coordinates):
-        sample = lookup.temperature_and_co(*coordinates)
+        queries = lookup.prepare_queries(
+            hydrogen_density_cm3=coordinates[0],
+            shielding_NH_cm2=coordinates[1],
+            velocity_gradient_s=coordinates[2],
+        )
+        sample = lookup.temperature_and_co(queries=queries)
         self.assertIsInstance(sample, DespoticTemperatureCO)
         expected_shape = np.broadcast_arrays(*coordinates)[0].shape
         for actual, expected in (
-            (sample.temperature_K, lookup.temperature(*coordinates)),
-            (sample.co10_luminosity_per_H, lookup.line_field('CO', 'lumPerH', *coordinates)),
-            (sample.co21_luminosity_per_H, lookup.line_field('CO21', 'lumPerH', *coordinates)),
+            (sample.temperature_K, lookup.temperature(queries=queries)),
+            (sample.co10_luminosity_per_H, lookup.line_field(
+                species='CO', field_name='lumPerH', queries=queries,
+            )),
+            (sample.co21_luminosity_per_H, lookup.line_field(
+                species='CO21', field_name='lumPerH', queries=queries,
+            )),
         ):
             self.assertEqual(actual.shape, expected_shape)
             np.testing.assert_allclose(actual, expected, rtol=1e-14, atol=0, equal_nan=True)
@@ -84,9 +93,14 @@ class DespoticLookupTests(unittest.TestCase):
                          'CO21': table.species_data['CO21']}):
             with self.subTest(species=tuple(species)):
                 lookup = DespoticLookup(replace(table, species_data=species))
-                self.assertTrue(np.isfinite(lookup.temperature(1., 1e20, 1e-14)))
+                queries = lookup.prepare_queries(
+                    hydrogen_density_cm3=1.,
+                    shielding_NH_cm2=1e20,
+                    velocity_gradient_s=1e-14,
+                )
+                self.assertTrue(np.isfinite(lookup.temperature(queries=queries)))
                 with self.assertRaisesRegex(ValueError, 'requires line data for CO'):
-                    lookup.temperature_and_co(1., 1e20, 1e-14)
+                    lookup.temperature_and_co(queries=queries)
 
 
 if __name__ == '__main__':

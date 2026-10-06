@@ -8,7 +8,6 @@ existing lookup-coordinate clipping. No failure-acceptance threshold is set.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import itertools
 import json
 from pathlib import Path
@@ -18,6 +17,8 @@ from unyt import unyt_array
 
 from quokka2s.despotic.table_files import load_table
 from quokka2s.despotic.lookup import DespoticLookup
+from quokka2s.despotic.snapshot_domain import AXIS_NAMES, validate_snapshot_domain
+from quokka2s.file_provenance import file_sha256
 from quokka2s.physics import gas_fields, settings
 from quokka2s.snapshot_reader import Snapshot, slab_windows
 
@@ -25,8 +26,6 @@ from quokka2s.snapshot_reader import Snapshot, slab_windows
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_TABLE = ROOT / "inputs/tables/despotic/raw.npz"
 DEFAULT_DATASET = ROOT / "inputs/snapshots/plt0655228"
-AXIS_NAMES = ("nH", "NH", "dVdr")
-COLD_BOUNDARY_K = 3000.0
 
 
 def _table_axes(table):
@@ -108,8 +107,13 @@ def classify_queries(lookup, nH, NH, dVdr, *, clip_inputs):
         flags["all_eight_corners_failed"][indices] = all_failed
         # Evaluate the real DespoticLookup. In three dimensions RGI may propagate
         # NaN from a zero-weight corner, so support flags alone are insufficient.
-        temperature = np.asarray(lookup.temperature(*safe), dtype=float)
-        mu = np.asarray(lookup.mu(*safe), dtype=float)
+        queries = lookup.prepare_queries(
+            hydrogen_density_cm3=safe[0],
+            shielding_NH_cm2=safe[1],
+            velocity_gradient_s=safe[2],
+        )
+        temperature = np.asarray(lookup.temperature(queries=queries), dtype=float)
+        mu = np.asarray(lookup.mu(queries=queries), dtype=float)
         bad_t, bad_mu = ~np.isfinite(temperature), ~np.isfinite(mu)
         flags["temperature_query_nonfinite"][indices] = bad_t
         flags["mu_query_nonfinite"][indices] = bad_mu
@@ -139,7 +143,7 @@ class CoverageTotals:
         flags = dict(flags, invalid_temperature_quokka=~valid_t, invalid_mass=~valid_mass)
         for name, selection in (
             ("all_cells", np.ones(temperature.shape, dtype=bool)),
-            ("T_QUOKKA_lt_3000_K", valid_t & (temperature < COLD_BOUNDARY_K)),
+            ("T_QUOKKA_lt_3000_K", valid_t & (temperature < settings.EMISSION_TEMPERATURE_BOUNDARY_K)),
         ):
             group = self.groups[name]
             weighted = selection & valid_mass
@@ -165,37 +169,6 @@ class CoverageTotals:
         return groups
 
 
-def _sha256(path):
-    digest = hashlib.sha256()
-    with Path(path).open("rb") as stream:
-        for block in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
-
-
-def _validate_scan_provenance(table, shape):
-    """Check recorded physical setup and axis limits, independently of code paths."""
-    domain = (table.build_metadata or {}).get("snapshot_domain")
-    if not domain or domain.get("selection") != "all simulation cells":
-        raise ValueError("Candidate lacks all-cell snapshot-domain provenance")
-    checks = {
-        "shape": list(shape),
-        "total_cells": int(np.prod(shape)),
-        "X_H": float(settings.X_H),
-        "column_mean": settings.COLUMN_DENSITY_MEAN,
-        "column_directions": settings.COLUMN_DENSITY_DIRECTIONS,
-    }
-    for name, expected in checks.items():
-        if domain.get(name) != expected:
-            raise ValueError(f"Snapshot provenance mismatch for {name}: "
-                             f"table={domain.get(name)!r}, scan={expected!r}")
-    for name, axis in zip(AXIS_NAMES, _table_axes(table)):
-        measured = domain["axes"][name]
-        if axis[0] != measured["minimum"] or axis[-1] != measured["maximum"]:
-            raise ValueError(f"Candidate {name} bounds differ from recorded snapshot extrema")
-    return domain
-
-
 def update_coordinate_extrema(extrema, coordinates):
     """Update three raw coordinate ranges using positive finite values only."""
     for name, values in zip(AXIS_NAMES, coordinates):
@@ -219,11 +192,13 @@ def scan_snapshot_coverage(snapshot, lookup, slab_nx, query_chunk):
     scanned = 0
     extrema = {name: dict(minimum=None, maximum=None) for name in AXIS_NAMES}
 
-    for x_start, x_stop in slab_windows(snapshot.shape[0], slab_nx):
+    for x_start, x_stop in slab_windows(
+        x_start=0,
+        x_stop=snapshot.shape[0],
+        slab_nx=slab_nx,
+    ):
         slab = snapshot.read_slab(x_start=x_start, x_stop=x_stop)
-        for start in range(0, slab.cell_count, query_chunk):
-            stop = min(start + query_chunk, slab.cell_count)
-            cells = slab.batch(start=start, stop=stop)
+        for cells in slab.iter_batches(batch_size=query_chunk):
 
             # Preserve the original unit-aware nH normalization used to scan axes.
             density = unyt_array(cells.density_g_cm3, "g/cm**3")
@@ -287,7 +262,11 @@ def main(argv=None):
     if min(shape) < 2 or int(np.prod(shape)) != args.expected_cells:
         raise ValueError(f"Snapshot shape {shape} does not match expected all-cell count "
                          f"{args.expected_cells}")
-    domain = _validate_scan_provenance(table, shape)
+    domain = validate_snapshot_domain(
+        table=table,
+        shape=shape,
+        cfg=settings,
+    )
     snapshot = Snapshot(dataset=ds)
     totals, scanned, extrema = scan_snapshot_coverage(
         snapshot=snapshot,
@@ -300,7 +279,7 @@ def main(argv=None):
         raise RuntimeError("Coverage scan did not include every simulation cell exactly once")
     result = {
         "status": "diagnostic only; adoption and failure acceptance are not decided",
-        "table": str(args.table.resolve()), "table_sha256": _sha256(args.table),
+        "table": str(args.table.resolve()), "table_sha256": file_sha256(args.table),
         "table_build_metadata": dict(table.build_metadata or {}),
         "dataset": str(dataset.resolve()), "shape": list(shape), "total_cells": scanned,
         "snapshot_domain": domain, "fresh_input_extrema": extrema,
@@ -318,9 +297,9 @@ def main(argv=None):
             "temperature_nonfinite": int(np.count_nonzero(~np.isfinite(table.tg_final))),
             "mu_nonfinite": int(np.count_nonzero(~np.isfinite(table.mu_values))),
         },
-        "source_sha256": {"script": _sha256(__file__), "gas_fields": _sha256(gas_fields.__file__),
-                          "snapshot_reader": _sha256(ROOT / "src/quokka2s/snapshot_reader.py"),
-                          "lookup": _sha256(lookup_module.__file__), "settings": _sha256(settings.__file__)},
+        "source_sha256": {"script": file_sha256(__file__), "gas_fields": file_sha256(gas_fields.__file__),
+                          "snapshot_reader": file_sha256(ROOT / "src/quokka2s/snapshot_reader.py"),
+                          "lookup": file_sha256(lookup_module.__file__), "settings": file_sha256(settings.__file__)},
         "versions": {"numpy": np.__version__, "scipy": scipy.__version__, "yt": yt.__version__},
         "slab_nx": args.slab_nx, "query_chunk": args.query_chunk, "groups": groups,
     }

@@ -16,6 +16,8 @@ from quokka2s.snapshot_reader import SlabArrays
 class FakeSlab:
     """Supply batch locations without invoking snapshot I/O in scheduler tests."""
 
+    iter_batches = SlabArrays.iter_batches
+
     def __init__(self, cell_count, first_cell_id=0):
         self.cell_count = cell_count
         self.first_cell_id = first_cell_id

@@ -16,7 +16,8 @@ from quokka2s.products.line_luminosity_images import check_image_luminosity
 from quokka2s.products.integrated_spectra import IntegratedSpectra
 from quokka2s.physics.cell_emission import LineEmission
 from quokka2s.snapshot_reader import CellBatch, slab_windows
-from quokka2s.result_files import add_dust_metadata
+from quokka2s.result_metadata import ResultMetadata
+from quokka2s.products.emission_products import EmissionOutputs
 
 
 class EmissionProcessingTests(unittest.TestCase):
@@ -25,13 +26,29 @@ class EmissionProcessingTests(unittest.TestCase):
             line_keys=('cii', 'halpha'),
             dust_cross_section_cm2_H={'halpha': 3., 'cii': 2.},
         )
+        snapshot = SimpleNamespace(
+            xy_region={"x": (0, 1), "y": (0, 1)},
+            shape=(1, 1, 1),
+            processing_shape=(1, 1, 1),
+            processing_cell_count=1,
+            processing_area_cm2=1.,
+            dataset=SimpleNamespace(
+                domain_left_edge=SimpleNamespace(
+                    to=lambda unit: SimpleNamespace(value=np.zeros(3)),
+                ),
+                domain_right_edge=SimpleNamespace(
+                    to=lambda unit: SimpleNamespace(value=np.ones(3)),
+                ),
+            ),
+        )
+        metadata = ResultMetadata.from_processing_inputs(
+            snapshot=snapshot,
+            emission_calculator=emission_calculator,
+        )
         image = {}
         spectrum = {}
-        add_dust_metadata(
-            emission_calculator=emission_calculator,
-            image_payload=image,
-            spectrum_payload=spectrum,
-        )
+        outputs = EmissionOutputs(True, True, image, spectrum, {}, {}, {})
+        outputs.add_metadata(metadata=metadata)
         for payload in (image, spectrum):
             np.testing.assert_array_equal(payload['dust_sigma_ext_cm2_H'], [2., 3.])
         self.assertIsNot(image['dust_sigma_ext_cm2_H'], spectrum['dust_sigma_ext_cm2_H'])
@@ -136,7 +153,7 @@ class EmissionProcessingTests(unittest.TestCase):
                                    [[1., 1.], [.5, .5]])
 
     def test_slab_windows_cover_native_x_without_overlap(self):
-        windows = list(slab_windows(10, 4))
+        windows = list(slab_windows(x_start=0, x_stop=10, slab_nx=4))
         self.assertEqual(windows, [(0, 4), (4, 8), (8, 10)])
 
 

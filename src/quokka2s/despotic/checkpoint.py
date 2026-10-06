@@ -20,6 +20,7 @@ import platform
 import tempfile
 
 from quokka2s.despotic.table_data import AttemptRecord, LineLumResult
+from quokka2s.file_provenance import file_sha256
 
 
 def _encode(value):
@@ -99,31 +100,31 @@ def source_metadata() -> dict:
     package = Path(distribution("despotic").locate_file("despotic"))
     lamda = Path(os.environ["DESPOTIC_HOME"]) / "LAMDA"
 
-    def digest(path):
-        return hashlib.sha256(path.read_bytes()).hexdigest()
-
     # Solver files are local; the shared composition moved to physics/.
     project_files = {
         "table_builder.py": local / "table_builder.py",
         "checkpoint.py": local / "checkpoint.py",
         "cell_solver.py": local / "cell_solver.py",
+        "solver_settings.py": local / "solver_settings.py",
         "thermal_solver.py": local / "thermal_solver.py",
         "table_data.py": local / "table_data.py",
         "physics/composition.py": local.parent / "physics" / "composition.py",
+        "physics/settings.py": local.parent / "physics" / "settings.py",
+        "file_provenance.py": local.parent / "file_provenance.py",
     }
 
     return {
         "python": platform.python_version(),
         "numpy": distribution("numpy").version,
         "project_sources": {
-            name: digest(path) for name, path in project_files.items()
+            name: file_sha256(path) for name, path in project_files.items()
         },
         "despotic_sources": {
-            str(path.relative_to(package)): digest(path)
+            str(path.relative_to(package)): file_sha256(path)
             for path in sorted(package.rglob("*.py"))
         },
         "lamda_data": {
-            name: digest(lamda / name)
+            name: file_sha256(lamda / name)
             for name in ("co.dat", "catom.dat", "c+.dat", "hco+.dat", "oatom.dat")
         },
     }
