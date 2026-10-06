@@ -31,54 +31,166 @@ The current workflow makes LOS-z images, whole-box spectra, and gas-phase
 velocity distributions. It keeps all native simulation cells during processing.
 Images may be binned later for plotting.
 
-## Run with existing tables
+## Set up a new environment and run with existing tables
 
-From the repository root, install once in the chosen Python environment:
+### 1. Clone the code
+
+On Setonix, use `/scratch/pawsey0807/btian` as the working directory for
+this run. Clone before uploading the data, so the upload destination is
+already the repository directory:
 
 ```bash
+mkdir -p /scratch/pawsey0807/btian
+cd /scratch/pawsey0807/btian
+git clone --branch codex/cloudy-emission-backup \
+  https://github.com/bcTiann/quokka_postprocess_3D.git
+cd quokka_postprocess_3D
+```
+
+On another machine, clone the same branch into your chosen working directory.
+
+### 2. Create the Python environment
+
+Use Python 3.11. On Setonix, run `module spider python` and load an available
+Python 3.11 module using `module load python/VERSION`, replacing `VERSION`
+with the module version actually listed. If Python 3.11 is already active,
+continue directly below.
+
+Create a new environment on Setonix and install the dependencies once:
+
+```bash
+python -m venv /software/projects/pawsey0807/btian/venvs/quokka2s-py311
+source /software/projects/pawsey0807/btian/venvs/quokka2s-py311/bin/activate
 python -m pip install -r requirements.txt
 python -m pip install -e .
 ```
 
-Use Python 3.11 for this pinned environment. `requirements.txt` includes the exact
-yt source commit used to read QUOKKA
-snapshots. The editable install (`-e`) uses this checkout directly; keep the
-checkout because processing also reads the pinned dust-opacity file in
-`vendor/draine/`. DESPOTIC itself and a Cloudy executable are needed only to
-build tables, not to process an existing pair of tables.
+For another machine, choose a local path for the environment; the two
+installation commands are the same. On later Setonix logins, load the same
+Python module and activate the existing environment again.
 
-For running processing on Setonix and plotting on the laptop, follow the
-[Setonix guide](docs/setonix_process.md). The
-[batch script](tools/setonix/run_process.sbatch) runs the same process command
-with the existing tables; it does not build tables or draw figures.
+`requirements.txt` pins the numerical dependencies and the exact yt source
+commit used to read QUOKKA snapshots. The editable installation (`-e`) uses
+this checkout directly, so keep it. Processing also reads the dust table
+already included in `vendor/draine/`.
 
-Copy the snapshot and tables separately from the code. They are not in Git:
+Processing existing tables does not require DESPOTIC itself, a Cloudy
+executable or RADMC-3D. These solvers are not invoked by the process command.
+
+### 3. Upload the snapshot and the two tables
+
+These inputs are outside Git. Run the following on the laptop, after cloning
+on Setonix. The SSH alias `setonix` uses the existing Pawsey login/key settings;
+the file transfers use Pawsey's data-mover with the same key:
+
+```bash
+cd /Users/tianbaochen/quokka_postprocess_3D
+setonix_repo=/scratch/pawsey0807/btian/quokka_postprocess_3D
+
+ssh setonix "mkdir -p \
+  ${setonix_repo}/inputs/snapshots/plt0655228 \
+  ${setonix_repo}/inputs/tables/despotic \
+  ${setonix_repo}/inputs/tables/cloudy"
+
+# Complete simulation snapshot, including its Header and data subdirectories.
+rsync -rvP --exclude='.DS_Store' \
+  -e "ssh -i $HOME/.ssh/pawsey_ed25519_key" \
+  inputs/snapshots/plt0655228/ \
+  "btian@data-mover.pawsey.org.au:${setonix_repo}/inputs/snapshots/plt0655228/"
+
+# DESPOTIC table after filling gaps within the finite-data convex hull.
+rsync -rvP \
+  -e "ssh -i $HOME/.ssh/pawsey_ed25519_key" \
+  inputs/tables/despotic/interpolated.npz \
+  "btian@data-mover.pawsey.org.au:${setonix_repo}/inputs/tables/despotic/"
+
+# Cloudy emission table.
+rsync -rvP \
+  -e "ssh -i $HOME/.ssh/pawsey_ed25519_key" \
+  inputs/tables/cloudy/emission.npz \
+  "btian@data-mover.pawsey.org.au:${setonix_repo}/inputs/tables/cloudy/"
+```
+
+`-r` copies subdirectories, `-v` prints transferred files, and `-P` shows
+progress and retains partial files after an interruption. Re-run the same
+command if a transfer is interrupted. These commands intentionally do not
+preserve old modification times, following
+[Pawsey's scratch-transfer guidance](https://pawsey.atlassian.net/wiki/spaces/US/pages/51925882).
+
+The resulting inputs are:
 
 ```text
 inputs/
   snapshots/plt0655228/
-  tables/despotic/raw.npz
   tables/despotic/interpolated.npz
   tables/cloudy/emission.npz
 ```
 
-The raw DESPOTIC table preserves the solver results. `process` queries
-`interpolated.npz`, which fills unavailable nodes only inside the finite-data
-convex hull. The emission run reads only the interpolated DESPOTIC table.
+The raw DESPOTIC table, checkpoints and historical caches are not needed.
+The supplied [process YAML](configs/emission_process.yaml) already points to
+these relative paths. Its `output_dir` must be a new directory.
 
-1. Edit [emission_process.yaml](configs/emission_process.yaml).
-2. Run processing:
+### 4. Run processing
 
-   ```bash
-   python -m quokka2s.process_snapshot --config configs/emission_process.yaml
-   ```
+On Setonix, use the interactive debug allocation supplied by the supervisor:
 
-3. Set `products` in [emission_plot.yaml](configs/emission_plot.yaml) to the completed
-   process output directory. Run plotting:
+```bash
+alias cpush="salloc --nodes=1 --time=00:59:00 -A pawsey0807 --mem=222GB -p debug"
+cpush --ntasks=1 --cpus-per-task=8
+```
 
-   ```bash
-   python -m quokka2s.plot_emission_results --config configs/emission_plot.yaml
-   ```
+The alias is unchanged. The added options request one Python process with
+eight CPUs for the current two query workers and three spectral threads per
+worker. After the allocation is granted, run:
+
+```bash
+cd /scratch/pawsey0807/btian/quokka_postprocess_3D
+source /software/projects/pawsey0807/btian/venvs/quokka2s-py311/bin/activate
+
+# The Python worker settings control parallelism; avoid extra native BLAS threads.
+export OMP_NUM_THREADS=1
+export OPENBLAS_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+export BLIS_NUM_THREADS=1
+export NUMEXPR_NUM_THREADS=1
+
+srun --nodes=1 --ntasks=1 --cpus-per-task=8 \
+  --distribution=block:block:block --cpu-bind=cores \
+  python -u -m quokka2s.process_snapshot --config configs/emission_process.yaml
+```
+
+`salloc` reserves the resources; `srun` launches the process using them.
+See [Pawsey's interactive-job instructions](https://pawsey.atlassian.net/wiki/spaces/US/pages/51925964).
+When processing finishes, `exit` releases the interactive allocation.
+
+On the laptop, run the same process command directly in its Python environment:
+
+```bash
+python -m quokka2s.process_snapshot --config configs/emission_process.yaml
+```
+
+### 5. Download the results and plot locally
+
+After the Setonix process finishes, run on the laptop:
+
+```bash
+cd /Users/tianbaochen/quokka_postprocess_3D
+mkdir -p output/plt0655228/processed_setonix
+rsync -rvP \
+  -e "ssh -i $HOME/.ssh/pawsey_ed25519_key" \
+  btian@data-mover.pawsey.org.au:/scratch/pawsey0807/btian/quokka_postprocess_3D/output/plt0655228/processed/ \
+  output/plt0655228/processed_setonix/
+```
+
+Set `products: ../output/plt0655228/processed_setonix` in
+[configs/emission_plot.yaml](configs/emission_plot.yaml), then run:
+
+```bash
+python -m quokka2s.plot_emission_results --config configs/emission_plot.yaml
+```
+
+Plotting reads the downloaded products; it does not reopen the snapshot or
+tables. The separate download directory keeps the existing laptop results.
 
 The process YAML specifies these input and output paths:
 

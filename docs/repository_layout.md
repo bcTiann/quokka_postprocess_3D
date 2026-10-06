@@ -13,7 +13,6 @@ tools and additional paper figures have their own commands.
 | `tools/cloudy/` | Build radiation inputs, run Cloudy, package its emission table | Yes |
 | `tools/despotic/` | Install required GOW corrections, measure table axes, check coverage | Yes |
 | `tools/figures/` | Additional slice, phase, gas-projection, dust and radiation figures | Yes |
-| `tools/setonix/` | Slurm script for processing with existing tables | Yes |
 | `tests/` | Current calculation and rendering tests; a small frozen numerical fixture | Yes |
 | `docs/` | Current instructions, physics, code walkthrough, validation records | Yes |
 | `vendor/` | Pinned external source, dust table, molecular data and their notes | Yes |
