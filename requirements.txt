@@ -1,8 +1,10 @@
 # Pinned, known-good environment for reproducing the quokka2s pipeline.
 #
-# Usage (after `conda create -n test-env python=3.11 && conda activate test-env`):
-#     pip install -r requirements.txt
-#     pip install -e .
+# Usage from the repository root:
+#     python3.11 -m venv .venv
+#     source .venv/bin/activate
+#     python -m pip install -r requirements.txt
+#     python -m pip install -e .
 #
 # Use the exact yt source installed in the validated Python 3.11 environment.
 # This commit supplies the QUOKKA frontend used to read our snapshots.

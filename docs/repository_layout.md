@@ -16,7 +16,8 @@ tools and additional paper figures have their own commands.
 | `tests/` | Current calculation and rendering tests; a small frozen numerical fixture | Yes |
 | `docs/` | Usage instructions, physical methods and code walkthrough | Yes |
 | `vendor/` | Pinned external source, dust table, molecular data and their notes | Yes |
-| `inputs/` | QUOKKA snapshots and final lookup tables | No; transfer separately |
+| `inputs/snapshots/` | User-provided QUOKKA snapshots | No |
+| `inputs/tables/` | Fixed Cloudy `emission.npz` and DESPOTIC `interpolated.npz` | Yes; raw tables and other build files stay local |
 | `output/` | Processed numerical products and figures | No |
 | `runtime/` | Cloudy build parameters, `.inc` exports, raw outputs and logs | No |
 
@@ -79,7 +80,7 @@ or `PlotSettings` from YAML, without changing the command-line defaults.
 ```text
 inputs/
   snapshots/plt0655228/
-  tables/despotic/raw.npz
+  tables/despotic/raw.npz       # Local table-building output; not included in Git
   tables/despotic/interpolated.npz
   tables/cloudy/emission.npz
 

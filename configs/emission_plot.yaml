@@ -1,5 +1,5 @@
-# Plot downloaded numerical products. Paths are relative to this file.
-# Copy the complete processed directory here, or edit products.
+# Plot saved numerical products. Paths are relative to this file.
+# For results copied from another machine, edit products to that directory.
 products: ../output/plt0655228/processed
 output_dir: ../output/plt0655228/figures
 titled_output_dir: ../output/plt0655228/figures_titled

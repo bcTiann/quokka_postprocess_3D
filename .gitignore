@@ -9,9 +9,17 @@
 .vscode/
 .claude/
 
-# Large local inputs, generated products, and table-building workspaces.
-# Transfer these separately from the source repository.
-/inputs/
+# Snapshots and build intermediates stay local. Track only the two fixed
+# process tables; their exact file exceptions appear below the *.npz rule.
+/inputs/*
+!/inputs/tables/
+/inputs/tables/*
+!/inputs/tables/cloudy/
+!/inputs/tables/despotic/
+/inputs/tables/cloudy/*
+/inputs/tables/despotic/*
+
+# Generated products and table-building workspaces.
 /output/
 /runtime/
 /archive/
@@ -34,3 +42,7 @@
 # Small scientific fixtures and pinned molecular data belong with the code.
 !tests/data/velocity_kernel_reference.npz
 !vendor/molecular_data/LAMDA/*.dat
+
+# Fixed prebuilt emission tables are supplied with a normal Git clone.
+!/inputs/tables/cloudy/emission.npz
+!/inputs/tables/despotic/interpolated.npz

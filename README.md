@@ -17,7 +17,7 @@ tools/         table-building and additional figure commands
 tests/         tests for the current workflow
 docs/          usage instructions, physical methods and code walkthrough
 vendor/        pinned external source and physical data
-inputs/        snapshots and final lookup tables (local, outside Git)
+inputs/        user-provided snapshots and the two bundled lookup tables
 output/        processed numerical products and figures (local)
 runtime/       intermediate Cloudy build files and logs (local)
 ```
@@ -31,6 +31,8 @@ native cell resolution and full z depth. Images may be binned later for plotting
 
 ## Set up a new environment and run with existing tables
 
+You need Git and Python 3.11. The shell commands below work on macOS and Linux.
+
 ### 1. Clone the code
 
 Choose a working directory and clone the repository:
@@ -40,29 +42,32 @@ git clone https://github.com/bcTiann/quokka_postprocess_3D.git
 cd quokka_postprocess_3D
 ```
 
-On Setonix, use your project's scratch directory as the parent working
-directory. The transfer examples below assume the repository is at
-`/scratch/PROJECT/USERNAME/quokka_postprocess_3D`; replace the project and
-username with your own values.
+The two prebuilt emission tables are included in this clone. Supply your own
+QUOKKA snapshot as described in step 3.
 
 ### 2. Create the Python environment
 
-Use Python 3.11. On Setonix, `module spider python` lists available modules;
-load a Python 3.11 module before continuing.
-
-From the repository root, create and activate an environment:
+From the repository root, create a project-local Python environment and
+install the package:
 
 ```bash
-quokka_env="$HOME/.venvs/quokka2s"
-# On Setonix, instead use: quokka_env="$MYSOFTWARE/venvs/quokka2s"
-python -m venv "$quokka_env"
-source "$quokka_env/bin/activate"
+python3.11 -m venv .venv
+source .venv/bin/activate
 python -m pip install -r requirements.txt
 python -m pip install -e .
 ```
 
-On later logins, load the same Python module if needed and activate the
-existing environment at the path you chose.
+`.venv` is the environment directory; its leading dot makes it hidden from
+plain `ls`. `source .venv/bin/activate` makes the current terminal use that
+environment's Python and packages. When opening a new terminal, return to the
+repository and activate it again:
+
+```bash
+cd /path/to/quokka_postprocess_3D
+source .venv/bin/activate
+```
+
+Run `deactivate` to leave the environment.
 
 `requirements.txt` pins the numerical dependencies and the yt source commit
 used to read QUOKKA snapshots. The editable installation (`-e`) uses this
@@ -70,11 +75,9 @@ checkout directly, so keep it. The dust-opacity table is included in
 `vendor/draine/`. Processing prebuilt tables does not invoke DESPOTIC,
 Cloudy or RADMC-3D executables.
 
-### 3. Supply the snapshot and tables
+### 3. Configure your existing snapshot
 
-Snapshots and lookup tables are transferred separately from the code.
-Place them at these paths, or change the paths in
-[configs/emission_process.yaml](configs/emission_process.yaml):
+The default input paths, relative to the repository root, are:
 
 ```text
 inputs/
@@ -83,48 +86,34 @@ inputs/
   tables/cloudy/emission.npz
 ```
 
-Copy the complete snapshot directory, including its `Header`, `metadata.yaml`
-and data subdirectories. Processing reads the filled DESPOTIC table and
-Cloudy emission table; it does not need the raw DESPOTIC table or builder
-checkpoints. The supplied YAML uses the relative paths above and requires
-a new output directory.
+| Input | Path | Provided by |
+|---|---|---|
+| Simulation snapshot | `inputs/snapshots/plt0655228/` | The user |
+| DESPOTIC table | `inputs/tables/despotic/interpolated.npz` | This repository |
+| Cloudy table | `inputs/tables/cloudy/emission.npz` | This repository |
 
-For Setonix, clone the repository there first. With SSH access configured,
-run the following from the local repository directory. Replace the project
-and username before running:
+The simulation is assumed to already exist on your machine. Either place its
+complete directory at the default path or set `dataset` in
+[configs/emission_process.yaml](configs/emission_process.yaml) to its existing
+absolute path:
 
-```bash
-pawsey_project=YOUR_PROJECT
-pawsey_user=YOUR_USERNAME
-setonix_repo="/scratch/${pawsey_project}/${pawsey_user}/quokka_postprocess_3D"
-
-ssh "${pawsey_user}@setonix.pawsey.org.au" "mkdir -p \
-  ${setonix_repo}/inputs/snapshots/plt0655228 \
-  ${setonix_repo}/inputs/tables/despotic \
-  ${setonix_repo}/inputs/tables/cloudy"
-
-rsync -rvP --exclude='.DS_Store' \
-  inputs/snapshots/plt0655228/ \
-  "${pawsey_user}@data-mover.pawsey.org.au:${setonix_repo}/inputs/snapshots/plt0655228/"
-
-rsync -rvP \
-  inputs/tables/despotic/interpolated.npz \
-  "${pawsey_user}@data-mover.pawsey.org.au:${setonix_repo}/inputs/tables/despotic/"
-
-rsync -rvP \
-  inputs/tables/cloudy/emission.npz \
-  "${pawsey_user}@data-mover.pawsey.org.au:${setonix_repo}/inputs/tables/cloudy/"
+```yaml
+dataset: /absolute/path/to/plt0655228
 ```
 
-`-r` copies subdirectories, `-v` prints transferred files, and `-P` shows
-progress and retains partial files after an interruption. Re-run the same
-command if a transfer is interrupted. These commands avoid preserving old
-modification times, following
-[Pawsey's scratch-transfer guidance](https://pawsey.atlassian.net/wiki/spaces/US/pages/51925882).
+Point to the snapshot directory containing `Header`, `metadata.yaml`, and the
+data subdirectories. The two table paths already work after cloning; processing
+uses the filled DESPOTIC table, so the raw table and builder checkpoints are not
+required.
+
+These fixed tables were prepared for the `plt0655228` reference simulation.
+DESPOTIC records its original grid and measured coordinate range. For a different
+simulation, confirm table coverage and use the [table-building commands](#build-tables)
+when new tables are needed.
 
 ### 4. Run processing
 
-On a local machine, with the environment active:
+From the repository root, with `.venv` active:
 
 ```bash
 python -m quokka2s.process_snapshot
@@ -136,58 +125,20 @@ Run these commands from the repository root. Processing uses
 another configuration. After installing the package, the equivalent short
 commands are `quokka2s-process` and `quokka2s-plot`.
 
-On Setonix, first request an interactive CPU allocation. This example uses
-one task and eight CPUs for the supplied two query workers and three
-spectral threads per worker. Set your project code, and adjust memory and
-time for your job:
+### 5. Plot the saved results
 
-```bash
-pawsey_project=YOUR_PROJECT
-alias cpush="salloc --nodes=1 --time=00:59:00 -A ${pawsey_project} --mem=222GB -p debug"
-cpush --ntasks=1 --cpus-per-task=8
-```
-
-After the allocation is granted, change to the repository directory and
-activate the Python environment at the path chosen in step 2. Then run:
-
-```bash
-# The Python worker settings control parallelism; avoid extra native BLAS threads.
-export OMP_NUM_THREADS=1
-export OPENBLAS_NUM_THREADS=1
-export MKL_NUM_THREADS=1
-export BLIS_NUM_THREADS=1
-export NUMEXPR_NUM_THREADS=1
-
-srun --nodes=1 --ntasks=1 --cpus-per-task=8 \
-  --distribution=block:block:block --cpu-bind=cores \
-  python -u -m quokka2s.process_snapshot
-```
-
-`salloc` reserves resources; `srun` launches the process using them.
-See [Pawsey's interactive-job instructions](https://pawsey.atlassian.net/wiki/spaces/US/pages/51925964).
-When processing finishes, `exit` releases the allocation.
-
-### 5. Download the results and plot locally
-
-From the local repository directory, using the same transfer variables
-from step 3:
-
-```bash
-mkdir -p output/plt0655228/processed_setonix
-rsync -rvP \
-  "${pawsey_user}@data-mover.pawsey.org.au:${setonix_repo}/output/plt0655228/processed/" \
-  output/plt0655228/processed_setonix/
-```
-
-Set `products: ../output/plt0655228/processed_setonix` in
-[configs/emission_plot.yaml](configs/emission_plot.yaml), then run:
+After processing finishes, run:
 
 ```bash
 python -m quokka2s.plot_emission_results
 ```
 
-Plotting reads the downloaded products and does not reopen the snapshot or
-tables. For locally processed results, set `products` to their output directory.
+The default plot config reads `output/plt0655228/processed/` and writes figures
+to `output/plt0655228/figures/` and `output/plt0655228/figures_titled/`, each with
+`png/` and `pdf/` subdirectories. To plot on another machine, copy the completed
+processed directory there and set `products` in
+[configs/emission_plot.yaml](configs/emission_plot.yaml) to that directory.
+Plotting reads the saved products and does not reopen the snapshot or tables.
 
 The process YAML specifies these input and output paths:
 

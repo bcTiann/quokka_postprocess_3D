@@ -1,5 +1,6 @@
 # Process the complete QUOKKA snapshot. Paths are relative to this file.
-# Copy the snapshot and the two lookup tables into inputs/ after cloning.
+# The two lookup tables are included in Git. Supply your existing snapshot
+# at the dataset path below, or replace dataset with its absolute path.
 dataset: ../inputs/snapshots/plt0655228
 despotic_table: ../inputs/tables/despotic/interpolated.npz
 cloudy_table: ../inputs/tables/cloudy/emission.npz
