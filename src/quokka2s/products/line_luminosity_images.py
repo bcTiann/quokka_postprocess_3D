@@ -101,44 +101,21 @@ class LineLuminosityImageAccumulator:
             selected_indices = np.flatnonzero(~line.emissivity_is_missing)
             if selected_indices.size == 0:
                 continue
-            luminosity_by_dust = self.calculate_line_cell_luminosities(
-                line=line,
-                cell_volume_cm3=cells.cell_volume_cm3,
-                selected_indices=selected_indices,
-            )
             pixel_indices = all_pixel_indices[selected_indices]
             for dust_index, dust_state in enumerate(DUST_STATES):
+                if dust_state == "intrinsic":
+                    emissivity = line.intrinsic_emissivity_erg_s_cm3
+                else:
+                    emissivity = line.attenuated_emissivity_erg_s_cm3
+                selected_emissivity = emissivity[selected_indices]
+                luminosity = selected_emissivity * cells.cell_volume_cm3
                 self.accumulate_line_pixel_luminosity(
                     pixel_indices=pixel_indices,
-                    luminosity=luminosity_by_dust[dust_state],
+                    luminosity=luminosity,
                     dust_index=dust_index,
                     line_index=line_index,
                 )
         return self
-
-    def calculate_line_cell_luminosities(
-        self,
-        line,
-        cell_volume_cm3,
-        selected_indices,
-    ):
-        """Return one line's available cell luminosities, keyed by dust state.
-
-        line is a LineEmission; each emissivity field has shape (B,).
-        selected_indices is (R,) and keeps original cell positions. Values in
-        the returned dictionary are (R,) [erg/s], not a packed line matrix.
-        Example: result["attenuated"][0] is the first selected cell's
-        luminosity after foreground dust.
-        """
-        emissivity_by_dust = {
-            "intrinsic": line.intrinsic_emissivity_erg_s_cm3,
-            "attenuated": line.attenuated_emissivity_erg_s_cm3,
-        }
-        luminosity_by_dust = {}
-        for dust_state, emissivity in emissivity_by_dust.items():
-            selected_emissivity = emissivity[selected_indices]
-            luminosity_by_dust[dust_state] = selected_emissivity * cell_volume_cm3
-        return luminosity_by_dust
 
     def merge(self, other):
         """Add another batch's images to this accumulator.

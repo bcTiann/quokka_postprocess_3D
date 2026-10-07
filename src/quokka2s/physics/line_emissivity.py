@@ -9,13 +9,10 @@ import numpy as np
 
 from quokka2s.physics.hydrogen_emissivity import halpha_emissivity, hi21_emissivity
 
-ATOMIC_LINE_KEYS = (
-    'cii', 'halpha', 'hi21', 'ciii_977', 'ciii_1907', 'ciii_1909',
-    'civ_1548', 'civ_1551',
-)
-CO_LINE_KEYS = ('co10', 'co21')
 HYDROGEN_CII_LINE_KEYS = ('cii', 'halpha', 'hi21')
 CIII_CIV_LINE_KEYS = ('ciii_977', 'ciii_1907', 'ciii_1909', 'civ_1548', 'civ_1551')
+ATOMIC_LINE_KEYS = HYDROGEN_CII_LINE_KEYS + CIII_CIV_LINE_KEYS
+CO_LINE_KEYS = ('co10', 'co21')
 
 
 def check_field_values(name, values, *, positive=False):

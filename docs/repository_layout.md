@@ -58,7 +58,7 @@ current scientific rules.
 | `despotic/` | `table_files.py`: NPZ serialization; `cell_solver.py`: equilibrium at one state; `table_builder.py`: grid calculation |
 | `despotic/` | `lookup.py` and `cell_fields.py`: process-time queries; `build_table.py`, `interpolate_failed.py`, `plot_table.py`, `list_failures.py`: table commands |
 | `products/` | `line_luminosity_images.py`, `integrated_spectra.py`, `line_velocity_moments.py`, `gas_phase_velocity.py`: numerical accumulation |
-| `figures/` | `emission_results.py`, `gas_phase_spectra.py`, `line_labels.py` and the additional figure modules: rendering; `figure_files.py`: PNG/PDF paths and saving |
+| `figures/` | `line_luminosity_images.py`, `line_spectra.py`, `gas_phase_spectra.py`: saved-product renderers; `line_labels.py`: titles; `figure_files.py`: PNG/PDF paths and saving; other modules: additional figures |
 
 `gas_fields.mixed_gas_temperature_K()` supplies the cold-DESPOTIC/hot-QUOKKA
 temperature rule to gas-phase statistics, projection maps and phase histograms.

@@ -6,9 +6,8 @@ from functools import cached_property
 
 import numpy as np
 
-from .constants import HYDROGEN_MASS_G
 from .physics.dust_attenuation import observer_side_hydrogen_column
-from .physics.settings import X_H
+from .physics.gas_fields import hydrogen_number_density_cm3
 
 
 @dataclass(frozen=True)
@@ -279,7 +278,9 @@ class CellBatch:
         emissivity calculations use one nH value per original cell.
         Example: cells.hydrogen_density_cm3[7] is the eighth cell's physical nH.
         """
-        hydrogen_density_cm3 = self.density_g_cm3 * X_H / HYDROGEN_MASS_G
+        hydrogen_density_cm3 = hydrogen_number_density_cm3(
+            density_g_cm3=self.density_g_cm3,
+        )
         hydrogen_density_cm3.flags.writeable = False
         return hydrogen_density_cm3
 
@@ -584,11 +585,14 @@ def calculate_dust_foreground_column(
     Example: input and output both have shape (8, 256, 2048).
     The emitting cell contributes half its width; nearer cells contribute fully.
     """
-    from .physics import settings
-
-    hydrogen_density = density_g_cm3 * settings.X_H / HYDROGEN_MASS_G
+    hydrogen_density = hydrogen_number_density_cm3(
+        density_g_cm3=density_g_cm3,
+    )
     dz_cm = float(snapshot.cell_widths[2].to('cm').value)
-    foreground_column = observer_side_hydrogen_column(hydrogen_density, dz_cm)
+    foreground_column = observer_side_hydrogen_column(
+        nH_cm3=hydrogen_density,
+        dz_cm=dz_cm,
+    )
     return foreground_column
 
 

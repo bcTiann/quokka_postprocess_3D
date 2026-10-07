@@ -1,15 +1,21 @@
 """Derive hydrogen density, shielding column and velocity gradient from a slab."""
 
 import numpy as np
-from unyt import s, unyt_quantity
+from unyt import s
 
 from ..constants import HYDROGEN_MASS_G
 from . import settings
 from .settings import SIMULATION_DVDR_MIN_S
 
 
-# Keep yt/unyt units while deriving slab fields; convert to NumPy afterwards.
-HYDROGEN_MASS = unyt_quantity(HYDROGEN_MASS_G, 'g')
+def hydrogen_number_density_cm3(*, density_g_cm3: np.ndarray) -> np.ndarray:
+    """Convert physical gas density [g/cm^3] to hydrogen nuclei [cm^-3].
+
+    Input and output have the same shape, e.g. (B,) for a cell batch or
+    (Nx, Ny, Nz) for a slab. This does not clip density for table queries.
+    Keep multiplication before division to preserve the adopted arithmetic.
+    """
+    return density_g_cm3 * settings.X_H / HYDROGEN_MASS_G
 
 
 def mixed_gas_temperature_K(
@@ -35,9 +41,22 @@ def hydrogen_number_density(density):
     including two x-neighbour layers. Returns the same shape with units.
     Every chemical and ionization state contributes its hydrogen nuclei.
     """
-    density_cgs = density.in_cgs()
-    number_density = density_cgs * settings.X_H / HYDROGEN_MASS
-    return number_density.to('cm**-3')
+    # Convert before stripping units so invalid density dimensions still raise.
+    density_cgs = density.to('g/cm**3')
+    # unyt promotes the scalar multiplication to at least float64.
+    density_values = density_cgs.v.astype(
+        np.result_type(density_cgs.dtype, np.float64),
+        copy=False,
+    )
+    number_density_cm3 = hydrogen_number_density_cm3(
+        density_g_cm3=density_values,
+    )
+    # Reattach cm^-3 using the input's unyt type and unit registry.
+    return type(density_cgs)(
+        number_density_cm3,
+        units='cm**-3',
+        registry=density_cgs.units.registry,
+    )
 
 
 def shielding_hydrogen_column(grid):

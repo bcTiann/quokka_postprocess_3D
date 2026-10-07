@@ -261,8 +261,11 @@ class EmissionProducts:
         missing_temperature = ~np.isfinite(mixed_temperature) | (mixed_temperature <= 0)
         self.counts["all"] += cold_cells.size
         self.counts["gas_temperature_missing"] += int(np.count_nonzero(missing_temperature))
+        # Every cell contributes to total mass; no selection or array copy is needed.
+        self.mass_g["all"] += float(
+            cells.density_g_cm3.sum() * cells.cell_volume_cm3,
+        )
         mass_selections = (
-            ("all", np.ones(cold_cells.shape, dtype=bool)),
             ("cold", cold_cells),
             ("hot", ~cold_cells),
             ("gas_temperature_missing", missing_temperature),

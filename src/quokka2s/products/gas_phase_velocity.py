@@ -496,8 +496,9 @@ class GasPhaseVelocityAccumulator:
         """
         report = self.report()
         groups = report['groups']
-        histogram = self.histogram_mass_g
-        mass_by_bin = np.stack([histogram[key] for key in GROUP_ORDER])
+        mass_by_bin = np.stack([
+            self.populations[key].histogram_mass_g for key in GROUP_ORDER
+        ])
         payload = {
             'schema_version': np.asarray(1),
             'phase_keys': np.asarray(GROUP_ORDER),

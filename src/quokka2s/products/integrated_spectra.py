@@ -94,9 +94,13 @@ def accumulate_velocity_spectra(
         for channel0 in range(0, output_shape[0], channel_chunk):
             channel1 = min(channel0 + channel_chunk, output_shape[0])
             edges = velocity_edges_kms[channel0:channel1 + 1, None]
-            erf_edges = (edges - centers) / denominator
+            # These two arrays belong only to this task. Reuse their storage
+            # while preserving the subtraction, division and multiplication order.
+            erf_edges = edges - centers
+            erf_edges /= denominator
             scipy_erf(erf_edges, out=erf_edges)
-            fractions = 0.5 * (erf_edges[1:] - erf_edges[:-1])
+            fractions = erf_edges[1:] - erf_edges[:-1]
+            fractions *= 0.5
             partial[channel0:channel1] = np.einsum(
                 "kc,cm->km", fractions, values, optimize=False,
             ) / delta_v
@@ -179,12 +183,10 @@ class IntegratedSpectra:
             self.dL_dv[:, line_indices] += profiles
             self.input_luminosity[:, line_indices] += luminosities
             self.cell_counts[line_indices] += counts
-            for dust_state in DUST_STATES:
-                for line_key in line_keys:
-                    for branch in ("cold", "hot"):
-                        previous = self.full_line_moments[dust_state][line_key][branch]
-                        increment = moments[dust_state][line_key][branch]
-                        self.full_line_moments[dust_state][line_key][branch] = previous.merged(increment)
+            self.merge_full_line_moments(
+                moments=moments,
+                line_keys=line_keys,
+            )
         return self
 
     def group_lines_by_available_cells(self, *, emission):
@@ -299,13 +301,24 @@ class IntegratedSpectra:
         self.dL_dv += other.dL_dv
         self.input_luminosity += other.input_luminosity
         self.cell_counts += other.cell_counts
+        self.merge_full_line_moments(
+            moments=other.full_line_moments,
+            line_keys=self.line_keys,
+        )
+        return self
+
+    def merge_full_line_moments(self, *, moments, line_keys):
+        """Merge complete Gaussian moments in dust, line and cold/hot order.
+
+        moments is keyed by dust state, line name and gas branch, with one
+        LineVelocityMoments value per branch. line_keys may be a batch group.
+        """
         for dust_state in DUST_STATES:
-            for line_key in self.line_keys:
+            for line_key in line_keys:
                 for branch in ("cold", "hot"):
                     previous = self.full_line_moments[dust_state][line_key][branch]
-                    increment = other.full_line_moments[dust_state][line_key][branch]
+                    increment = moments[dust_state][line_key][branch]
                     self.full_line_moments[dust_state][line_key][branch] = previous.merged(increment)
-        return self
 
     def build_output(self, projected_area_cm2):
         """Build the final NPZ fields and dust-state luminosity reports once.

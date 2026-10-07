@@ -93,6 +93,8 @@ def extinction_cross_sections(
     """
     wavelength_micron = np.asarray(wavelength_micron, dtype=float)
     sigma_cm2_H = np.asarray(sigma_cm2_H, dtype=float)
+    log_wavelength_micron = np.log(wavelength_micron)
+    log_sigma_cm2_H = np.log(sigma_cm2_H)
     result = []
     for key in line_keys:
         if key not in LINE_DEFINITIONS:
@@ -103,8 +105,12 @@ def extinction_cross_sections(
         wavelength = LINE_DEFINITIONS[key].rest_wavelength_micron
         if not wavelength_micron[0] <= wavelength <= wavelength_micron[-1]:
             raise ValueError(f"Line {key} lies outside the Draine opacity grid")
-        value = np.exp(np.interp(np.log(wavelength), np.log(wavelength_micron),
-                                 np.log(sigma_cm2_H)))
+        log_extinction = np.interp(
+            x=np.log(wavelength),
+            xp=log_wavelength_micron,
+            fp=log_sigma_cm2_H,
+        )
+        value = np.exp(log_extinction)
         result.append(float(value))
     return np.asarray(result)
 

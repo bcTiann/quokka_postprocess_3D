@@ -15,7 +15,7 @@ import numpy as np
 
 
 # Each entry is (array key, colorbar label, colormap, log minimum, log maximum,
-# shared colorbar group). Arrays are in CGS before the logarithm is taken.
+# temperature tick group). Arrays are in CGS before the logarithm is taken.
 TABLE_INPUT_PANELS = (
     (
         'nH_slice',
@@ -75,35 +75,16 @@ def prepare_slice_panels(slices):
     return panel_state
 
 
-def shared_panel_ranges(panel_state):
-    """Pool data ranges for panels assigned to the same colorbar group."""
-    group_ranges = {}
-    for key, label, cmap, log_minimum, log_maximum, group in TABLE_INPUT_PANELS:
-        state = panel_state[key]
-        if state is None or group is None:
-            continue
-        limits = group_ranges.setdefault(group, {'lo': np.inf, 'hi': -np.inf})
-        limits['lo'] = min(limits['lo'], state['p_lo'])
-        limits['hi'] = max(limits['hi'], state['p_hi'])
-    return group_ranges
-
-
-def draw_slice_panel(figure, axis, panel, state, group_ranges, extent_kpc):
+def draw_slice_panel(figure, axis, panel, state, extent_kpc):
     """Draw one log-valued slice and its colorbar above the image."""
     key, label, cmap, log_minimum, log_maximum, group = panel
     if state is None:
         axis.set_title(f'{label}\n(empty)', fontsize=9)
         return
     if log_minimum is None:
-        if group in group_ranges:
-            log_minimum = group_ranges[group]['lo']
-        else:
-            log_minimum = state['p_lo']
+        log_minimum = state['p_lo']
     if log_maximum is None:
-        if group in group_ranges:
-            log_maximum = group_ranges[group]['hi']
-        else:
-            log_maximum = state['p_hi']
+        log_maximum = state['p_hi']
 
     image = axis.imshow(
         state['log_data'],
@@ -163,7 +144,6 @@ def plot_table_input_slice(
     Returns None. The plot retains the original five-panel layout and scales.
     """
     panel_state = prepare_slice_panels(slices)
-    group_ranges = shared_panel_ranges(panel_state)
     figure, axes = plt.subplots(
         1,
         len(TABLE_INPUT_PANELS),
@@ -177,7 +157,6 @@ def plot_table_input_slice(
             axis=axis,
             panel=panel,
             state=panel_state[panel[0]],
-            group_ranges=group_ranges,
             extent_kpc=extent_kpc,
         )
     axes[0].set_ylabel('z [kpc]', fontsize=10)

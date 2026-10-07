@@ -72,9 +72,10 @@ The objects group related variables; they are not extra copies of the snapshot:
   needs no arguments and products retain no dataset/table references.
 
 Slab reads, table queries, and spectrum accumulation remain explicit actions.
-Hydrogen density is cached on the current batch. A line's
-`emissivity_is_missing` property is derived from its emissivity array, so there
-is no second stored mask that can disagree with the values.
+Hydrogen density is cached on the current batch. Constructing `LineEmission`
+finishes its writable calculation: its three result arrays become read-only,
+and `emissivity_is_missing` is calculated once. Images, spectra and accounting
+reuse that line's mask; a physical zero remains available.
 
 Inside `load_processing_inputs(config)`, follow three named steps:
 
@@ -332,7 +333,7 @@ Important fields in the returned `BatchEmission`:
 `cold_cells` records only `T_QUOKKA < 3000 K`; table availability does not
 change it. There is no global line-validity mask. For example, a hot cell
 with missing DESPOTIC results can have available Halpha and missing CO.
-`emissivity_is_missing` is calculated from each line's intrinsic array;
+`emissivity_is_missing` is calculated once from each line's intrinsic array;
 images and spectra select that same line's available entries. Unexpected
 invalid required fields with usable temperature still raise errors.
 Low-level Cloudy `failed_queries` describes the Q selected queries, before
@@ -390,6 +391,9 @@ Image accumulation uses the native 256 × 256 sightlines. Spectrum accumulation
 uses each line's available cells directly; it does not go through a rebinned image.
 Intrinsic and attenuated spectra share the same thermal integration for a
 cell. They differ only in the luminosity being distributed over channels.
+Each integration thread owns its temporary channel-by-cell arrays. It reuses
+their storage for division and half scaling; the Gaussian arithmetic and
+input-order summation remain unchanged. These arrays are released after the task.
 The same luminosities, velocities and thermal widths also enter
 [products/line_velocity_moments.py](../src/quokka2s/products/line_velocity_moments.py).
 `LineVelocityMoments.from_cells()` calculates the batch's total light, mean
@@ -531,7 +535,6 @@ including the failed stage; it is not a resume checkpoint.
 ## 6. Follow `plot`
 
 Open [plot_emission_results.py](../src/quokka2s/plot_emission_results.py) and start at `main()`.
-The rendering functions are in [figures/emission_results.py](../src/quokka2s/figures/emission_results.py):
 
 1. `load_plot_config()` returns `PlotSettings` with product and figure directories.
 2. `read_emission_results()` in the root
@@ -539,21 +542,27 @@ The rendering functions are in [figures/emission_results.py](../src/quokka2s/fig
    saved NPZ files once into `EmissionResults(images, spectra, gas_phases, ...)`.
    It loads the fields
    needed for drawing; process has already checked the scientific products.
-3. `draw_emission_products()` calls `plot_line_images()`,
-   `plot_line_spectra()`, and `plot_gas_phase_comparisons()` in that order.
-   Inside image plotting, `combine_image_pixels_for_display()` optionally sums neighbouring
-   pixels for display. Gas-phase comparisons use
+3. `draw_emission_products()` prepares display images, normalized gas curves,
+   and each line's attenuated total spectrum once. Optional image binning adds
+   neighbouring pixel luminosities; gas normalization uses each curve's peak
+   across its saved channels.
+4. It draws images with
+   [figures/line_luminosity_images.py](../src/quokka2s/figures/line_luminosity_images.py),
+   spectra with [figures/line_spectra.py](../src/quokka2s/figures/line_spectra.py),
+   and phase comparisons with
    [figures/gas_phase_spectra.py](../src/quokka2s/figures/gas_phase_spectra.py).
-4. Each plotting step saves PNG/PDF in the figure directory's `png/` and `pdf/`
+5. Each plotting step saves PNG/PDF in the figure directory's `png/` and `pdf/`
    subdirectories. If `titled_output_dir` is set, the same loaded numerical
-   products also produce copies with titles under its own `png/` and `pdf/`.
+   products and prepared display data also produce copies with titles under
+   its own `png/` and `pdf/`.
 
 No step reopens yt, the snapshot, DESPOTIC, or Cloudy tables. Plotting changes
 colour limits, labels, displayed velocity range, peak normalization for the
 phase comparison, and optional image binning. It does not recalculate cell
 emissivities. The normal spectrum plots use cold+hot totals. Phase-comparison
-plots use total Halpha/HI/CII/CO and hot CIII/CIV; the saved spectra retain both
-regimes. Curves use the saved velocity axis. Sigma labels use the full-profile
+plots use total spectra for every line; CIII/CIV have zero cold emission, so
+their totals equal their hot profiles. The saved spectra retain both regimes.
+Curves use the saved velocity axis. Sigma labels use the full-profile
 moments, including emission outside the saved channel window. Both full and
 window moments remain available in the saved numerical products.
 
@@ -584,7 +593,9 @@ QUOKKA temperature branch boundary, the measured velocity-gradient floor, and
 the shielding-column choice. Snapshot processing and table-domain checks use
 these same settings. Paths and worker counts belong to the YAML configuration.
 [physics/gas_fields.py](../src/quokka2s/physics/gas_fields.py) calculates nH, NH,
-and dV/dr from unit-aware snapshot fields. Its `mixed_gas_temperature_K()`
+and dV/dr from unit-aware snapshot fields. `hydrogen_number_density_cm3()` is
+the shared density conversion for cell batches, dust columns and the unit-aware
+shielding calculation. Its `mixed_gas_temperature_K()`
 selects DESPOTIC temperature for cold cells and QUOKKA temperature for hot cells,
 preserving missing cold temperatures. Gas-phase statistics, projection maps,
 and phase histograms share this rule. Each line's thermal broadening still uses

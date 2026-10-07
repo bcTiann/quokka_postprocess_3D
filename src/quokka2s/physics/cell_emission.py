@@ -1,7 +1,7 @@
 """Calculate each line's emissivity and gas temperature together, then apply dust."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 
@@ -47,7 +47,7 @@ class IntrinsicLineEmission:
 
 @dataclass(frozen=True)
 class LineEmission:
-    """One line's results for the original B-cell batch.
+    """Completed, read-only results for one line in the original B-cell batch.
 
     Attributes
     ----------
@@ -57,9 +57,12 @@ class LineEmission:
     temperature_K : ndarray (B,)
         Temperature of the gas state used for this line [K]. Reused for
         thermal broadening and the emission-weighted phase plot.
-    emissivity_is_missing : ndarray of bool (B,), computed property
-        True where this line's intrinsic emissivity is nonfinite. No additional mask
-        is stored; a physical zero is not missing.
+    emissivity_is_missing : ndarray of bool (B,)
+        Calculated once from the intrinsic emissivity. True means nonfinite;
+        a physical zero is not missing. Images, spectra and accounting reuse it.
+
+    Construction ends the writable physics stage. The supplied arrays are
+    retained without copying and made read-only; callers must not edit aliases.
 
     Example: emission.lines['halpha'].intrinsic_emissivity_erg_s_cm3[7]
     is cell 7's intrinsic Halpha. These are arrays, not one object per cell.
@@ -68,11 +71,20 @@ class LineEmission:
     intrinsic_emissivity_erg_s_cm3: np.ndarray
     attenuated_emissivity_erg_s_cm3: np.ndarray
     temperature_K: np.ndarray
+    emissivity_is_missing: np.ndarray = field(init=False, repr=False)
 
-    @property
-    def emissivity_is_missing(self) -> np.ndarray:
-        """Return this line's missing-result flags in original cell order."""
-        return ~np.isfinite(self.intrinsic_emissivity_erg_s_cm3)
+    def __post_init__(self) -> None:
+        """Finish this line's arrays and keep one matching missing-result mask."""
+        missing_emissivity = ~np.isfinite(self.intrinsic_emissivity_erg_s_cm3)
+        for values in (
+            self.intrinsic_emissivity_erg_s_cm3,
+            self.attenuated_emissivity_erg_s_cm3,
+            self.temperature_K,
+            missing_emissivity,
+        ):
+            values.flags.writeable = False
+        # frozen=True prevents later attribute replacement, including this mask.
+        object.__setattr__(self, "emissivity_is_missing", missing_emissivity)
 
 
 @dataclass(frozen=True)
