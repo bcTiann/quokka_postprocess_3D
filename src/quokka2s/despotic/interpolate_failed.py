@@ -16,6 +16,7 @@ from scipy.interpolate import griddata
 
 from quokka2s.despotic.table_data import LINE_RESULT_FIELDS
 from quokka2s.file_provenance import file_sha256
+from quokka2s.paths import resolve_path
 
 ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_SOURCE = ROOT / "inputs" / "tables" / "despotic" / "raw.npz"
@@ -85,7 +86,8 @@ def _table_fields(
 
 def interpolate_table(source: Path, output: Path, *, force: bool = False) -> dict[str, int]:
     """Write a numerical derivative of a raw table, keeping solved nodes exact."""
-    source, output = Path(source).expanduser().resolve(), Path(output).expanduser().resolve()
+    source = resolve_path(source)
+    output = resolve_path(output)
     if source == output:
         raise ValueError("Source and output must be different files")
     if output.exists() and not force:

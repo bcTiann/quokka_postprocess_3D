@@ -24,6 +24,7 @@ if __package__ in (None, ''):
     sys.path.insert(0, str(ROOT / 'src'))
 
 from quokka2s.figures.table_input_slices import plot_table_input_slice
+from quokka2s.paths import resolve_path
 from quokka2s.products.table_input_slices import prepare_slice_plot_data
 from quokka2s.run_settings import DEFAULT_PROCESS_CONFIG, load_process_config
 
@@ -142,7 +143,7 @@ def main():
     args = parser.parse_args()
     if args.plot_only and args.no_plot:
         parser.error('--plot-only and --no-plot cannot be used together')
-    output_dir = args.output_dir.resolve()
+    output_dir = resolve_path(args.output_dir)
     if args.plot_only:
         report = json.loads((output_dir / 'slice_report.json').read_text())
         with np.load(output_dir / 'slice_data.npz', allow_pickle=False) as data:

@@ -16,6 +16,7 @@ import numpy as np
 from quokka2s.despotic.table_builder import GOW_LVG_SPECIES, build_gow_lvg_table
 from quokka2s.despotic.table_files import save_table
 from quokka2s.despotic.table_data import ExplicitGrid
+from quokka2s.paths import resolve_path
 
 
 DEFAULT_OUTPUT = (
@@ -104,11 +105,12 @@ def _write_readme(path: Path, elapsed: float, table) -> Path:
 
 def main(argv: list[str] | None = None) -> None:
     args = _parse_args(argv)
-    output = args.output.expanduser().resolve()
+    output = resolve_path(args.output)
+    snapshot_domain = resolve_path(args.snapshot_domain)
     if output.exists() and not args.force:
         raise SystemExit(f"Refusing to overwrite existing table: {output}\nPass --force to replace it.")
 
-    nH_grid, col_grid, dVdr_grid, domain = _snapshot_grids(args.snapshot_domain)
+    nH_grid, col_grid, dVdr_grid, domain = _snapshot_grids(snapshot_domain)
     dVdr_values = dVdr_grid.sample()
     species = ", ".join(s.name + ("(em)" if s.is_emitter else "") for s in GOW_LVG_SPECIES)
 
@@ -125,7 +127,7 @@ def main(argv: list[str] | None = None) -> None:
     checkpoint_options = {}
     if args.checkpoint_dir is not None:
         checkpoint_options = {
-            "checkpoint_dir": args.checkpoint_dir.expanduser().resolve(),
+            "checkpoint_dir": resolve_path(args.checkpoint_dir),
             "checkpoint_context": {"snapshot_domain": domain},
         }
     table = build_gow_lvg_table(

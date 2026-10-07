@@ -11,6 +11,7 @@ from unyt import unyt_array
 from quokka2s.physics import gas_fields, settings
 from quokka2s.despotic.snapshot_domain import AXIS_NAMES
 from quokka2s.file_provenance import file_sha256
+from quokka2s.paths import resolve_path
 from quokka2s.snapshot_reader import Snapshot, slab_windows
 
 
@@ -34,6 +35,8 @@ def parse_arguments(argv=None):
     args = parser.parse_args(argv)
     if args.output is None:
         args.output = ROOT / 'output' / args.dataset.name / 'table_build/snapshot_domain.json'
+    args.dataset = resolve_path(args.dataset)
+    args.output = resolve_path(args.output)
     if args.output.exists() or args.slab_nx < 1:
         raise ValueError('Output must be new and slab size positive')
     return args
@@ -87,14 +90,14 @@ def main(argv=None):
 
     import yt
 
-    dataset = yt.load(str(args.dataset.resolve()))
+    dataset = yt.load(str(args.dataset))
     if dataset.max_level != 0 or settings.COLUMN_DENSITY_DIRECTIONS != 'z':
         raise ValueError('Scanner requires a full-resolution uniform snapshot and z columns')
     snapshot = Snapshot(dataset=dataset)
     stats = measure_snapshot_axes(snapshot=snapshot, slab_nx=args.slab_nx)
 
     result = {
-        'dataset': str(args.dataset.resolve()),
+        'dataset': str(args.dataset),
         'shape': list(snapshot.shape),
         'total_cells': snapshot.cell_count,
         'selection': 'all simulation cells',

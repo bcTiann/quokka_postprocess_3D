@@ -1,8 +1,12 @@
-# Plot saved numerical products. Paths are relative to this file.
-# For results copied from another machine, edit products to that directory.
+# Paths are relative to this YAML file; ../ refers to this clone's root.
+
+# Saved numerical input: copy processed results here when using another machine.
 products: ../output/plt0655228/processed
+
+# Figure outputs: manuscript versions and standalone titled versions.
 output_dir: ../output/plt0655228/figures
 titled_output_dir: ../output/plt0655228/figures_titled
+
 # Optional: image_downsample_factor: 2 selects images_factor_2.npz.
 # Prepare it once with: python -m quokka2s.prepare_emission_results --image-downsample-factor 2
 # If omitted, plots retain the saved image's native pixel resolution.

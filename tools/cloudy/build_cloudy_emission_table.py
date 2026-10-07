@@ -32,6 +32,7 @@ from quokka2s.cloudy.table_definition import (
     T_MAX_CLOUDY,
     T_MIN_CLOUDY,
 )
+from quokka2s.paths import resolve_path
 from quokka2s.physics.composition import QUOKKA_MASS_FRACTIONS
 
 
@@ -41,7 +42,7 @@ CLOUDY_LINE_LABELS = tuple(line[1] for line in LINE_SPEC)
 
 
 def _require_file(path: Path, description: str) -> Path:
-    resolved = path.expanduser().resolve()
+    resolved = resolve_path(path)
     if not resolved.is_file():
         raise FileNotFoundError(f"{description} not found: {resolved}")
     return resolved
@@ -214,10 +215,10 @@ def main() -> None:
     cialoop = _require_file(
         root / "vendor/cloudy_cooling_tools/CIAOLoop_lines", "CIAOLoop_lines"
     )
-    runtime_dir = args.runtime_dir.expanduser().resolve()
+    runtime_dir = resolve_path(args.runtime_dir)
     runtime_grackle = runtime_dir / "examples/grackle"
     logs = runtime_dir / "logs"
-    output_dir = args.output_dir.expanduser().resolve()
+    output_dir = resolve_path(args.output_dir)
     _ensure_no_whitespace(cloudy_exe, "Cloudy executable path")
     _ensure_no_whitespace(runtime_dir, "runtime directory")
     runtime_grackle.mkdir(parents=True, exist_ok=True)

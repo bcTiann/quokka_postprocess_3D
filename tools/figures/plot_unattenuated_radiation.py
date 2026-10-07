@@ -17,6 +17,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from quokka2s.figures.radiation_fields import add_eight_ev_marker
+from quokka2s.paths import resolve_path
 from quokka2s.products.radiation_fields import (
     UNATTENUATED_CMB_RADIATION_STEM,
     UNATTENUATED_RADIATION_STEM,
@@ -43,10 +44,10 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    output_dir = args.output_dir.resolve()
+    output_dir = resolve_path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     default_stem = UNATTENUATED_CMB_RADIATION_STEM if args.include_cmb else UNATTENUATED_RADIATION_STEM
-    data_path = args.data or output_dir / (default_stem + ".npz")
+    data_path = resolve_path(args.data or output_dir / (default_stem + ".npz"))
     with np.load(data_path, allow_pickle=False) as data:
         payload = {key: data[key] for key in data.files}
     energy = payload["energy_Ryd"]

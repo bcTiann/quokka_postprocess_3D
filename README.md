@@ -28,18 +28,15 @@ Default input locations, relative to the repository root:
 | DESPOTIC table | `inputs/tables/despotic/interpolated.npz` | Included in Git |
 | Cloudy table | `inputs/tables/cloudy/emission.npz` | Included in Git |
 
-Place the complete snapshot directory at the default path, or point `dataset`
-in [configs/emission_process.yaml](configs/emission_process.yaml) to its existing
-location:
+Place the complete snapshot directory at `inputs/snapshots/plt0655228/`,
+including `Header`, `metadata.yaml`, and its data subdirectories.
+For another snapshot name, update `dataset` in
+[configs/emission_process.yaml](configs/emission_process.yaml).
 
-```yaml
-dataset: /absolute/path/to/plt0655228
-```
-
-In YAML, relative paths are resolved from the configuration file's directory.
-Absolute paths and `~/...` paths are also supported. Point `dataset` to the
-individual snapshot containing `Header`, `metadata.yaml`, and its data
-subdirectories, not the parent `inputs/snapshots/` directory.
+Default inputs and outputs stay inside this clone. YAML paths are relative
+to the configuration file: `../inputs/` refers to this repository's `inputs/`.
+The program reads the specified files; it does not search outside the repository
+for replacement inputs.
 The bundled tables are for the `plt0655228` reference snapshot.
 
 ## 4. Process

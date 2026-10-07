@@ -9,6 +9,7 @@ from pathlib import Path
 import numpy as np
 
 from quokka2s.despotic.table_files import load_table
+from quokka2s.paths import resolve_path
 
 
 def collect_failures(table):
@@ -55,6 +56,9 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("table", type=Path)
     parser.add_argument("--csv", type=Path, default=None)
     args = parser.parse_args(argv)
+    args.table = resolve_path(args.table)
+    if args.csv is not None:
+        args.csv = resolve_path(args.csv)
 
     table = load_table(args.table)
     failures = collect_failures(table)

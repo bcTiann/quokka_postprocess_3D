@@ -29,6 +29,7 @@ from quokka2s.cloudy.table_definition import (
     ISM_ATTENUATION_LOG_NH,
     SED_DIRECTORY_NAME,
 )
+from quokka2s.paths import resolve_path
 
 
 RYDBERG_HZ = 3.2898419602508e15
@@ -190,8 +191,8 @@ def main() -> None:
     ):
         parser.error("--hm12-log-nh must contain at least two increasing values")
 
-    cloudy_exe = args.cloudy_exe.expanduser().resolve()
-    output_dir = args.output_dir.expanduser().resolve()
+    cloudy_exe = resolve_path(args.cloudy_exe)
+    output_dir = resolve_path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     if not cloudy_exe.is_file():
         raise FileNotFoundError(cloudy_exe)

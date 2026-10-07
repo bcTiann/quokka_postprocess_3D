@@ -25,6 +25,7 @@ if __package__ in (None, ''):
     sys.path.insert(0, str(ROOT / 'src'))
 
 from quokka2s.figures.emission_phase_histograms import plot_panels
+from quokka2s.paths import resolve_path
 from quokka2s.run_settings import DEFAULT_PROCESS_CONFIG, load_process_config
 
 
@@ -189,7 +190,7 @@ def main():
         parser.error('--plot-only and --no-plot cannot be used together')
     if args.max_slabs is not None and args.max_slabs <= 0:
         parser.error('--max-slabs must be positive')
-    output_dir = args.output_dir.resolve()
+    output_dir = resolve_path(args.output_dir)
     if args.plot_only:
         panels, display_panel_keys = load_saved_phase_histograms(output_dir)
     else:

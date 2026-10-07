@@ -13,6 +13,7 @@ from pathlib import Path
 import yaml
 
 from quokka2s.input_paths import DEFAULT_DRAINE_TABLE
+from quokka2s.paths import resolve_path
 
 
 # Relative names only: the entry points use the working directory; standalone
@@ -26,6 +27,7 @@ class ProcessSettings:
     """Resolved inputs and execution settings for one snapshot process.
 
     Paths are absolute. Slab/query sizes count cells; workers count threads.
+    Omitted execution settings use the same defaults as the shipped YAML.
     Each concurrent batch can use spectral_workers integration threads:
     chunk_workers=2 and spectral_workers=3 allow at most six spectral tasks.
     Index ranges are [start, stop), or None for the full native axis.
@@ -37,9 +39,9 @@ class ProcessSettings:
     output_dir: Path
     dust_opacity_table: Path = DEFAULT_DRAINE_TABLE
     slab_nx: int = 8
-    query_chunk: int = 100000
-    chunk_workers: int = 1
-    spectral_workers: int = 6
+    query_chunk: int = 1_000_000
+    chunk_workers: int = 2
+    spectral_workers: int = 3
     max_slabs: int | None = None
     x_index_range: tuple[int, int] | None = None
     y_index_range: tuple[int, int] | None = None
@@ -87,7 +89,7 @@ def _read_mapping(path: str | Path, required: set[str], allowed: set[str]) -> tu
     """Read a YAML mapping and reject missing or unknown setting names.
 
     Return its absolute path and values; the path anchors relative input paths."""
-    config_path = Path(path).expanduser().resolve()
+    config_path = resolve_path(path)
     try:
         with config_path.open(encoding="utf-8") as source:
             values = yaml.safe_load(source)
@@ -116,10 +118,10 @@ def _path_value(name: str, value: object, directory: Path, *, nullable: bool = F
         return None
     if type(value) is not str or not value.strip():
         raise ValueError(f"{name} must be a nonempty path string")
-    path = Path(value).expanduser()
-    if not path.is_absolute():
-        path = directory / path
-    return path.resolve()
+    return resolve_path(
+        path=value,
+        base_directory=directory,
+    )
 
 
 def _positive_int(name: str, value: object, *, nullable: bool = False) -> int | None:

@@ -11,6 +11,7 @@ from pathlib import Path
 
 import numpy as np
 
+from quokka2s.paths import resolve_path
 from quokka2s.products.dust_extinction import DUST_EXTINCTION_STEM
 
 
@@ -30,7 +31,8 @@ def main():
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--data", type=Path, help="Prepared extinction NPZ; defaults to the output directory")
     args = parser.parse_args()
-    data_path = args.data or args.output_dir / (DUST_EXTINCTION_STEM + ".npz")
+    output_dir = resolve_path(args.output_dir)
+    data_path = resolve_path(args.data or output_dir / (DUST_EXTINCTION_STEM + ".npz"))
     with np.load(data_path, allow_pickle=False) as data:
         wavelength = data["wavelength_micron"]
         sigma = data["sigma_ext_cm2_H"]
@@ -117,8 +119,8 @@ def main():
     zoom.tick_params(labelsize=8, length=3)
     zoom.grid(alpha=.16, lw=.5)
 
-    args.output_dir.mkdir(parents=True, exist_ok=True)
-    stem = args.output_dir / DUST_EXTINCTION_STEM
+    output_dir.mkdir(parents=True, exist_ok=True)
+    stem = output_dir / DUST_EXTINCTION_STEM
     for suffix in ("pdf", "png"):
         fig.savefig(stem.with_suffix("." + suffix), dpi=300,
                     bbox_inches="tight", metadata={"Title": "Draine MW R_V=3.1 extinction range and adopted emission lines"})

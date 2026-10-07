@@ -14,19 +14,40 @@ The [process YAML](../configs/emission_process.yaml) specifies these input and o
 | `cloudy_table` | Eight-line Cloudy table |
 | `output_dir` | New directory for the numerical products |
 
-Relative paths are resolved from the YAML file's directory. Absolute paths
-keep their location; `~/...` starts from the user's home directory.
+Default input and output paths stay inside the cloned repository. Relative
+paths are resolved from the YAML file's directory, so `../inputs/` in
+`configs/emission_process.yaml` refers to this clone's `inputs/` directory.
 `dataset` must point to the individual snapshot containing `Header`, rather
 than its parent `inputs/snapshots/` directory. Processing refuses to overwrite
 an existing output directory; choose a new name for each run.
 An interrupted emission run starts again from the beginning in a new directory.
 Table-building checkpoints are a separate mechanism.
 
-Optional execution settings control memory and concurrency, not the physics:
+### Path rules
 
-| Setting | Meaning | Supplied YAML |
+| Where a path is supplied | Base for a relative path |
+|---|---|
+| Inside a YAML configuration | Directory containing that YAML file |
+| Command-line options, including `--config` | Current terminal working directory |
+| Bundled reference data | Repository containing the installed editable package |
+
+Paths are resolved to absolute `Path` objects at the entry point; calculations
+receive those resolved paths. The YAML file retains its relative paths, so
+moving or cloning the repository does not require changing the defaults.
+The program does not search for replacement inputs when a file is missing.
+Resolution does not create files or require output files to exist; input checks
+and output-overwrite rules remain in force.
+
+Explicit absolute paths and `~/...` are supported for custom configurations;
+they are not needed by the default workflow. YAML does not expand `$VARIABLE`
+expressions.
+
+Optional execution settings control memory and concurrency, not the physics.
+Omitted settings use the same defaults shown in the process YAML:
+
+| Setting | Meaning | Default |
 |---|---|---|
-| `slab_nx` | Number of x cells read per slab, retaining full y and z | 8, by default |
+| `slab_nx` | Number of x cells read per slab, retaining full y and z | 8 |
 | `query_chunk` | Maximum cells in one table-query batch | 1,000,000 |
 | `chunk_workers` | Concurrent query batches within the loaded slab | 2 |
 | `spectral_workers` | Spectral-integration threads per query batch | 3 |

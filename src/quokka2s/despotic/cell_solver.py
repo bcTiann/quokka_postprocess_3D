@@ -17,6 +17,7 @@ from typing import Mapping, Sequence
 import numpy as np
 
 from quokka2s.file_provenance import file_sha256
+from quokka2s.paths import resolve_path
 from quokka2s.physics.composition import GOW_ELEMENTAL_ABUNDANCES, abundance_metadata
 from quokka2s.despotic.table_data import (
     AttemptRecord,
@@ -127,9 +128,11 @@ def validated_solver_metadata() -> dict[str, object]:
 def _configure_despotic_home() -> None:
     """Point DESPOTIC at a directory containing the required LAMDA files."""
     if "DESPOTIC_HOME" in os.environ:
-        home = Path(os.environ["DESPOTIC_HOME"]).expanduser()
+        home = resolve_path(os.environ["DESPOTIC_HOME"])
         if not (home / "LAMDA").is_dir():
             raise RuntimeError(f"DESPOTIC_HOME does not contain LAMDA/: {home}")
+        # DESPOTIC and checkpoint code read this same environment value later.
+        os.environ["DESPOTIC_HOME"] = str(home)
         return
 
     repo_root = Path(__file__).resolve().parents[3]

@@ -12,6 +12,7 @@ from quokka2s.despotic.table_figure_data import (
     DEFAULT_FIGURE_DATA_PATH,
     prepare_table_figure_data,
 )
+from quokka2s.paths import resolve_path
 
 
 def select_dvdr_indices(
@@ -73,6 +74,13 @@ def main(argv=None) -> None:
         help=f"Prepared numerical NPZ (default: {DEFAULT_FIGURE_DATA_PATH})",
     )
     args = parser.parse_args(argv)
+    # Keep the supplied table parent for the established default figure directory.
+    source_table_path = str(args.table.expanduser())
+    source_samples_path = "" if args.samples is None else str(args.samples.expanduser())
+    args.table = resolve_path(args.table)
+    args.output = resolve_path(args.output)
+    if args.samples is not None:
+        args.samples = resolve_path(args.samples)
     table = load_table(args.table)
     samples = None
     if args.samples is not None:
@@ -89,9 +97,8 @@ def main(argv=None) -> None:
         dvdr_indices=indices,
         samples=samples,
     )
-    payload["source_table_path"] = np.asarray(str(args.table))
-    samples_path = "" if args.samples is None else str(args.samples)
-    payload["source_samples_path"] = np.asarray(samples_path)
+    payload["source_table_path"] = np.asarray(source_table_path)
+    payload["source_samples_path"] = np.asarray(source_samples_path)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(args.output, **payload)
     print(f"Prepared {len(args.fields)} fields × {len(indices)} dVdr slices: {args.output}")

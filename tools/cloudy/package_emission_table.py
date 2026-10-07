@@ -30,6 +30,7 @@ from quokka2s.cloudy.table_definition import (
     T_MIN_K,
 )
 from quokka2s.file_provenance import file_sha256
+from quokka2s.paths import resolve_path
 
 ZERO_LIMIT = -90.0
 T_TOLERANCE_DEX = 5.1e-4
@@ -226,9 +227,9 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    examples = args.runtime_grackle_dir.expanduser().resolve()
-    output_dir = args.output_dir.expanduser().resolve()
-    parameter_file = args.parameter_file.expanduser().resolve()
+    examples = resolve_path(args.runtime_grackle_dir)
+    output_dir = resolve_path(args.output_dir)
+    parameter_file = resolve_path(args.parameter_file)
     if not parameter_file.is_file():
         raise FileNotFoundError(parameter_file)
     jeans_mass_fraction_metadata = _jeans_mass_fraction_metadata(parameter_file)

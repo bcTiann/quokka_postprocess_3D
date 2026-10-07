@@ -13,6 +13,7 @@ import tempfile
 
 import numpy as np
 
+from quokka2s.paths import resolve_path
 from quokka2s.products.line_luminosity_images import (
     add_image_display_fields,
     prepare_coarser_image,
@@ -80,11 +81,12 @@ def main(argv=None) -> None:
     parser.add_argument("--products", type=Path)
     parser.add_argument("--image-downsample-factor", type=int, default=1)
     args = parser.parse_args(argv)
-    directory = args.products
-    if directory is None:
+    if args.products is None:
         directory = load_plot_config(args.config).products
+    else:
+        directory = resolve_path(args.products)
     prepare_saved_emission_results(
-        directory=directory.resolve(),
+        directory=directory,
         image_downsample_factor=args.image_downsample_factor,
     )
     print(f"Prepared saved figure data in {directory}")

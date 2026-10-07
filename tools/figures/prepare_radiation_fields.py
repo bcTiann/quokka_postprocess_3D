@@ -14,6 +14,7 @@ from pathlib import Path
 
 import numpy as np
 
+from quokka2s.paths import resolve_path
 from quokka2s.products.radiation_fields import (
     COMBINED_RADIATION_STEM,
     COMPONENT_RADIATION_STEM,
@@ -58,23 +59,25 @@ def main():
     parser.add_argument("--components-only", action="store_true")
     parser.add_argument("--include-cmb", action="store_true")
     args = parser.parse_args()
+    data_dir = resolve_path(args.data_dir)
+    output_dir = resolve_path(args.output_dir)
     if args.recipe == "components":
         if args.include_cmb:
             parser.error("--include-cmb belongs to the unattenuated recipe")
-        payload, report = calculate_component_radiation_data(data_dir=args.data_dir.resolve())
+        payload, report = calculate_component_radiation_data(data_dir=data_dir)
         stem_name = COMPONENT_RADIATION_STEM if args.components_only else COMBINED_RADIATION_STEM
     else:
         if args.components_only:
             parser.error("--components-only belongs to the components recipe")
         payload, report = calculate_unattenuated_radiation_data(
-            data_dir=args.data_dir.resolve(),
+            data_dir=data_dir,
             include_cmb=args.include_cmb,
         )
         stem_name = UNATTENUATED_CMB_RADIATION_STEM if args.include_cmb else UNATTENUATED_RADIATION_STEM
     save_radiation_data(
         payload=payload,
         report=report,
-        output_dir=args.output_dir.resolve(),
+        output_dir=output_dir,
         stem_name=stem_name,
         recipe=args.recipe,
     )

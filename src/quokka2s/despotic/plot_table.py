@@ -9,6 +9,7 @@ from quokka2s.despotic.table_figure_data import (
     read_table_figure_data,
 )
 from quokka2s.despotic.table_plots import plot_table_overview
+from quokka2s.paths import resolve_path
 
 
 def default_output_directory(source_table: str) -> Path:
@@ -36,12 +37,14 @@ def main(argv=None) -> None:
         help="Output directory; default retains the source table's TablePlots_<parent> name",
     )
     args = parser.parse_args(argv)
+    args.data = resolve_path(args.data)
     figure_data = read_table_figure_data(path=args.data)
     output_root = args.out_root
     if output_root is None:
         output_root = default_output_directory(
             source_table=str(figure_data["source_table_path"]),
         )
+    output_root = resolve_path(output_root)
     tokens = tuple(str(token) for token in figure_data["field_tokens"])
     indices = figure_data["dvdr_indices"]
     axis_size = int(figure_data["dvdr_axis_size"])

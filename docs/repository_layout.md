@@ -74,6 +74,8 @@ The root modules also separate the final processing steps:
 already-built arrays and the report. `run_settings.py` returns `ProcessSettings`
 or `PlotSettings` from YAML, without changing the command-line defaults.
 `input_paths.py` stores bundled input locations without importing calculations.
+`paths.py` resolves user paths once at configuration and command-line entry
+points, expanding `~` and using the appropriate relative-path base.
 `prepare_emission_results.py` prepares figure arrays from existing numerical
 products, including optional coarse images. Normal snapshot processing saves
 native figure arrays directly. `figures/display_settings.py` shares the

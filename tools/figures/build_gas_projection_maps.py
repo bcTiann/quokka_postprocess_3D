@@ -25,6 +25,7 @@ if __package__ in (None, ''):
     sys.path.insert(0, str(ROOT / 'src'))
 
 from quokka2s.figures.gas_projections import plot_gas_projection_maps
+from quokka2s.paths import resolve_path
 from quokka2s.products.gas_projections import (
     MultiviewAccumulator,
     prepare_projection_map_data,
@@ -236,8 +237,8 @@ def main():
     args = parser.parse_args()
     if args.plot_only and args.no_plot:
         parser.error('--plot-only and --no-plot cannot be used together')
-    output_dir = args.output_dir.resolve()
-    figure_stem = args.figure_stem or output_dir / 'multiview_figure_particles'
+    output_dir = resolve_path(args.output_dir)
+    figure_stem = resolve_path(args.figure_stem or output_dir / 'multiview_figure_particles')
     if args.plot_only:
         with np.load(output_dir / 'multiview_maps.npz', allow_pickle=False) as data:
             payload = {key: np.array(data[key]) for key in data.files}

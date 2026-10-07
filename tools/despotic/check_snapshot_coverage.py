@@ -19,6 +19,7 @@ from quokka2s.despotic.table_files import load_table
 from quokka2s.despotic.lookup import DespoticLookup
 from quokka2s.despotic.snapshot_domain import AXIS_NAMES, validate_snapshot_domain
 from quokka2s.file_provenance import file_sha256
+from quokka2s.paths import resolve_path
 from quokka2s.physics import gas_fields, settings
 from quokka2s.snapshot_reader import Snapshot, slab_windows
 
@@ -234,6 +235,9 @@ def main(argv=None):
     parser.add_argument("--query-chunk", type=int, default=500_000)
     parser.add_argument("--expected-cells", type=int, default=134_217_728)
     args = parser.parse_args(argv)
+    args.table = resolve_path(args.table)
+    args.dataset = resolve_path(args.dataset)
+    args.output = resolve_path(args.output)
     if not args.table.is_file():
         raise FileNotFoundError(f"Candidate table is not complete or is missing: {args.table}")
     if args.output.exists():
@@ -255,7 +259,7 @@ def main(argv=None):
             np.isfinite(table.tg_final) | np.isfinite(table.mu_values))):
         raise ValueError("Failed nodes contain finite T or mu; supply the raw candidate table")
     dataset = args.dataset
-    ds = yt.load(str(dataset.resolve()))
+    ds = yt.load(str(dataset))
     if ds.max_level != 0 or settings.COLUMN_DENSITY_DIRECTIONS != "z":
         raise ValueError("Coverage requires a full-resolution uniform snapshot and full z columns")
     shape = tuple(int(value) for value in ds.domain_dimensions)
@@ -279,9 +283,9 @@ def main(argv=None):
         raise RuntimeError("Coverage scan did not include every simulation cell exactly once")
     result = {
         "status": "diagnostic only; adoption and failure acceptance are not decided",
-        "table": str(args.table.resolve()), "table_sha256": file_sha256(args.table),
+        "table": str(args.table), "table_sha256": file_sha256(args.table),
         "table_build_metadata": dict(table.build_metadata or {}),
-        "dataset": str(dataset.resolve()), "shape": list(shape), "total_cells": scanned,
+        "dataset": str(dataset), "shape": list(shape), "total_cells": scanned,
         "snapshot_domain": domain, "fresh_input_extrema": extrema,
         "source": "fresh snapshot fields; full z columns; periodic x/y velocity differences; no field caches",
         "temperature_source": "raw boxlib temperature, interpreted as K by Snapshot.read_slab",

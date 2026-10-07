@@ -1,14 +1,20 @@
-# Process the complete QUOKKA snapshot. Paths are relative to this file.
-# The two lookup tables are included in Git. Supply your existing snapshot
-# at the dataset path below, or replace dataset with its absolute path.
+# Paths are relative to this YAML file; ../ refers to this clone's root.
+
+# Input data: place the complete snapshot here; both tables are included in Git.
 dataset: ../inputs/snapshots/plt0655228
 despotic_table: ../inputs/tables/despotic/interpolated.npz
 cloudy_table: ../inputs/tables/cloudy/emission.npz
+
+# Numerical output: use a new directory for each run.
+output_dir: ../output/plt0655228/processed
+
+# Processing: cells per query batch, concurrent batches, threads per batch.
 query_chunk: 1000000
 chunk_workers: 2
-spectral_workers: 3  # Per chunk: at most 2 x 3 spectral threads.
-output_dir: ../output/plt0655228/processed
+spectral_workers: 3  # Up to 2 x 3 spectral-integration threads in total.
+
 # Optional native x-y region; stops are excluded and z stays complete.
+# Omit these ranges to process the complete snapshot.
 # x_index_range: [64, 128]
 # y_index_range: [32, 96]
 # Choose a new output_dir when processing a region.
