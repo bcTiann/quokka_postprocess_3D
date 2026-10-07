@@ -116,6 +116,39 @@ class DespoticCellReader:
     def __init__(self, *, lookup: DespoticLookup):
         self.lookup = lookup
 
+    def read_temperature(self, *, cells: CellBatch) -> np.ndarray:
+        """Read only T_DESPOTIC [K] for every cell in the supplied batch.
+
+        cells comes from slab.batch(); its physical nH, shielding NH and
+        velocity gradient each have shape (B,). This action uses the same
+        coordinate checks and permitted clipping as read_fields(), then
+        queries the existing temperature interpolator without reading CO,
+        CII or particle densities. Returned values keep shape (B,) and the
+        original cell order; missing temperature values remain NaN.
+        Example: temperature_K[7] is original batch cell 7's T_DESPOTIC.
+        """
+        _query_inputs, queries = self.prepare_cell_queries(cells=cells)
+        return self.lookup.temperature(queries=queries)
+
+    def prepare_cell_queries(
+        self,
+        *,
+        cells: CellBatch,
+    ) -> tuple[DespoticQueryInputs, DespoticQueries]:
+        """Check/clip cell coordinates and prepare their reusable logarithmic rows.
+
+        Returns the prepared physical inputs/clipping flags and lookup queries
+        for all B cells. Both read_fields() and read_temperature() use this
+        coordinate policy; neither changes the original physical cell arrays.
+        """
+        query_inputs = self.prepare_query_inputs(cells=cells)
+        queries = self.lookup.prepare_queries(
+            hydrogen_density_cm3=query_inputs.hydrogen_density_cm3,
+            shielding_NH_cm2=query_inputs.shielding_NH_cm2,
+            velocity_gradient_s=query_inputs.velocity_gradient_s,
+        )
+        return query_inputs, queries
+
     def read_fields(
         self,
         *,
@@ -139,14 +172,7 @@ class DespoticCellReader:
             Unqueried or missing values are NaN.
         """
         # 1. Prepare nH, shielding NH and dV/dr; record permitted endpoint clipping.
-        query_inputs = self.prepare_query_inputs(
-            cells=cells,
-        )
-        queries = self.lookup.prepare_queries(
-            hydrogen_density_cm3=query_inputs.hydrogen_density_cm3,
-            shielding_NH_cm2=query_inputs.shielding_NH_cm2,
-            velocity_gradient_s=query_inputs.velocity_gradient_s,
-        )
+        query_inputs, queries = self.prepare_cell_queries(cells=cells)
 
         # 2. Read temperature and both CO lines at the same coordinates for all cells.
         temperature_and_co = self.lookup.temperature_and_co(

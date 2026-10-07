@@ -25,15 +25,7 @@ if __package__ in (None, ''):
     sys.path.insert(0, str(ROOT / 'src'))
 
 from quokka2s.figures.emission_phase_histograms import plot_panels
-from quokka2s.physics.gas_fields import mixed_gas_temperature_K
-from quokka2s.processing_inputs import load_processing_inputs
-from quokka2s.products.emission_phase_histograms import (
-    PANELS,
-    DexHistogram,
-    accumulate_emission_phase_histograms,
-)
 from quokka2s.run_settings import DEFAULT_PROCESS_CONFIG, load_process_config
-from quokka2s.snapshot_reader import slab_windows
 
 
 def accumulate_phase_batch(histograms, cells, emission_calculator):
@@ -46,15 +38,14 @@ def accumulate_phase_batch(histograms, cells, emission_calculator):
     line-luminosity weight. Temperature choices come from the emission result.
     emission_calculator is the shared CellEmissionCalculator from input loading.
     """
+    from quokka2s.physics.gas_fields import mixed_gas_temperature_K
+    from quokka2s.products.emission_phase_histograms import accumulate_emission_phase_histograms
+
     emission = emission_calculator.calculate(cells=cells)
     accumulate_emission_phase_histograms(
         histograms=histograms,
-        rho=cells.density_g_cm3,
-        tq=cells.temperature_QUOKKA_K,
-        td=emission.despotic_temperature_K,
-        column=cells.shielding_NH_cm2,
+        cells=cells,
         emission=emission,
-        volume=cells.cell_volume_cm3,
     )
     mass = cells.density_g_cm3 * cells.cell_volume_cm3
     despotic_temperature = emission.despotic_temperature_K
@@ -75,6 +66,9 @@ def accumulate_phase_batch(histograms, cells, emission_calculator):
 
 def process_phase_histograms(snapshot, emission_calculator, settings):
     """Read one slab at a time and retain only small accumulated 0.2-dex bins."""
+    from quokka2s.products.emission_phase_histograms import PANELS, DexHistogram
+    from quokka2s.snapshot_reader import slab_windows
+
     if snapshot.processing_shape != snapshot.shape:
         raise ValueError(
             'Emission phase histograms require full x and y ranges; use the standard '
@@ -124,8 +118,18 @@ def process_phase_histograms(snapshot, emission_calculator, settings):
 
 def save_phase_histograms(histograms, totals, snapshot, settings):
     """Save numerical bins for every panel and record the processed selection."""
+    from quokka2s.products.phase_histogram_preparation import (
+        DISPLAY_PANEL_KEYS,
+        add_phase_histogram_display_fields,
+    )
+
     panels = {key: histogram.result() for key, histogram in histograms.items()}
-    payload = {}
+    add_phase_histogram_display_fields(panels=panels)
+    display_panel_keys = np.asarray(DISPLAY_PANEL_KEYS)
+    payload = {
+        'panel_keys': np.asarray(tuple(panels)),
+        'display_panel_keys': display_panel_keys,
+    }
     for key, panel in panels.items():
         for field, value in panel.items():
             payload[f'{key}__{field}'] = value
@@ -153,18 +157,21 @@ def save_phase_histograms(histograms, totals, snapshot, settings):
         json.dumps(report, indent=2) + '\n',
         encoding='utf-8',
     )
-    return panels
+    return panels, display_panel_keys
 
 
 def load_saved_phase_histograms(output_dir):
     """Read only the small saved histogram arrays; no snapshot or table lookup."""
     with np.load(output_dir / 'phase_histograms.npz', allow_pickle=False) as data:
+        display_panel_keys = np.array(data['display_panel_keys'])
         panels = {}
-        for key, _, _ in PANELS:
+        for key in data['panel_keys']:
             panels[key] = {}
-            for field in ('H', 'x_edges', 'y_edges'):
-                panels[key][field] = np.array(data[f'{key}__{field}'])
-    return panels
+        for name in data.files:
+            if '__' in name:
+                key, field = name.split('__', maxsplit=1)
+                panels[key][field] = np.array(data[name])
+    return panels, display_panel_keys
 
 
 def main():
@@ -184,8 +191,10 @@ def main():
         parser.error('--max-slabs must be positive')
     output_dir = args.output_dir.resolve()
     if args.plot_only:
-        panels = load_saved_phase_histograms(output_dir)
+        panels, display_panel_keys = load_saved_phase_histograms(output_dir)
     else:
+        from quokka2s.processing_inputs import load_processing_inputs
+
         settings = load_process_config(args.config)
         settings = replace(
             settings,
@@ -198,7 +207,7 @@ def main():
             emission_calculator=emission_calculator,
             settings=settings,
         )
-        panels = save_phase_histograms(
+        panels, display_panel_keys = save_phase_histograms(
             histograms=histograms,
             totals=totals,
             snapshot=snapshot,
@@ -207,6 +216,7 @@ def main():
     if not args.no_plot:
         plot_panels(
             panels=panels,
+            display_panel_keys=display_panel_keys,
             png=output_dir / 'phase_histograms_10panel.png',
             pdf=output_dir / 'phase_histograms_10panel.pdf',
         )

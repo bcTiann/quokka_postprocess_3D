@@ -14,6 +14,7 @@ import numpy as np
 
 from quokka2s.physics.gas_fields import mixed_gas_temperature_K
 from quokka2s.physics.settings import EMISSION_TEMPERATURE_BOUNDARY_K
+from quokka2s.products.profile_preparation import add_gas_phase_display_fields
 
 
 # These are the established cuts in the CNM/UNM/WNM/WIM/HIM phase definition.
@@ -485,6 +486,8 @@ class GasPhaseVelocityAccumulator:
             histogram_mass_g is (6, Nchannel) [g]; group_count, group_mass_g and
             both dispersion arrays are (6,), ordered CNM, UNM, WNM, WIM, HIM, total.
             Dispersions [km/s] use full-range cells; empty groups are NaN.
+            Velocity centres, normalized profiles and comparison sigmas are
+            included so figures only select and draw saved values.
         report : dict
             The detailed groups/window summary returned by report().
 
@@ -516,4 +519,5 @@ class GasPhaseVelocityAccumulator:
             'phase_temperature_method': np.asarray('mixed'),
             'bundle_source': np.asarray('process'),
         }
+        add_gas_phase_display_fields(payload=payload)
         return payload, report

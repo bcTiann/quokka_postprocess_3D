@@ -18,6 +18,7 @@ from quokka2s.products.line_velocity_moments import (
     LineVelocityMoments,
     MINIMUM_GAUSSIAN_WIDTH_KMS,
 )
+from quokka2s.products.profile_preparation import add_spectral_display_fields
 
 
 # Allow measured float64 summation-order differences between independent sums.
@@ -325,8 +326,9 @@ class IntegratedSpectra:
 
         Profiles use (dust, line, cold/hot, channel). Full and window moments
         use (dust, line), combining both branches. Empty lines have NaN moments.
-        projected_area_cm2 is the processed region's x-y area [cm^2], stored as
-        metadata; full-box processing uses the original snapshot area.
+        Surface-luminosity and peak-normalized profiles are calculated here.
+        projected_area_cm2 is the processed region's x-y area [cm^2]; full-box
+        processing uses the original snapshot area.
         """
         edges = self.velocity_edges_kms
         centers = .5 * (edges[:-1] + edges[1:])
@@ -365,6 +367,7 @@ class IntegratedSpectra:
             'line_of_sight': np.asarray('z'),
         }
         payload.update(self.build_full_line_moment_payload())
+        add_spectral_display_fields(payload=payload)
         report = self.build_luminosity_report(captured=captured, outside=outside)
         return payload, report
 

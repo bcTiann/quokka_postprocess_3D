@@ -56,8 +56,8 @@ current scientific rules.
 | `cloudy/` | `lookup.py`: interpolation; `cell_fields.py`: batch queries; `table_definition.py`: ordered build lines, grid and radiation recipe; `incident_spectrum.py`: continuum-export reader |
 | `despotic/` | `solver_settings.py`: adopted solver defaults/source identities; `table_data.py`: table records/field names; `snapshot_domain.py`: recorded geometry/settings/bounds checks |
 | `despotic/` | `table_files.py`: NPZ serialization; `cell_solver.py`: equilibrium at one state; `table_builder.py`: grid calculation |
-| `despotic/` | `lookup.py` and `cell_fields.py`: process-time queries; `build_table.py`, `interpolate_failed.py`, `plot_table.py`, `list_failures.py`: table commands |
-| `products/` | `line_luminosity_images.py`, `integrated_spectra.py`, `line_velocity_moments.py`, `gas_phase_velocity.py`: numerical accumulation |
+| `despotic/` | `lookup.py` and `cell_fields.py`: process-time queries; `build_table.py`, `interpolate_failed.py`, `list_failures.py`: table commands; `prepare_table_plots.py`/`table_figure_data.py`: numerical figure preparation; `plot_table.py`/`table_plots.py`: draw saved panels |
+| `products/` | Image, spectrum, gas-phase and auxiliary numerical accumulation; `profile_preparation.py` prepares saved normalized/per-area curves; auxiliary preparation modules save masks, logarithmic panels, limits and radiation/dust samples |
 | `figures/` | `line_luminosity_images.py`, `line_spectra.py`, `gas_phase_spectra.py`: saved-product renderers; `line_labels.py`: titles; `figure_files.py`: PNG/PDF paths and saving; other modules: additional figures |
 
 `gas_fields.mixed_gas_temperature_K()` supplies the cold-DESPOTIC/hot-QUOKKA
@@ -73,6 +73,11 @@ The root modules also separate the final processing steps:
 `processing_report.py` builds the readable summary; `result_files.py` writes
 already-built arrays and the report. `run_settings.py` returns `ProcessSettings`
 or `PlotSettings` from YAML, without changing the command-line defaults.
+`input_paths.py` stores bundled input locations without importing calculations.
+`prepare_emission_results.py` prepares figure arrays from existing numerical
+products, including optional coarse images. Normal snapshot processing saves
+native figure arrays directly. `figures/display_settings.py` shares the
+velocity display window; these choices do not change saved channels.
 
 ## Data and results
 
@@ -86,6 +91,7 @@ inputs/
 output/plt0655228/
   processed/
     images.npz
+    images_factor_2.npz       # Optional, separately prepared 2x2-summed image
     spectra.npz
     phase_velocity.npz
     emission_report.json

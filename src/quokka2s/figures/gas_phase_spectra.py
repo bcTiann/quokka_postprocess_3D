@@ -1,7 +1,6 @@
 """Compare saved line spectra with gas mass velocity distributions."""
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -9,6 +8,7 @@ import numpy as np
 from quokka2s.emission_results import GasPhaseResults, LineSpectrum
 from quokka2s.figures.line_labels import LINE_TITLES
 from quokka2s.figures.figure_files import save_figure_formats
+from quokka2s.figures.display_settings import VELOCITY_LIMITS_KMS
 
 
 LINE_ORDER = (
@@ -23,56 +23,6 @@ PHASE_COLORS = {
     'HIM': '#D55E00',
 }
 # Peaks use the saved channels; sigma labels use the complete Gaussian moments.
-DISPLAY_VELOCITY_LIMITS_KMS = (-50., 50.)
-
-
-@dataclass(frozen=True)
-class GasPhaseCurve:
-    """A nonempty gas phase's (V,) peak-normalized mass and saved sigma [km/s]."""
-
-    phase_key: str
-    normalized_mass: np.ndarray
-    sigma_kms: float
-
-
-@dataclass(frozen=True)
-class GasPhaseProfiles:
-    """Gas coordinates [km/s], normalized curves and footer shared by all figures."""
-
-    velocity_kms: np.ndarray
-    curves: tuple[GasPhaseCurve, ...]
-    phase_cut_footer: str
-
-
-def prepare_gas_phase_profiles(gas_phases: GasPhaseResults) -> GasPhaseProfiles:
-    """Normalize nonempty gas rows once on their own saved channel centres.
-
-    Histograms have shape (phase, V) [g per channel]. Each peak uses all saved
-    channels, including those outside the +/-50 km/s display. Individual phase
-    labels use sigma about the global mean; All gas uses its internal sigma.
-    """
-    edges = gas_phases.velocity_edges_kms
-    velocity_kms = 0.5 * (edges[:-1] + edges[1:])
-    curves = []
-    for index, phase in enumerate(gas_phases.phase_keys):
-        values = gas_phases.histogram_mass_g[index]
-        peak = values.max()
-        if peak <= 0:
-            continue
-        if phase == 'total':
-            sigma = gas_phases.sigma_internal_kms[index]
-        else:
-            sigma = gas_phases.sigma_about_global_mean_kms[index]
-        curves.append(GasPhaseCurve(
-            phase_key=phase,
-            normalized_mass=values / peak,
-            sigma_kms=float(sigma),
-        ))
-    return GasPhaseProfiles(
-        velocity_kms=velocity_kms,
-        curves=tuple(curves),
-        phase_cut_footer=format_phase_cut_footer(gas_phases=gas_phases),
-    )
 
 
 def create_phase_comparison_figure(*, titled: bool):
@@ -99,11 +49,11 @@ def create_phase_comparison_figure(*, titled: bool):
 def draw_gas_mass_profile_curves(
     ax,
     line_key: str,
-    gas_profiles: GasPhaseProfiles,
+    gas_phases: GasPhaseResults,
 ):
     """Draw named phase/all-gas profiles on their own saved coordinates.
 
-    gas_profiles holds already normalized curves and dispersions [km/s].
+    gas_phases holds saved normalized curves, coordinates and comparison sigma.
     WIM/HIM are faint for CO. Returns handles and labels in the saved phase
     order, followed by All gas. Underlying saved arrays are unchanged.
     """
@@ -111,37 +61,38 @@ def draw_gas_mass_profile_curves(
 
     handles = []
     labels = []
-    for curve in gas_profiles.curves:
-        phase = curve.phase_key
-        if phase == 'total':
+    for phase_key in gas_phases.phase_keys:
+        if phase_key == 'total':
             continue
-        color = PHASE_COLORS[phase]
+        phase = gas_phases.for_phase(phase_key)
+        if not phase.profile_has_mass:
+            continue
+        color = PHASE_COLORS[phase_key]
         alpha = 1.
-        if line_key in ('co10', 'co21') and phase in ('WIM', 'HIM'):
+        if line_key in ('co10', 'co21') and phase_key in ('WIM', 'HIM'):
             alpha = .25
         ax.plot(
-            gas_profiles.velocity_kms,
-            curve.normalized_mass,
+            phase.velocity_kms,
+            phase.peak_normalized_mass_profile,
             color=color,
             lw=1.3,
             alpha=alpha,
         )
-        sigma = curve.sigma_kms
+        sigma = phase.comparison_sigma_kms
         handles.append(Line2D([], [], color=color, lw=1.6, alpha=alpha))
-        labels.append(phase + '\n' + rf'$\sigma_{{z,p}}={sigma:.1f}$ km/s')
+        labels.append(phase_key + '\n' + rf'$\sigma_{{z,p}}={sigma:.1f}$ km/s')
 
-    for curve in gas_profiles.curves:
-        if curve.phase_key != 'total':
-            continue
+    total_gas = gas_phases.for_phase('total')
+    if total_gas.profile_has_mass:
         ax.plot(
-            gas_profiles.velocity_kms,
-            curve.normalized_mass,
+            total_gas.velocity_kms,
+            total_gas.peak_normalized_mass_profile,
             color='.45',
             ls='--',
             lw=1.5,
         )
         handles.append(Line2D([], [], color='.45', ls='--', lw=1.6))
-        sigma = curve.sigma_kms
+        sigma = total_gas.comparison_sigma_kms
         labels.append('All gas\n' + rf'$\sigma_z={sigma:.1f}$ km/s')
     return handles, labels
 
@@ -152,20 +103,18 @@ def draw_line_profile_curve(
 ):
     """Draw a nonzero emission profile and return its legend handle and label.
 
-    line_spectrum is the attenuated total profile [erg/s/(km/s)], shape (V,).
+    line_spectrum contains the saved normalized attenuated total profile, (V,).
     Its saved full sigma [km/s] includes complete cell Gaussians outside the
     channel window. Drawing retains its own saved velocity coordinates.
     An empty profile returns no legend entry.
     """
     from matplotlib.lines import Line2D
 
-    profile = line_spectrum.dL_dv_erg_s_per_kms
-    peak = profile.max()
-    if peak <= 0:
+    if not line_spectrum.profile_has_light:
         return None, None
     ax.plot(
         line_spectrum.velocity_kms,
-        profile / peak,
+        line_spectrum.peak_normalized_profile,
         color='#111111',
         ls='--',
         lw=2.2,
@@ -181,14 +130,14 @@ def draw_phase_comparison_curves(
     ax,
     legend_ax,
     key,
-    gas_profiles: GasPhaseProfiles,
+    gas_phases: GasPhaseResults,
     line_spectrum: LineSpectrum,
 ):
     """Draw gas and line curves, then place their combined legend beside the axes."""
     handles, labels = draw_gas_mass_profile_curves(
         ax=ax,
         line_key=key,
-        gas_profiles=gas_profiles,
+        gas_phases=gas_phases,
     )
     line_handle, line_label = draw_line_profile_curve(
         ax=ax,
@@ -254,7 +203,7 @@ def format_phase_comparison_figure(
     titled: bool,
 ):
     """Apply the display zoom, axes, and optional title and phase-cut footer."""
-    ax.set_xlim(*DISPLAY_VELOCITY_LIMITS_KMS)
+    ax.set_xlim(*VELOCITY_LIMITS_KMS)
     ax.set_ylim(-.035, 1.07)
     ax.axvline(0, color='.65', ls=':', lw=.8)
     ax.grid(alpha=.18)
@@ -269,7 +218,7 @@ def format_phase_comparison_figure(
 
 def plot_phase_spectrum_overlay(
     line_spectra: dict[str, LineSpectrum],
-    gas_profiles: GasPhaseProfiles,
+    gas_phases: GasPhaseResults,
     output_stem: str | Path,
     *,
     titled: bool,
@@ -282,8 +231,8 @@ def plot_phase_spectrum_overlay(
     line_spectra : dict of str to LineSpectrum
         Named attenuated total profiles with their own saved coordinates
         and full-line dispersions [km/s]. Prepared once for both styles.
-    gas_profiles : GasPhaseProfiles
-        Gas coordinates and normalized mass curves, shared by both styles.
+    gas_phases : GasPhaseResults
+        Saved gas coordinates, normalized mass profiles and comparison sigma.
     output_stem : str or pathlib.Path
         Destination without an extension; filenames append each line key.
     titled : bool
@@ -294,8 +243,8 @@ def plot_phase_spectrum_overlay(
     Returns
     -------
     list of pathlib.Path
-        Saved files in png/ and pdf/ subdirectories. Each profile is divided
-        by its own full-window peak.
+        Saved files in png/ and pdf/ subdirectories. Profiles were already
+        normalized by process using their own full-window peaks.
 
     Examples
     --------
@@ -305,6 +254,7 @@ def plot_phase_spectrum_overlay(
     import matplotlib.pyplot as plt
 
     stem = Path(output_stem)
+    phase_cut_footer = format_phase_cut_footer(gas_phases=gas_phases)
     paths = []
     for key, line_spectrum in line_spectra.items():
         fig, ax, legend_ax = create_phase_comparison_figure(titled=titled)
@@ -312,14 +262,14 @@ def plot_phase_spectrum_overlay(
             ax=ax,
             legend_ax=legend_ax,
             key=key,
-            gas_profiles=gas_profiles,
+            gas_phases=gas_phases,
             line_spectrum=line_spectrum,
         )
         format_phase_comparison_figure(
             fig=fig,
             ax=ax,
             key=key,
-            phase_cut_footer=gas_profiles.phase_cut_footer,
+            phase_cut_footer=phase_cut_footer,
             titled=titled,
         )
         line_stem = stem.with_name(f'{stem.name}_{key}')

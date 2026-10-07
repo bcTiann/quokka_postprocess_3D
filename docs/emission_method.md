@@ -121,10 +121,13 @@ HIM, with equality assigned to the hotter phase. Phase moments retain the
 full velocity range of gas with available mixed temperature, including each phase's dispersion about the
 common mass-weighted gas mean and about its own mean.
 
-Plotting draws images at native resolution unless a pixel-binning factor is
-selected. It sums pixel luminosities when binning. Normal spectrum comparisons
+Plotting draws saved native images unless a prepared coarse image is selected.
+Numerical preparation sums neighbouring pixel luminosities into a separate
+image product, retaining the native data. Normal spectrum comparisons
 show cold+hot totals. The peak-normalized gas-phase comparison uses the
 attenuated total Halpha/HI/CII/CO and hot CIII/CIV profiles. Its gas
 histogram bin centres are connected without additional smoothing. CO's WIM/HIM
 curves are faint. Display limits of ±50 km/s do not change saved products or
 moment calculations.
+Per-area spectra, peak-normalized gas/line profiles and numerical colour limits
+are prepared and saved before plotting. Renderers select these fields directly.

@@ -56,8 +56,8 @@ directories. The region's images retain their physical x/y coordinates.
 Its spectra, full-profile sigma, and gas-phase statistics use only selected
 cells; spectra per projected area use the region's x-y area. A finished region
 is a complete result and does not require `allow_partial`.
-Plot-time pixel binning must divide both selected image dimensions; the default
-factor of 1 works for any region. The separate slice, multiview-map and emission
+Image-resolution preparation must divide both selected image dimensions; the
+default native resolution works for any region. The separate slice, multiview-map and emission
 phase-histogram tools still use full-box configurations.
 
 ## Saved products
@@ -88,6 +88,9 @@ window is recorded separately.
 Processing reads one x slab at a time, queries table batches within it, and
 adds their luminosities to the image and spectrum arrays. It discards the
 cell arrays after each slab. No full-snapshot emissivity cube is saved.
+Before saving, it also prepares per-area spectra, peak-normalized line/gas
+profiles, gas-channel centres, image display masks and colour limits. Raw arrays and both
+full/window moments remain available alongside these fields.
 
 Each line omits only cells with unavailable results required by that line;
 image and spectrum use the same selection for that line. The processor reports
@@ -109,12 +112,25 @@ those NPZ files and the package; it does not reopen the snapshot or tables.
 | `products` | Directory containing the three NPZ products |
 | `output_dir` | Figures without titles, for manuscript captions |
 | `titled_output_dir` | Optional second directory of titled figures |
-| `image_downsample_factor` | Optional pixel binning factor; default 1 |
+| `image_downsample_factor` | Select an already prepared image resolution; default 1, native |
 
-A factor of 2 sums each 2 × 2 group of image pixels into one displayed pixel.
-It does not average luminosities or change the saved native-resolution data.
+To use a factor of 2, prepare that resolution once from the saved native pixels:
+
+```bash
+python -m quokka2s.prepare_emission_results --image-downsample-factor 2
+```
+
+This writes `images_factor_2.npz` in the configured products directory, summing
+each 2 × 2 group rather than averaging. It retains `images.npz` at native
+resolution and does not read the snapshot. Set `image_downsample_factor: 2`
+in the plot YAML to select it. For another product directory, use
+`--products PATH` when preparing it.
+
 Intrinsic and attenuated images of one line share a colour range from
-`vmax/1e5` to `vmax`, measured after any display binning.
+`vmax/1e5` to `vmax`, saved for that resolution. Plot only selects saved fields
+and draws them; normalization, physical conversions and pixel sums are completed
+before rendering. Products from an earlier code version can be prepared with
+the same command without the optional factor, using only their saved arrays.
 
 The command draws individual line images, intrinsic/dust spectrum comparisons,
 and gas-phase/line-profile comparisons as PNG and PDF. Each figure directory
@@ -172,7 +188,8 @@ summarizes the table-query rules used during emission processing.
 ## Additional figures
 
 Figure 1 and emission phase histograms are separate tools using the same
-snapshot reader and cell-emission functions:
+snapshot reader. Slice and projection maps query DESPOTIC temperature only;
+emission phase histograms reuse the full cell-emission calculator:
 
 ```bash
 python tools/figures/build_table_input_slice.py --config configs/emission_process.yaml \
@@ -188,12 +205,38 @@ with the same config/output-dir/no-plot/plot-only pattern.
 Additional dust and radiation-field figures:
 
 ```bash
-python tools/figures/plot_dust_extinction.py
+python tools/figures/prepare_dust_extinction.py --output-dir output/dust_extinction
+python tools/figures/plot_dust_extinction.py --output-dir output/dust_extinction
+python tools/figures/prepare_radiation_fields.py --recipe components --components-only
 python tools/figures/plot_radiation_components.py --components-only
+python tools/figures/prepare_radiation_fields.py --recipe unattenuated
 python tools/figures/plot_unattenuated_radiation.py
 ```
 
-The radiation tools read Cloudy `.inc` exports from `runtime/cloudy_eightline/sed/`.
+The radiation preparation command reads Cloudy `.inc` exports from `runtime/cloudy_eightline/sed/`.
 Supply the required Cloudy `save incident continuum` exports before running
 these tools. The exports are separate inputs, not included with the emission
 table or Git repository; they are needed only for radiation-field figures.
+Preparation saves the curves, sums, samples and numerical display ranges in
+NPZ files. The plot commands read these NPZs only; `--data PATH` selects a
+prepared file at another location. Add `--include-cmb` to both unattenuated
+commands to use that separate recipe.
+The prepared radiation file records its CMB choice; when using `--data`, labels
+follow that saved recipe.
+
+DESPOTIC table diagnostics follow the same preparation/drawing split:
+
+```bash
+python -m quokka2s.despotic.prepare_table_plots \
+  --table inputs/tables/despotic/interpolated.npz
+python -m quokka2s.despotic.plot_table
+```
+
+Preparation saves selected fields, masks, edges and contour segments in
+`output/despotic_table_figures/prepared.npz`. Use `--indices 0 17` to select
+dVdr slices, `--fields tg_final species:CO:lumPerH` to select fields, or
+`--samples PATH.npy` for an explicit query-coordinate overlay. Drawing uses
+`--data PATH` to select another prepared file. These diagnostic heatmaps
+retain the original display policy of hiding solver-failure nodes, including
+nodes subsequently filled by interpolation. This display mask does not change
+the numerical table used for emission processing.

@@ -23,26 +23,24 @@ ROOT = Path(__file__).resolve().parents[2]
 if __package__ in (None, ''):
     sys.path.insert(0, str(ROOT / 'src'))
 
-from quokka2s.constants import HYDROGEN_MASS_G
-from quokka2s.figures.table_input_slices import (
-    TABLE_INPUT_PANEL_KEYS,
-    plot_table_input_slice,
-)
-from quokka2s.physics.settings import X_H
-from quokka2s.physics.gas_fields import mixed_gas_temperature_K
-from quokka2s.processing_inputs import load_processing_inputs
+from quokka2s.figures.table_input_slices import plot_table_input_slice
+from quokka2s.products.table_input_slices import prepare_slice_plot_data
 from quokka2s.run_settings import DEFAULT_PROCESS_CONFIG, load_process_config
 
 
-def calculate_slice_fields(snapshot, emission_calculator, slice_index, query_chunk):
+def calculate_slice_fields(snapshot, despotic_reader, slice_index, query_chunk):
     """Return five CGS/K fields and the mixed-temperature display mask at one x layer.
 
     snapshot.read_slab() handles neighbours and periodic x/y derivatives.
     The returned field arrays have shape (Ny, Nz), normally (256, 2048).
-    DESPOTIC temperature comes from the process calculator. The saved valid
-    mask means mixed temperature is available: cold cells require T_DESPOTIC,
+    DESPOTIC temperature comes from the reader's temperature-only query.
+    The saved valid mask means mixed temperature is available: cold cells require T_DESPOTIC,
     hot cells use T_QUOKKA regardless of DESPOTIC or line-emissivity failures.
     """
+    from quokka2s.constants import HYDROGEN_MASS_G
+    from quokka2s.physics.gas_fields import mixed_gas_temperature_K
+    from quokka2s.physics.settings import X_H, EMISSION_TEMPERATURE_BOUNDARY_K
+
     if snapshot.processing_shape != snapshot.shape:
         raise ValueError(
             'Table-input slices require full x and y ranges; use the standard '
@@ -59,11 +57,12 @@ def calculate_slice_fields(snapshot, emission_calculator, slice_index, query_chu
     for cells in slab.iter_batches(batch_size=query_chunk):
         start = cells.batch_start
         stop = start + cells.cell_count
-        emission = emission_calculator.calculate(cells=cells)
-        temperature_despotic[start:stop] = emission.despotic_temperature_K
+        batch_temperature_despotic = despotic_reader.read_temperature(cells=cells)
+        temperature_despotic[start:stop] = batch_temperature_despotic
+        cold_cells = cells.temperature_QUOKKA_K < EMISSION_TEMPERATURE_BOUNDARY_K
         mixed_temperature = mixed_gas_temperature_K(
-            cold_cells=emission.cold_cells,
-            temperature_despotic_K=emission.despotic_temperature_K,
+            cold_cells=cold_cells,
+            temperature_despotic_K=batch_temperature_despotic,
             temperature_quokka_K=cells.temperature_QUOKKA_K,
         )
         valid[start:stop] = np.isfinite(mixed_temperature) & (mixed_temperature > 0.0)
@@ -85,7 +84,10 @@ def calculate_slice_fields(snapshot, emission_calculator, slice_index, query_chu
 
 
 def save_slice_data(payload, snapshot, settings, slice_index):
-    """Save unmasked field values, their display mask, and a compact report."""
+    """Save raw fields, prepared numerical panels, and a compact report."""
+    from quokka2s.constants import HYDROGEN_MASS_G
+    from quokka2s.physics.settings import X_H
+
     np.savez_compressed(settings.output_dir / 'slice_data.npz', **payload)
     report = {
         'status': 'completed',
@@ -113,14 +115,11 @@ def save_slice_data(payload, snapshot, settings, slice_index):
 
 def render_slice_figures(payload, report, output_dir):
     """Render the title-free paper PDF/PNG and the titled PNG from saved arrays."""
-    slices = {}
-    for key in TABLE_INPUT_PANEL_KEYS:
-        slices[key] = np.where(payload['valid'], payload[key], np.nan)
     index = int(report['slice_index'])
     stem = f'multi_field_slices_idx{index:04d}'
     for show_title, filename in ((True, stem + '_full.png'), (False, stem + '.png')):
         plot_table_input_slice(
-            slices=slices,
+            payload=payload,
             extent_kpc=payload['extent_kpc'],
             output_path=output_dir / filename,
             slice_index=index,
@@ -151,15 +150,18 @@ def main():
         render_slice_figures(payload=payload, report=report, output_dir=output_dir)
         return
 
+    from quokka2s.processing_inputs import load_processing_inputs
+
     settings = load_process_config(args.config)
     settings = replace(settings, output_dir=output_dir)
     snapshot, emission_calculator = load_processing_inputs(settings)
     payload = calculate_slice_fields(
         snapshot=snapshot,
-        emission_calculator=emission_calculator,
+        despotic_reader=emission_calculator.despotic_reader,
         slice_index=args.slice_index,
         query_chunk=settings.query_chunk,
     )
+    payload = prepare_slice_plot_data(payload=payload)
     report = save_slice_data(
         payload=payload,
         snapshot=snapshot,

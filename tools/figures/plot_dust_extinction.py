@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
-"""Plot the full Draine MW R_V=3.1 extinction grid and adopted line positions."""
+"""Draw the saved Draine MW R_V=3.1 grid and line samples.
+
+Run prepare_dust_extinction.py first. This plot command reads its NPZ only;
+it does not open the original opacity table or interpolate cross-sections.
+"""
 from __future__ import annotations
 
 import argparse
-import json
 from pathlib import Path
 
 import numpy as np
 
-from quokka2s.line_definitions import LINE_DEFINITIONS
-from quokka2s.physics.dust_attenuation import DEFAULT_DRAINE_TABLE, extinction_cross_sections, load_draine_extinction
+from quokka2s.products.dust_extinction import DUST_EXTINCTION_STEM
 
 
 GROUPS = (
@@ -26,16 +28,15 @@ GROUPS = (
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--data", type=Path, help="Prepared extinction NPZ; defaults to the output directory")
     args = parser.parse_args()
-    wavelength, sigma = load_draine_extinction()
-    keys = tuple(LINE_DEFINITIONS)
-    line_wavelength_micron = {
-        key: LINE_DEFINITIONS[key].rest_wavelength_micron
-        for key in keys
-    }
-    line_sigma = dict(zip(keys, extinction_cross_sections(keys, wavelength, sigma)))
-    if wavelength[0] != 1.e-4 or wavelength[-1] != 1.e4 or wavelength.size != 1077:
-        raise ValueError("Unexpected Draine table wavelength grid")
+    data_path = args.data or args.output_dir / (DUST_EXTINCTION_STEM + ".npz")
+    with np.load(data_path, allow_pickle=False) as data:
+        wavelength = data["wavelength_micron"]
+        sigma = data["sigma_ext_cm2_H"]
+        keys = data["line_keys"]
+        line_wavelength_micron = dict(zip(keys, data["line_wavelength_micron"]))
+        line_sigma = dict(zip(keys, data["line_sigma_ext_cm2_H"]))
 
     import matplotlib
     matplotlib.use("Agg")
@@ -117,20 +118,11 @@ def main():
     zoom.grid(alpha=.16, lw=.5)
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    stem = args.output_dir / "draine_mw31_full_range_and_lines"
+    stem = args.output_dir / DUST_EXTINCTION_STEM
     for suffix in ("pdf", "png"):
         fig.savefig(stem.with_suffix("." + suffix), dpi=300,
                     bbox_inches="tight", metadata={"Title": "Draine MW R_V=3.1 extinction range and adopted emission lines"})
     plt.close(fig)
-    metadata = {
-        "source": str(DEFAULT_DRAINE_TABLE),
-        "table_rows": int(wavelength.size),
-        "table_wavelength_micron": [float(wavelength[0]), float(wavelength[-1])],
-        "line_wavelength_micron": line_wavelength_micron,
-        "line_sigma_ext_cm2_H": {key: float(value) for key, value in line_sigma.items()},
-        "hi21": "Outside the 1 cm table limit; no dust attenuation applied",
-    }
-    stem.with_suffix(".json").write_text(json.dumps(metadata, indent=2) + "\n")
     print(stem.with_suffix(".pdf"))
 
 

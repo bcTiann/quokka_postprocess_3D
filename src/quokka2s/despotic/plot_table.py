@@ -1,126 +1,78 @@
-#!/usr/bin/env python3
-"""Generate 2D (nH × N_H) heatmaps of the DESPOTIC table, one set per dVdr bin.
+"""Draw DESPOTIC heatmaps from prepared numerical products only."""
+from __future__ import annotations
 
-Table is now 3D (nH, NH, dVdr) — T is an output, not an input axis. We slice
-along dVdr and plot (nH, NH) heatmaps of tg_final, abundances, and lumPerH.
-
-By default plots a few evenly-spaced dVdr slices to keep the output count
-manageable. Pass --all to dump every dVdr index (35 slices × 11 fields = 385
-PNGs)."""
-from pathlib import Path
-import os
 import argparse
-import numpy as np
-import matplotlib.pyplot as plt
+from pathlib import Path
 
-from quokka2s.despotic.table_files import load_table
+from quokka2s.despotic.table_figure_data import (
+    DEFAULT_FIGURE_DATA_PATH,
+    read_table_figure_data,
+)
 from quokka2s.despotic.table_plots import plot_table_overview
 
 
-DEFAULT_TABLE = (
-    Path(__file__).resolve().parents[3]
-    / "inputs" / "tables" / "despotic" / "interpolated.npz"
-)
-
-
-TOKENS = [
-    "tg_final",
-    "species:CO:abundance",
-    "species:C+:abundance",
-    "species:C:abundance",
-    "species:HCO+:abundance",
-    "species:e-:abundance",
-    "species:CO:lumPerH",
-    "species:CO21:lumPerH",
-    "species:C+:lumPerH",
-    "species:C:lumPerH",
-    "species:HCO+:lumPerH",
-]
-
-
-def main():
-    ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument('--all', action='store_true',
-                    help='plot every dVdr index (default: 5 evenly-spaced)')
-    ap.add_argument('-n', '--n-slices', type=int, default=5,
-                    help='number of evenly-spaced dVdr slices (default 5)')
-    ap.add_argument('-o', '--out-root', default=None,
-                    help='output root directory; if omitted, auto-derived from '
-                         'the table\'s parent dir as TablePlots_<basename> '
-                         '(strips leading "output_tables_3D_" if present)')
-    ap.add_argument('--table', default=None,
-                    help='path to the despotic_table.npz to view '
-                         f'(default: {DEFAULT_TABLE})')
-    args = ap.parse_args()
-
-    table_path = args.table or DEFAULT_TABLE
-    print(f"[view_table] loading: {table_path}")
-    table = load_table(table_path)
-
-    # Auto-derive output dir from the table source so different tables never
-    # silently land in the same generic TablePlots/ bin.
-    if args.out_root is None:
-        src_dir_name = Path(table_path).parent.name
-        # strip the boilerplate prefix if present, so the suffix carries the
-        # network/geom info (e.g. output_tables_3D_GOW_LVG -> GOW_LVG).
-        tag = src_dir_name
-        for prefix in ('output_tables_3D_', 'output_tables_'):
-            if tag.startswith(prefix):
-                tag = tag[len(prefix):]
-                break
-        args.out_root = f'TablePlots_{tag}'
-        print(f"[view_table] -o auto-derived: {args.out_root}/")
-
-    # Prefer the 3D samples (per-dVdr slice filter via plotting.py).  Fall back
-    # to 2D file (overlay is then identical on every slice).
-    samples = None
-    _repo = Path(__file__).resolve().parents[3]   # src/quokka2s/despotic/plot_table.py → repo
-    for sp in (os.environ.get("LOG_SAMPLES_3D", str(_repo / "log_samples_3d.npy")),
-               os.environ.get("LOG_SAMPLES_2D", str(_repo / "log_samples.npy"))):
-        if Path(sp).exists():
-            samples = np.load(sp)
-            print(f"[view_table] samples loaded from {sp}  shape={samples.shape}")
+def default_output_directory(source_table: str) -> Path:
+    """Retain the established TablePlots_<table-parent> output naming."""
+    tag = Path(source_table).parent.name
+    for prefix in ("output_tables_3D_", "output_tables_"):
+        if tag.startswith(prefix):
+            tag = tag[len(prefix):]
             break
-    if samples is None:
-        print("Warning: no log_samples file found. Skipping sampling overlay.")
+    return Path(f"TablePlots_{tag}")
 
-    n_dvdr = len(table.dVdr_values)
-    if args.all:
-        indices = list(range(n_dvdr))
-    else:
-        # n_slices evenly spaced through the dVdr axis (include endpoints)
-        indices = sorted(set(
-            np.linspace(0, n_dvdr - 1, args.n_slices).astype(int).tolist()
-        ))
 
-    print(f"Plotting {len(TOKENS)} fields × {len(indices)} dVdr slices "
-          f"= {len(TOKENS) * len(indices)} PNGs into {args.out_root}/")
+def main(argv=None) -> None:
+    """Load a prepared NPZ and draw its selected slices, without table/sample reads."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--data",
+        type=Path,
+        default=DEFAULT_FIGURE_DATA_PATH,
+        help=f"Prepared figure NPZ (default: {DEFAULT_FIGURE_DATA_PATH})",
+    )
+    parser.add_argument(
+        "-o", "--out-root",
+        type=Path,
+        help="Output directory; default retains the source table's TablePlots_<parent> name",
+    )
+    args = parser.parse_args(argv)
+    figure_data = read_table_figure_data(path=args.data)
+    output_root = args.out_root
+    if output_root is None:
+        output_root = default_output_directory(
+            source_table=str(figure_data["source_table_path"]),
+        )
+    tokens = tuple(str(token) for token in figure_data["field_tokens"])
+    indices = figure_data["dvdr_indices"]
+    axis_size = int(figure_data["dvdr_axis_size"])
+    print(f"Drawing {len(tokens)} fields × {len(indices)} dVdr slices into {output_root}/")
 
-    for d_idx in indices:
-        d_val = table.dVdr_values[d_idx]
-        figs = plot_table_overview(
-            table,
-            fields=TOKENS,
+    import matplotlib.pyplot as plt
+
+    for slice_index, original_index in enumerate(indices):
+        gradient_s = figure_data["dvdr_values_s"][slice_index]
+        figures = plot_table_overview(
+            figure_data=figure_data,
+            fields=tokens,
             ncols=3,
             figsize=(14, 10),
             separate=True,
-            samples=samples,
-            dvdr_idx=d_idx,
+            slice_index=slice_index,
         )
-        out_dir = Path(f"{args.out_root}/dVdr_{d_val:.2e}")
-        out_dir.mkdir(parents=True, exist_ok=True)
-        for token, fig in zip(TOKENS, figs):
-            # Append dVdr label to each subplot's title so each frame
-            # carries the dVdr value when scrubbing through an MP4 sweep.
-            for ax in fig.axes:
-                old_title = ax.get_title()
-                if old_title:                       # skip colorbar axes etc.
-                    ax.set_title(f"{old_title}  |  frame {d_idx+1:02d}/{n_dvdr}  "
-                                 f"dVdr = {d_val:.2e} s$^{{-1}}$")
-            fname = token.replace(":", "_") + ".png"
-            fig.savefig(out_dir / fname, dpi=200)
-            plt.close(fig)
-        print(f"  done dVdr = {d_val:.2e} s^-1  →  {out_dir}/")
+        output_directory = output_root / f"dVdr_{gradient_s:.2e}"
+        output_directory.mkdir(parents=True, exist_ok=True)
+        for token, figure in zip(tokens, figures):
+            for axis in figure.axes:
+                title = axis.get_title()
+                if title:
+                    axis.set_title(
+                        f"{title}  |  frame {original_index + 1:02d}/{axis_size}  "
+                        f"dVdr = {gradient_s:.2e} s$^{{-1}}$",
+                    )
+            filename = token.replace(":", "_") + ".png"
+            figure.savefig(output_directory / filename, dpi=200)
+            plt.close(figure)
+        print(f"  done dVdr = {gradient_s:.2e} s^-1  →  {output_directory}/")
 
 
 if __name__ == "__main__":

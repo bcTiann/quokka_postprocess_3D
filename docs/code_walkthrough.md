@@ -480,7 +480,10 @@ write_emission_results(
 ```
 
 `build_outputs()` asks each accumulator to build its numerical arrays and
-summaries, returning `EmissionOutputs`. `check_outputs()` then compares each
+summaries, returning `EmissionOutputs`. It also prepares the numerical fields
+used in figures: per-area spectra, peak-normalized line/gas profiles, gas
+channel centres, comparison sigma and image colour limits. Raw arrays remain
+in the same products. `check_outputs()` then compares each
 line's arrays with its independent cell sums and checks gas-phase accounting. Its
 returned image-conservation report is separate from the generated arrays.
 A failed check raises before writing files. The writer saves:
@@ -542,10 +545,11 @@ Open [plot_emission_results.py](../src/quokka2s/plot_emission_results.py) and st
    saved NPZ files once into `EmissionResults(images, spectra, gas_phases, ...)`.
    It loads the fields
    needed for drawing; process has already checked the scientific products.
-3. `draw_emission_products()` prepares display images, normalized gas curves,
-   and each line's attenuated total spectrum once. Optional image binning adds
-   neighbouring pixel luminosities; gas normalization uses each curve's peak
-   across its saved channels.
+3. `draw_emission_products()` selects each line's saved attenuated total spectrum
+   by name. Images, normalized gas curves, surface-luminosity spectra and colour
+   limits are already saved; no numerical preparation occurs here. An optional
+   resolution setting selects `images_factor_2.npz`, prepared separately from
+   native pixels by `prepare_emission_results.py`.
 4. It draws images with
    [figures/line_luminosity_images.py](../src/quokka2s/figures/line_luminosity_images.py),
    spectra with [figures/line_spectra.py](../src/quokka2s/figures/line_spectra.py),
@@ -553,18 +557,26 @@ Open [plot_emission_results.py](../src/quokka2s/plot_emission_results.py) and st
    [figures/gas_phase_spectra.py](../src/quokka2s/figures/gas_phase_spectra.py).
 5. Each plotting step saves PNG/PDF in the figure directory's `png/` and `pdf/`
    subdirectories. If `titled_output_dir` is set, the same loaded numerical
-   products and prepared display data also produce copies with titles under
+   products also produce copies with titles under
    its own `png/` and `pdf/`.
 
-No step reopens yt, the snapshot, DESPOTIC, or Cloudy tables. Plotting changes
-colour limits, labels, displayed velocity range, peak normalization for the
-phase comparison, and optional image binning. It does not recalculate cell
-emissivities. The normal spectrum plots use cold+hot totals. Phase-comparison
+No step reopens yt, the snapshot, DESPOTIC, or Cloudy tables. Plotting selects
+saved fields and applies labels, colours, line styles, axis windows and layout.
+It does not calculate normalization, moments, physical conversions or image
+pixel sums. The normal spectrum plots use cold+hot totals. Phase-comparison
 plots use total spectra for every line; CIII/CIV have zero cold emission, so
 their totals equal their hot profiles. The saved spectra retain both regimes.
 Curves use the saved velocity axis. Sigma labels use the full-profile
 moments, including emission outside the saved channel window. Both full and
 window moments remain available in the saved numerical products.
+
+For an optional new image resolution, run
+`python -m quokka2s.prepare_emission_results --image-downsample-factor 2` once.
+It sums neighbouring native pixels, saves their own edges and colour limits
+in a separate file, and leaves native image values unchanged. The same command
+without a factor prepares older saved products from their accumulated arrays;
+it does not read any simulation cells. New snapshot runs save all required
+native-resolution figure fields directly.
 
 The results object selects arrays by name rather than requiring callers to
 remember packed-axis indices:
@@ -622,14 +634,17 @@ Table tools also have specific shared owners:
 
 Figure 1 and the emission phase diagrams have explicit callers:
 
-- `tools/figures/build_table_input_slice.py`: read the selected x slice, calculate its
-  five fields, save arrays, then optionally draw Figure 1.
+- `tools/figures/build_table_input_slice.py`: read the selected x slice, query
+  DESPOTIC temperature, save its five fields and prepared panels, then optionally
+  draw Figure 1.
 - `tools/figures/build_emission_phase_histograms.py`: read slabs, calculate each batch
   once, accumulate two-dimensional histograms, save arrays, then draw
   the ten-panel phase diagram.
-- `tools/figures/build_gas_projection_maps.py`: accumulate gas projections using cells
-  with an available mixed temperature, then save and draw the maps.
+- `tools/figures/build_gas_projection_maps.py`: query DESPOTIC temperature and
+  accumulate gas projections using cells with an available mixed temperature,
+  then save the maps and their display ranges before drawing.
 
 Their `--no-plot` option saves data only; `--plot-only` reads their saved data.
-They reuse `Snapshot` and `CellEmissionCalculator` directly and do not load
-a separate workflow framework.
+They reuse `Snapshot` directly. Slice and projection preparation use the loaded
+`DespoticCellReader`; line-luminosity histograms use `CellEmissionCalculator`.
+They do not load a separate workflow framework.

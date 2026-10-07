@@ -6,14 +6,13 @@ from pathlib import Path
 import numpy as np
 
 
-def plot_gas_projection_maps(payload, report, stem):
+def plot_gas_projection_maps(payload, stem):
     """Save the established two-view four-field PNG/PDF figure.
 
     payload : dict[str, ndarray]
-        MultiviewAccumulator.payload() plus extents and edge-view particles.
+        Saved map fields, hydrogen columns, shared color limits, extents and
+        edge-view particles, prepared during gas-map processing.
         Native arrays are (y,z) for edge view and (x,y) for face view.
-    report : dict
-        X_H and hydrogen_mass_g convert projected gas mass to N_H [cm^-2].
     stem : str or Path
         Output path without extension; writes .png and .pdf.
 
@@ -25,12 +24,11 @@ def plot_gas_projection_maps(payload, report, stem):
     from matplotlib.colors import LogNorm, TwoSlopeNorm
     from matplotlib.ticker import LogLocator, LogFormatterMathtext, MaxNLocator
 
-    factor = report['X_H']/report['hydrogen_mass_g']
     columns = [
-        ('rho_g_cm3', r'Density slice', r'$\rho\;[\mathrm{g\,cm^{-3}}]$', 1., 'viridis'),
-        ('sigma_g_cm2', r'Hydrogen column', r'$N_{\rm H}^{\rm LOS}\;[\mathrm{cm^{-2}}]$', factor, 'viridis'),
-        ('vz_kms', r'Vertical velocity', r'$\langle v_z\rangle_\rho\;[\mathrm{km\,s^{-1}}]$', 1., 'RdBu_r'),
-        ('T_mixed_K', r'Temperature', r'$\langle T\rangle_\rho\;[\mathrm{K}]$', 1., 'viridis'),
+        ('rho_g_cm3', r'Density slice', r'$\rho\;[\mathrm{g\,cm^{-3}}]$', 'viridis'),
+        ('hydrogen_column_cm2', r'Hydrogen column', r'$N_{\rm H}^{\rm LOS}\;[\mathrm{cm^{-2}}]$', 'viridis'),
+        ('vz_kms', r'Vertical velocity', r'$\langle v_z\rangle_\rho\;[\mathrm{km\,s^{-1}}]$', 'RdBu_r'),
+        ('T_mixed_K', r'Temperature', r'$\langle T\rangle_\rho\;[\mathrm{K}]$', 'viridis'),
     ]
     # Equal physical aspect in both views, including the entire 8-kpc height.
     # Keep one shared scale per column and native pixels (no display smoothing).
@@ -45,15 +43,13 @@ def plot_gas_projection_maps(payload, report, stem):
     face_top = edge_bottom-.037
     face_bottom = face_top-face_height
     norms = {}
-    for col, (key, title, label, conversion, cmap) in enumerate(columns):
-        values = [payload[f'valid_{view}_{key}']*conversion for view in ('edge', 'face')]
-        finite = np.concatenate([arr[np.isfinite(arr)] for arr in values])
+    for col, (key, title, label, cmap) in enumerate(columns):
+        values = [payload[f'valid_{view}_{key}'] for view in ('edge', 'face')]
+        minimum, maximum = payload[f'valid_color_limits_{key}']
         if key == 'vz_kms':
-            bound = float(np.max(np.abs(finite)))
-            norm = TwoSlopeNorm(vmin=-bound, vcenter=0., vmax=bound)
+            norm = TwoSlopeNorm(vmin=minimum, vcenter=0., vmax=maximum)
         else:
-            positive = finite[finite > 0]
-            norm = LogNorm(vmin=float(positive.min()), vmax=float(positive.max()))
+            norm = LogNorm(vmin=minimum, vmax=maximum)
         norms[key] = dict(minimum=norm.vmin, maximum=norm.vmax, clipped=False)
         x = left+col*(panel_width+gap)
         for row, (view, arr, y, h) in enumerate(zip(

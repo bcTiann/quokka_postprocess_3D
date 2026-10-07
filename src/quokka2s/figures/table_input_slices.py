@@ -1,93 +1,57 @@
 """Render the five-field x slice used for the manuscript's Figure 1.
 
-The caller supplies already calculated, masked 2D arrays. This module only
-sets display ranges and draws them; it does not load snapshots or tables.
+The caller supplies saved log-valued panels and their numerical display ranges.
+This module draws them; it does not load snapshots, query tables or mask fields.
 """
 from __future__ import annotations
 
-import math
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 from matplotlib.colors import Normalize
 from mpl_toolkits.axes_grid1 import make_axes_locatable
-import numpy as np
 
 
-# Each entry is (array key, colorbar label, colormap, log minimum, log maximum,
-# temperature tick group). Arrays are in CGS before the logarithm is taken.
+# Each entry is (saved panel key, colorbar label, colormap).
 TABLE_INPUT_PANELS = (
     (
         'nH_slice',
         r'$\log_{10}\,n_{\rm H}\ [\rm cm^{-3}]$',
-        'inferno', None, None, None,
+        'inferno',
     ),
     (
         'NH_slice',
         r'$\log_{10}\,N_{\rm H}\ [\rm cm^{-2}]$',
-        'cividis', None, None, None,
+        'cividis',
     ),
     (
         'dVdr_slice',
         r'$\log_{10}\,\frac{dV}{dr}$ [s$^{-1}$]',
-        'plasma', None, None, None,
+        'plasma',
     ),
     (
         'T_qk_slice',
         r'$\log_{10}\,T_{\rm QUOKKA}\ [\rm K]$',
-        'turbo', 2.0, 8.0, 'T',
+        'turbo',
     ),
     (
         'T_dsp_slice',
         r'$\log_{10}\,T_{\rm DESPOTIC}\ [\rm K]$',
-        'turbo', 2.0, 8.0, 'T',
+        'turbo',
     ),
 )
-TABLE_INPUT_PANEL_KEYS = tuple(panel[0] for panel in TABLE_INPUT_PANELS)
 
 
-def prepare_slice_panels(slices):
-    """Return log-valued images and their positive-data ranges.
-
-    slices : dict[str, ndarray], each shape (ny, nz)
-        The five arrays named in TABLE_INPUT_PANEL_KEYS, in CGS or kelvin.
-    Returns : dict[str, dict | None]
-        Images have shape (nz, ny), placing z vertically. Nonpositive values
-        are displayed as NaN; a panel without positive values is None.
-    """
-    panel_state = {}
-    for key in TABLE_INPUT_PANEL_KEYS:
-        data = np.asarray(slices[key]).T * 1.0
-        positive = data > 0
-        if not positive.any():
-            panel_state[key] = None
-            continue
-        log_data = np.where(
-            positive,
-            np.log10(np.where(positive, data, 1.0)),
-            np.nan,
-        )
-        panel_state[key] = {
-            'log_data': log_data,
-            'p_lo': float(np.nanmin(log_data)),
-            'p_hi': float(np.nanmax(log_data)),
-        }
-    return panel_state
-
-
-def draw_slice_panel(figure, axis, panel, state, extent_kpc):
+def draw_slice_panel(figure, axis, panel, payload, extent_kpc):
     """Draw one log-valued slice and its colorbar above the image."""
-    key, label, cmap, log_minimum, log_maximum, group = panel
-    if state is None:
+    key, label, cmap = panel
+    if payload[key + '_is_empty']:
         axis.set_title(f'{label}\n(empty)', fontsize=9)
         return
-    if log_minimum is None:
-        log_minimum = state['p_lo']
-    if log_maximum is None:
-        log_maximum = state['p_hi']
+    log_minimum, log_maximum = payload[key + '_log_limits']
 
     image = axis.imshow(
-        state['log_data'],
+        payload[key + '_log10'].T,
         origin='lower',
         extent=extent_kpc,
         aspect='equal',
@@ -109,16 +73,14 @@ def draw_slice_panel(figure, axis, panel, state, extent_kpc):
         labeltop=True,
         labelbottom=False,
     )
-    if group == 'T' and log_minimum is not None and log_maximum is not None:
-        low_tick = int(math.ceil(log_minimum))
-        high_tick = int(math.floor(log_maximum))
-        tick_step = 2 if high_tick - low_tick > 4 else 1
-        colorbar.set_ticks(list(range(low_tick, high_tick + 1, tick_step)))
+    colorbar_ticks = payload[key + '_colorbar_ticks']
+    if colorbar_ticks.size:
+        colorbar.set_ticks(colorbar_ticks)
     colorbar_axis.set_title(label, fontsize=8, pad=2)
 
 
 def plot_table_input_slice(
-    slices,
+    payload,
     extent_kpc,
     output_path,
     *,
@@ -127,11 +89,12 @@ def plot_table_input_slice(
     show_title=False,
     save_pdf=True,
 ):
-    """Save Figure 1 from five already calculated x-slice arrays.
+    """Save Figure 1 from the numerical panels stored in slice_data.npz.
 
-    slices : dict[str, ndarray], each shape (ny, nz)
-        nH_slice [cm^-3], NH_slice [cm^-2], dVdr_slice [s^-1],
-        T_qk_slice and T_dsp_slice [K]. Mask excluded cells with NaN first.
+    payload : dict[str, ndarray]
+        Saved output from products.table_input_slices.prepare_slice_plot_data().
+        {key}_log10 has shape (Ny, Nz), with masks and logarithms already
+        applied. Limits, temperature ticks and empty-panel flags are saved too.
     extent_kpc : sequence of four floats
         (y_min, y_max, z_min, z_max), for example (0, 1, -4, 4).
     output_path : str or Path
@@ -143,7 +106,6 @@ def plot_table_input_slice(
 
     Returns None. The plot retains the original five-panel layout and scales.
     """
-    panel_state = prepare_slice_panels(slices)
     figure, axes = plt.subplots(
         1,
         len(TABLE_INPUT_PANELS),
@@ -156,7 +118,7 @@ def plot_table_input_slice(
             figure=figure,
             axis=axis,
             panel=panel,
-            state=panel_state[panel[0]],
+            payload=payload,
             extent_kpc=extent_kpc,
         )
     axes[0].set_ylabel('z [kpc]', fontsize=10)

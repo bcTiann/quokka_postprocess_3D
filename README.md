@@ -59,6 +59,9 @@ python -m quokka2s.plot_emission_results
 
 Settings: [configs/emission_plot.yaml](configs/emission_plot.yaml).
 The default `products` path reads `output/plt0655228/processed/`.
+Process saves the numerical arrays, normalization and colour limits; plot
+reads them to draw. Optional image-resolution preparation is described in
+the [usage guide](docs/usage.md#plot-settings).
 
 Figures: `output/plt0655228/figures/` and
 `output/plt0655228/figures_titled/`, each with `png/` and `pdf/` subdirectories.

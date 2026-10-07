@@ -1,7 +1,6 @@
-"""Draw saved line luminosity images and sum pixels only for display."""
+"""Draw saved line luminosity images using their prepared colour limits."""
 from __future__ import annotations
 
-from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -9,39 +8,6 @@ import numpy as np
 from quokka2s.emission_results import ImageResults
 from quokka2s.figures.figure_files import save_figure_formats
 from quokka2s.figures.line_labels import LINE_TITLES
-
-
-def combine_image_pixels_for_display(images: ImageResults, factor: int) -> ImageResults:
-    """Sum neighbouring luminosity pixels into a separate display product.
-
-    images holds native (dust, line, Nx, Ny) light [erg/s] and x/y edges [kpc].
-    factor counts pixels combined along each axis; 1 returns the original product.
-    Example: factor=2 combines four native luminosities by addition, not averaging.
-    """
-    values = images.line_luminosity_image_erg_s
-    nx, ny = values.shape[-2:]
-    if type(factor) is not int or factor <= 0:
-        raise ValueError("image_downsample_factor must be a positive integer")
-    if nx % factor or ny % factor:
-        raise ValueError("image_downsample_factor must divide both image dimensions")
-    if factor == 1:
-        return images
-    # Split each x/y axis into coarse pixels and the native pixels inside them.
-    # Example: (2, 10, 256, 256) becomes (2, 10, 128, 2, 128, 2).
-    grouped_pixels = values.reshape(
-        *values.shape[:2],
-        nx // factor,
-        factor,
-        ny // factor,
-        factor,
-    )
-    binned = grouped_pixels.sum(axis=(3, 5))
-    return replace(
-        images,
-        line_luminosity_image_erg_s=binned,
-        x_edges_kpc=images.x_edges_kpc[::factor],
-        y_edges_kpc=images.y_edges_kpc[::factor],
-    )
 
 
 def plot_line_images(
@@ -54,8 +20,8 @@ def plot_line_images(
 ) -> list[Path]:
     """Draw paired luminosity images from their own saved names and pixel edges.
 
-    images comes from combine_image_pixels_for_display(); light is erg/s per
-    display pixel. Each line shares a colour scale across its dust states.
+    images comes from read_emission_results(); light is erg/s per saved pixel.
+    Each line's saved colour scale is shared across its dust states.
     Returns image paths; HI writes one image because its adopted dust opacity is zero.
     Example: images.for_line(line="halpha", dust_state="attenuated") is one map.
     """
@@ -63,21 +29,20 @@ def plot_line_images(
     from matplotlib.colors import LogNorm
 
     image_paths = []
-    for key in images.line_keys:
-        vmax = max(
-            float(images.for_line(line=key, dust_state=state).max())
-            for state in images.dust_state_keys
-        )
+    for line_index, key in enumerate(images.line_keys):
         norm = None
-        if vmax > 0:
-            norm = LogNorm(vmin=vmax / 1e5, vmax=vmax)
+        if images.line_has_emission[line_index]:
+            minimum, maximum = images.color_limits_erg_s[line_index]
+            norm = LogNorm(vmin=minimum, vmax=maximum)
         image_dust_states = images.dust_state_keys
         if key == "hi21":
             image_dust_states = ("intrinsic",)
         for dust_state in image_dust_states:
+            dust_index = images.dust_state_keys.index(dust_state)
             display_state = "" if key == "hi21" else dust_state
             figure = create_line_luminosity_image(
                 luminosity_image_erg_s=images.for_line(line=key, dust_state=dust_state),
+                image_is_hidden=images.image_is_hidden[dust_index, line_index],
                 x_edges_kpc=images.x_edges_kpc,
                 y_edges_kpc=images.y_edges_kpc,
                 color_scale=norm,
@@ -99,6 +64,7 @@ def plot_line_images(
 
 def create_line_luminosity_image(
     luminosity_image_erg_s: np.ndarray,
+    image_is_hidden: np.ndarray,
     x_edges_kpc: np.ndarray,
     y_edges_kpc: np.ndarray,
     color_scale,
@@ -112,8 +78,10 @@ def create_line_luminosity_image(
     ----------
     luminosity_image_erg_s : numpy.ndarray, shape (nx, ny)
         One dust state's displayed luminosity [erg/s per pixel].
+    image_is_hidden : numpy.ndarray of bool, shape (nx, ny)
+        Saved mask for pixels hidden on the logarithmic figure; raw light is retained.
     x_edges_kpc, y_edges_kpc : numpy.ndarray, shapes (nx + 1,), (ny + 1,)
-        Pixel boundaries [kpc] from combine_image_pixels_for_display().
+        Pixel boundaries [kpc] stored with this image resolution.
     color_scale : matplotlib.colors.LogNorm or None
         The line's paired colour limits; None means both images are zero.
     line_key, dust_state : str
@@ -145,7 +113,7 @@ def create_line_luminosity_image(
         mesh = axis.pcolormesh(
             x_edges_kpc,
             y_edges_kpc,
-            np.ma.masked_less_equal(image, 0.0),
+            np.ma.masked_array(image, mask=image_is_hidden.T),
             cmap="magma",
             norm=color_scale,
             shading="flat",

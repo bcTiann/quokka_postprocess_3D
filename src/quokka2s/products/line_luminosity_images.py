@@ -3,7 +3,7 @@
 Each line skips only its own missing emissivities, for both dust states.
 A batch is a contiguous slice of a C-order flattened x slab;
 only its x and y indices are needed because all z cells are summed into the
-native x-y image. Pixel binning belongs to the plotting stage.
+native x-y image. Optional coarser images are prepared from saved native pixels.
 No emissivity or luminosity cube is retained.
 """
 from __future__ import annotations
@@ -194,7 +194,7 @@ class LineLuminosityImageAccumulator:
         intrinsic_halpha = payload['line_luminosity_image_erg_s'][0, halpha_index]
         """
         images = self.native_images.copy()
-        return {
+        payload = {
             "line_keys": np.asarray(self.line_keys),
             "dust_state_keys": np.asarray(DUST_STATES),
             "axis_order": np.asarray("dust_state,line,x_pixel,y_pixel"),
@@ -204,6 +204,72 @@ class LineLuminosityImageAccumulator:
             "line_luminosity_image_erg_s": images,
             "total_luminosity_erg_s": images.sum(axis=(-2, -1)),
         }
+        add_image_display_fields(payload=payload)
+        return payload
+
+
+def add_image_display_fields(payload: dict[str, np.ndarray]) -> None:
+    """Save each line's shared intrinsic/attenuated colour limits.
+
+    payload contains luminosity images (2, L, Nx, Ny) [erg/s per pixel].
+    Adds color_limits_erg_s (L, 2), ordered minimum/maximum,
+    line_has_emission (L,), and image_is_hidden (2, L, Nx, Ny).
+    The mask hides nonpositive pixels on logarithmic figures without changing
+    raw luminosities. Existing image values are unchanged.
+    Example: both Halpha maps use [Halpha maximum / 1e5, Halpha maximum].
+    """
+    images = payload["line_luminosity_image_erg_s"]
+    line_maximum = images.max(axis=(0, 2, 3))
+    payload["color_limits_erg_s"] = np.column_stack((
+        line_maximum / 1e5,
+        line_maximum,
+    ))
+    payload["line_has_emission"] = line_maximum > 0.0
+    payload["image_is_hidden"] = images <= 0.0
+
+
+def prepare_coarser_image(payload: dict[str, np.ndarray], factor: int) -> dict:
+    """Sum neighbouring native luminosity pixels into a saved image product.
+
+    Parameters
+    ----------
+    payload : dict of ndarray
+        Native images.npz fields, including images (2, L, Nx, Ny) [erg/s]
+        and physical x/y edges [kpc]. The original payload is not modified.
+    factor : int
+        Native pixels per axis of the new pixel; must divide Nx and Ny.
+
+    Returns
+    -------
+    dict
+        Coarser luminosities, their own edges and recalculated colour limits.
+        Raw/native geometry metadata is retained. factor=2 sums four original
+        pixels; it does not average them or re-query any emission table.
+    """
+    images = payload["line_luminosity_image_erg_s"]
+    nx, ny = images.shape[-2:]
+    if type(factor) is not int or factor <= 0:
+        raise ValueError("image_downsample_factor must be a positive integer")
+    if nx % factor or ny % factor:
+        raise ValueError("image_downsample_factor must divide both image dimensions")
+    prepared = dict(payload)
+    grouped_pixels = images.reshape(
+        *images.shape[:2],
+        nx // factor,
+        factor,
+        ny // factor,
+        factor,
+    )
+    prepared["line_luminosity_image_erg_s"] = grouped_pixels.sum(axis=(3, 5))
+    prepared["x_edges_kpc"] = payload["x_edges_kpc"][::factor]
+    prepared["y_edges_kpc"] = payload["y_edges_kpc"][::factor]
+    prepared["image_shape"] = np.asarray([nx // factor, ny // factor])
+    prepared["image_downsample_factor"] = np.asarray(factor)
+    prepared["total_luminosity_erg_s"] = prepared["line_luminosity_image_erg_s"].sum(
+        axis=(-2, -1),
+    )
+    add_image_display_fields(payload=prepared)
+    return prepared
 
 
 def check_image_luminosity(image_totals, cell_totals, line_keys):

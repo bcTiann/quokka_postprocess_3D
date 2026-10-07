@@ -308,3 +308,46 @@ class MultiviewAccumulator:
             "face_slice_z_index": self.shape[2] // 2,
             "selections": {key: value.copy() for key, value in self._totals.items()},
         }
+
+
+def prepare_projection_map_data(payload, hydrogen_mass_fraction, hydrogen_mass_g):
+    """Add hydrogen columns and shared numerical color limits before saving.
+
+    Parameters
+    ----------
+    payload : dict[str, ndarray]
+        From MultiviewAccumulator.payload(), with native edge (Ny, Nz) and
+        face (Nx, Ny) arrays. Existing fields are retained unchanged.
+    hydrogen_mass_fraction, hydrogen_mass_g : float
+        The calculation report's X_H and adopted hydrogen mass [g].
+
+    Returns
+    -------
+    dict[str, ndarray]
+        Adds {all|valid}_{edge|face}_hydrogen_column_cm2 and each selection's
+        {selection}_color_limits_{field}, a two-entry [minimum, maximum]
+        array shared by its edge and face views. Velocity limits are symmetric;
+        other limits use the positive minimum and maximum of both views.
+
+    Example: prepared['valid_edge_hydrogen_column_cm2'] is ready to draw
+    without converting the saved surface mass density inside the renderer.
+    """
+    prepared = dict(payload)
+    conversion_per_g = hydrogen_mass_fraction / hydrogen_mass_g
+    for selection in ("all", "valid"):
+        for view in ("edge", "face"):
+            prefix = f"{selection}_{view}_"
+            prepared[prefix + "hydrogen_column_cm2"] = (
+                prepared[prefix + "sigma_g_cm2"] * conversion_per_g
+            )
+        for field in ("rho_g_cm3", "hydrogen_column_cm2", "vz_kms", "T_mixed_K"):
+            views = [prepared[f"{selection}_{view}_{field}"] for view in ("edge", "face")]
+            finite_values = np.concatenate([values[np.isfinite(values)] for values in views])
+            if field == "vz_kms":
+                maximum_absolute_velocity = float(np.max(np.abs(finite_values)))
+                limits = (-maximum_absolute_velocity, maximum_absolute_velocity)
+            else:
+                positive_values = finite_values[finite_values > 0.0]
+                limits = (float(positive_values.min()), float(positive_values.max()))
+            prepared[f"{selection}_color_limits_{field}"] = np.asarray(limits)
+    return prepared

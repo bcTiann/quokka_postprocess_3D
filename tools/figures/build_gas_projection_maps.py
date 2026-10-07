@@ -24,27 +24,28 @@ ROOT = Path(__file__).resolve().parents[2]
 if __package__ in (None, ''):
     sys.path.insert(0, str(ROOT / 'src'))
 
-from quokka2s.constants import HYDROGEN_MASS_G
 from quokka2s.figures.gas_projections import plot_gas_projection_maps
-from quokka2s.physics.settings import X_H, EMISSION_TEMPERATURE_BOUNDARY_K
-from quokka2s.physics.gas_fields import mixed_gas_temperature_K
-from quokka2s.processing_inputs import load_processing_inputs
-from quokka2s.products.gas_projections import MultiviewAccumulator
+from quokka2s.products.gas_projections import (
+    MultiviewAccumulator,
+    prepare_projection_map_data,
+)
 from quokka2s.run_settings import DEFAULT_PROCESS_CONFIG, load_process_config
-from quokka2s.snapshot_reader import slab_windows
 
 
 def accumulate_projection_slab(
-    snapshot, emission_calculator, accumulator, x_start, x_stop, query_chunk,
+    snapshot, despotic_reader, accumulator, x_start, x_stop, query_chunk,
 ):
     """Read one full-y/z slab, query its batches, then accumulate both views.
 
     The temporary mixed-temperature and valid arrays have one value per slab
     cell. They are discarded with the slab when this function returns.
-    emission_calculator is shared across batches; calculate(cells=...) returns
-    each batch's DESPOTIC temperature [K] and QUOKKA temperature branch.
+    despotic_reader is shared across batches; read_temperature(cells=...) returns
+    only DESPOTIC temperature [K]. The QUOKKA temperature defines the cold branch.
     Hot cells remain available even when DESPOTIC or a line lookup fails.
     """
+    from quokka2s.physics.gas_fields import mixed_gas_temperature_K
+    from quokka2s.physics.settings import EMISSION_TEMPERATURE_BOUNDARY_K
+
     slab = snapshot.read_slab(
         x_start=x_start,
         x_stop=x_stop,
@@ -54,15 +55,16 @@ def accumulate_projection_slab(
     for cells in slab.iter_batches(batch_size=query_chunk):
         start = cells.batch_start
         stop = start + cells.cell_count
-        emission = emission_calculator.calculate(cells=cells)
+        temperature_despotic = despotic_reader.read_temperature(cells=cells)
+        cold_cells = cells.temperature_QUOKKA_K < EMISSION_TEMPERATURE_BOUNDARY_K
         batch_temperature = mixed_gas_temperature_K(
-            cold_cells=emission.cold_cells,
-            temperature_despotic_K=emission.despotic_temperature_K,
+            cold_cells=cold_cells,
+            temperature_despotic_K=temperature_despotic,
             temperature_quokka_K=cells.temperature_QUOKKA_K,
         )
         mixed_temperature[start:stop] = batch_temperature
         valid[start:stop] = np.isfinite(batch_temperature) & (batch_temperature > 0.0)
-        del cells, emission
+        del cells
 
     # Restore (slab_nx, Ny, Nz) for the x- and z-axis projection sums.
     density = slab.density_g_cm3.reshape(slab.shape)
@@ -97,8 +99,10 @@ def accumulate_projection_slab(
     return counts, masses
 
 
-def process_gas_projection_maps(snapshot, emission_calculator, settings):
+def process_gas_projection_maps(snapshot, despotic_reader, settings):
     """Keep only the accumulated 2D maps while streaming through all x slabs."""
+    from quokka2s.snapshot_reader import slab_windows
+
     if snapshot.processing_shape != snapshot.shape:
         raise ValueError(
             'Gas projection maps require full x and y ranges; use the standard '
@@ -119,7 +123,7 @@ def process_gas_projection_maps(snapshot, emission_calculator, settings):
     for number, (x_start, x_stop) in enumerate(selected_slabs, start=1):
         slab_counts, slab_masses = accumulate_projection_slab(
             snapshot=snapshot,
-            emission_calculator=emission_calculator,
+            despotic_reader=despotic_reader,
             accumulator=accumulator,
             x_start=x_start,
             x_stop=x_stop,
@@ -210,9 +214,9 @@ def save_projection_data(payload, report, output_dir):
     )
 
 
-def render_projection_figures(payload, report, stem):
+def render_projection_figures(payload, stem):
     """Draw the saved maps and write their display ranges beside the figures."""
-    display = plot_gas_projection_maps(payload=payload, report=report, stem=stem)
+    display = plot_gas_projection_maps(payload=payload, stem=stem)
     stem.with_name(stem.name + '_display.json').write_text(
         json.dumps(display, indent=2) + '\n',
         encoding='utf-8',
@@ -235,10 +239,13 @@ def main():
     output_dir = args.output_dir.resolve()
     figure_stem = args.figure_stem or output_dir / 'multiview_figure_particles'
     if args.plot_only:
-        report = json.loads((output_dir / 'multiview_report.json').read_text())
         with np.load(output_dir / 'multiview_maps.npz', allow_pickle=False) as data:
             payload = {key: np.array(data[key]) for key in data.files}
     else:
+        from quokka2s.constants import HYDROGEN_MASS_G
+        from quokka2s.physics.settings import X_H
+        from quokka2s.processing_inputs import load_processing_inputs
+
         settings = load_process_config(args.config)
         settings = replace(settings, output_dir=output_dir)
         if settings.max_slabs is not None:
@@ -246,7 +253,7 @@ def main():
         snapshot, emission_calculator = load_processing_inputs(settings)
         accumulator, counts, masses = process_gas_projection_maps(
             snapshot=snapshot,
-            emission_calculator=emission_calculator,
+            despotic_reader=emission_calculator.despotic_reader,
             settings=settings,
         )
         payload = accumulator.payload()
@@ -278,9 +285,14 @@ def main():
             'accumulator': volume_report,
             'validation': validation,
         }
+        payload = prepare_projection_map_data(
+            payload=payload,
+            hydrogen_mass_fraction=report['X_H'],
+            hydrogen_mass_g=report['hydrogen_mass_g'],
+        )
         save_projection_data(payload=payload, report=report, output_dir=output_dir)
     if not args.no_plot:
-        render_projection_figures(payload=payload, report=report, stem=figure_stem)
+        render_projection_figures(payload=payload, stem=figure_stem)
 
 
 if __name__ == '__main__':

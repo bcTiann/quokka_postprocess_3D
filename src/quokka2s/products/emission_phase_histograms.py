@@ -43,13 +43,10 @@ class PhasePanelValues:
 
 
 def accumulate_emission_phase_histograms(
+    *,
     histograms,
-    rho,
-    tq,
-    td,
-    column,
+    cells,
     emission,
-    volume,
 ):
     """Add gas mass and line luminosity to density-temperature phase panels.
 
@@ -57,15 +54,14 @@ def accumulate_emission_phase_histograms(
     ----------
     histograms : dict of DexHistogram
         Accumulators keyed by PANELS, e.g. histograms["halpha"].
-    rho, tq, td, column : array-like, shape (B,)
-        Original batch density [g/cm^3], QUOKKA/DESPOTIC temperatures [K],
-        and shielding hydrogen column [cm^-2].
+    cells : CellBatch
+        Original batch density [g/cm^3], QUOKKA temperature [K], and
+        shielding hydrogen column [cm^-2], each shape (B,). Its cell volume
+        [cm^3] converts density/emissivity to mass/luminosity weights.
     emission : BatchEmission
         From CellEmissionCalculator.calculate(). Each named line contains
         intrinsic emissivity [erg/s/cm^3] and its emitting-state temperature_K [K], both
         (B,). Missing results in one line do not remove another line's cells.
-    volume : float or array-like, shape (B,)
-        Original cell volume [cm^3]; weights are density/epsilon times volume.
 
     Returns
     -------
@@ -81,12 +77,8 @@ def accumulate_emission_phase_histograms(
     if missing:
         raise ValueError(f"Missing phase histograms: {sorted(missing)}")
     rows = prepare_phase_panel_values(
-        rho=rho,
-        tq=tq,
-        td=td,
-        column=column,
+        cells=cells,
         emission=emission,
-        volume=volume,
     )
     # Check every weight before changing any histogram, including overflows
     # in the conversion from density/epsilon to mass/luminosity.
@@ -101,19 +93,17 @@ def accumulate_emission_phase_histograms(
             )
 
 
-def prepare_phase_panel_values(rho, tq, td, column, emission, volume):
+def prepare_phase_panel_values(*, cells, emission):
     """Prepare each panel using only the quantities that panel requires.
 
     Parameters
     ----------
-    rho, tq, td, column : ndarray, shape (B,)
-        Original batch density [g/cm^3], QUOKKA/DESPOTIC temperature [K], and
-        shielding column [cm^-2].
+    cells : CellBatch
+        Original density [g/cm^3], QUOKKA temperature [K], shielding column
+        [cm^-2], each shape (B,), and cell volume [cm^3].
     emission : BatchEmission
         Named LineEmission results and cold_cells from the cell calculator.
         Each line's fields and cold_cells have shape (B,) in original order.
-    volume : float or ndarray, shape (B,)
-        Cell volume [cm^3].
 
     Returns
     -------
@@ -123,17 +113,18 @@ def prepare_phase_panel_values(rho, tq, td, column, emission, volume):
         temperatures. Each line requires its own emissivity and temperature.
         Example: a hot cell with missing T_D remains in mixed-temperature mass.
     """
-    rho = np.asarray(rho, dtype=float)
-    tq = np.asarray(tq, dtype=float)
-    td = np.asarray(td, dtype=float)
-    column = np.asarray(column, dtype=float)
+    # Keep float64 coordinates before log10, including float32 table results.
+    rho = np.asarray(cells.density_g_cm3, dtype=float)
+    tq = np.asarray(cells.temperature_QUOKKA_K, dtype=float)
+    td = np.asarray(emission.despotic_temperature_K, dtype=float)
+    column = np.asarray(cells.shielding_NH_cm2, dtype=float)
     shape = rho.shape
     if any(value.shape != shape for value in (tq, td, column)):
         raise ValueError("Phase coordinate shapes must match")
     cold_cells = np.asarray(emission.cold_cells)
     if cold_cells.dtype.kind != "b" or cold_cells.shape != shape:
         raise ValueError("Emission cold_cells must be boolean with the cell shape")
-    volume = np.asarray(volume, dtype=float)
+    volume = np.asarray(cells.cell_volume_cm3, dtype=float)
     if volume.shape not in ((), shape):
         raise ValueError("Volume must be scalar or match the cell shape")
     for name, value in (("density", rho), ("QUOKKA temperature", tq),

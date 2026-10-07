@@ -6,6 +6,7 @@
 - Use `docs/emission_method.md` and the current source for scientific rules.
 - `process_snapshot.py` calculates and saves numerical products.
 - `plot_emission_results.py` reads those products; it must not read snapshots or query emission tables.
+- All renderers read prepared numerical arrays. Normalization, physical unit conversions, pixel sums, display masks/ranges and contour analysis belong to numerical preparation before saving, including auxiliary figures. Plot readers/getters only select stored values. Matplotlib scaling, tick/label formatting and layout remain rendering.
 
 ## Write readable code
 

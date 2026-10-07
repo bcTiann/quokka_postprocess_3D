@@ -1,17 +1,13 @@
 #!/usr/bin/env python3
-"""Plot quick-extinguished HM2012 plus a fixed quick-extinguished ISM field.
+"""Draw saved quick-extinguished HM2012 and fixed filtered-ISM components.
 
-Inputs are the historical exports in runtime/cloudy_eightline/sed: native
-HM12, attenuation columns 19 through 23, and export_ism_filtered.inc. These
-figure labels and filenames differ from the current Jeans-table SED bundle,
-whose attenuation grid is 18 through 21. --data-dir must retain this figure's
-original component definitions; sharing the text reader does not change them.
+Run prepare_radiation_fields.py --recipe components first. This command reads
+the prepared NPZ; it does not read Cloudy exports or calculate continuum sums.
 """
 
 from __future__ import annotations
 
 import argparse
-import json
 from pathlib import Path
 
 import matplotlib
@@ -20,30 +16,20 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-from quokka2s.cloudy.incident_spectrum import read_incident_spectrum
-from quokka2s.figures.radiation_fields import (
-    EIGHT_EV_RYD,
-    RADIATION_X_MAX_RYD,
-    RADIATION_X_MIN_EV,
-    RADIATION_X_MIN_RYD,
-    RADIATION_Y_DYNAMIC_RANGE_DEX,
-    add_eight_ev_marker,
-    positive,
+from quokka2s.figures.radiation_fields import add_eight_ev_marker
+from quokka2s.products.radiation_fields import (
+    COMBINED_RADIATION_STEM,
+    COMPONENT_RADIATION_STEM,
 )
-
-
-HM12_COLUMN_LABELS = (0, 19, 20, 21, 22, 23)
 
 
 def main() -> None:
     project_root = Path(__file__).resolve().parents[2]
-    default_data_dir = project_root / "runtime/cloudy_eightline/sed"
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--data-dir",
+        "--data",
         type=Path,
-        default=default_data_dir,
-        help="Directory containing the exported Cloudy incident-continuum .inc files",
+        help="Prepared radiation NPZ; defaults to the selected figure's output stem",
     )
     parser.add_argument(
         "--output-dir",
@@ -57,47 +43,16 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    data_dir = args.data_dir.resolve()
     output_dir = args.output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
-
-    ism_path = data_dir / "export_ism_filtered.inc"
-    ism_data = read_incident_spectrum(
-        path=ism_path,
-        usecols=(0, 1),
-    )
-    energy = ism_data[:, 0]
-    ism_nh21 = ism_data[:, 1]
-
-    hm12: dict[int, np.ndarray] = {}
-    hm12_paths: dict[int, Path] = {}
-    for label in HM12_COLUMN_LABELS:
-        path = (
-            data_dir / "export_hm12_native.inc"
-            if label == 0
-            else data_dir / f"export_hm12_extinguished_nh{label}.inc"
-        )
-        data = read_incident_spectrum(
-            path=path,
-            usecols=(0, 1),
-        )
-        if not np.array_equal(energy, data[:, 0]):
-            raise ValueError(f"Cloudy energy mesh differs for {path}")
-        hm12_paths[label] = path
-        hm12[label] = data[:, 1]
-
-    combined = {
-        label: ism_nh21 + hm12_values
-        for label, hm12_values in hm12.items()
-    }
-    visible = (energy >= RADIATION_X_MIN_RYD) & (
-        energy <= RADIATION_X_MAX_RYD
-    )
-    visible_maximum = max(
-        float(values[visible].max()) for values in combined.values()
-    )
-    y_max = 10.0 ** np.ceil(np.log10(visible_maximum))
-    y_min = y_max / 10.0**RADIATION_Y_DYNAMIC_RANGE_DEX
+    stem = COMPONENT_RADIATION_STEM if args.components_only else COMBINED_RADIATION_STEM
+    data_path = args.data or output_dir / (stem + ".npz")
+    with np.load(data_path, allow_pickle=False) as data:
+        payload = {key: data[key] for key in data.files}
+    energy = payload["energy_Ryd"]
+    column_labels = payload["hm12_column_labels"]
+    x_min, x_max = payload["x_limits_Ryd"]
+    y_min, y_max = payload["intensity_limits_erg_cm2_s"]
 
     colors = {
         0: "#6A3D9A",
@@ -131,10 +86,10 @@ def main() -> None:
         )
         absolute_ax, component_ax = axes_array
         axes = tuple(axes_array)
-        for marker_offset, label in enumerate(HM12_COLUMN_LABELS):
+        for marker_offset, label in enumerate(column_labels):
             absolute_ax.loglog(
                 energy,
-                positive(values=combined[label]),
+                payload[f"combined_{label}HM_positive"],
                 color=colors[label],
                 linestyle=linestyles[label],
                 linewidth=2.3,
@@ -146,16 +101,16 @@ def main() -> None:
 
     component_ax.loglog(
         energy,
-        positive(values=ism_nh21),
+        payload["ism_extinguish_nh21_positive"],
         color="black",
         linestyle="--",
         linewidth=2.2,
         label="attenuated ISM",
     )
-    for label in HM12_COLUMN_LABELS:
+    for label in column_labels:
         component_ax.loglog(
             energy,
-            positive(values=hm12[label]),
+            payload[f"hm12_nh{label}_positive"],
             color=colors[label],
             linestyle="-" if args.components_only else linestyles[label],
             linewidth=1.8,
@@ -165,9 +120,10 @@ def main() -> None:
     for axis in axes:
         add_eight_ev_marker(
             axis=axis,
+            marker_Ryd=payload["eight_ev_marker_Ryd"],
             label_line=args.components_only or axis is absolute_ax,
         )
-        axis.set_xlim(RADIATION_X_MIN_RYD, RADIATION_X_MAX_RYD)
+        axis.set_xlim(x_min, x_max)
         axis.grid(True, which="both", alpha=0.17)
     if absolute_ax is not None:
         absolute_ax.set_ylim(y_min, y_max)
@@ -191,58 +147,13 @@ def main() -> None:
     component_ax.legend(frameon=False, fontsize=7.4, ncol=2, loc="upper center")
     fig.tight_layout()
 
-    stem = (
-        "cloudy_HM2012_NH0_19_23_and_attenuated_ISM_NH21_components"
-        if args.components_only
-        else "cloudy_combined_and_components_HM2012_NH0_19_23_ISM_NH21"
-    )
     png_path = output_dir / f"{stem}.png"
     pdf_path = output_dir / f"{stem}.pdf"
-    npz_path = output_dir / f"{stem}.npz"
-    json_path = output_dir / f"{stem}.json"
     fig.savefig(png_path, dpi=300, bbox_inches="tight")
     fig.savefig(pdf_path, bbox_inches="tight")
     plt.close(fig)
 
-    arrays: dict[str, np.ndarray] = {
-        "energy_Ryd": energy,
-        "ism_extinguish_nh21": ism_nh21,
-    }
-    for label in HM12_COLUMN_LABELS:
-        arrays[f"hm12_nh{label}"] = hm12[label]
-        arrays[f"combined_{label}HM"] = combined[label]
-    np.savez_compressed(npz_path, **arrays)
-
-    report = {
-        "definition": (
-            "combined 0HM = extinguished ISM NH=1e21 + unattenuated HM12; "
-            "combined kHM = extinguished ISM NH=1e21 + HM12 after "
-            "extinguish column=k leak=0"
-        ),
-        "hm12_column_labels": list(HM12_COLUMN_LABELS),
-        "ism_log_column_density_cm-2": 21,
-        "attenuation_method": "Cloudy extinguish command (quick-test prescription)",
-        "energy_marker": {"eV": 8.0, "Ryd": EIGHT_EV_RYD},
-        "inputs": {
-            "ism_nh21": str(ism_path),
-            "hm12": {str(key): str(value) for key, value in hm12_paths.items()},
-        },
-        "plot_range": {
-            "x_min_eV": RADIATION_X_MIN_EV,
-            "x_min_Ryd": RADIATION_X_MIN_RYD,
-            "x_max_Ryd": RADIATION_X_MAX_RYD,
-            "y_max": y_max,
-            "y_min": y_min,
-            "y_dynamic_range_dex": RADIATION_Y_DYNAMIC_RANGE_DEX,
-        },
-        "outputs": {
-            "plot_png": str(png_path),
-            "plot_pdf": str(pdf_path),
-            "npz": str(npz_path),
-        },
-    }
-    json_path.write_text(json.dumps(report, indent=2) + "\n")
-    print(json.dumps(report, indent=2))
+    print(pdf_path)
 
 
 if __name__ == "__main__":

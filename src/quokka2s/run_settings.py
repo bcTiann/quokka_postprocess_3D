@@ -11,7 +11,7 @@ from pathlib import Path
 
 import yaml
 
-from quokka2s.physics.dust_attenuation import DEFAULT_DRAINE_TABLE
+from quokka2s.input_paths import DEFAULT_DRAINE_TABLE
 
 
 # Relative names only: the entry points use the working directory; standalone
@@ -48,7 +48,7 @@ class ProcessSettings:
 class PlotSettings:
     """Saved-result paths and display choices; no snapshot or table inputs.
 
-    image_downsample_factor=2 sums 2x2 native pixels only when rendering.
+    image_downsample_factor=2 selects the saved 2x2-summed image product.
     A missing titled_output_dir omits the separate standalone figure version.
     """
 

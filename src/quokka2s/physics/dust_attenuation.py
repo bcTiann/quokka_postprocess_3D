@@ -13,10 +13,7 @@ import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
 from quokka2s.line_definitions import LINE_DEFINITIONS
-
-
-REPO_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_DRAINE_TABLE = REPO_ROOT / "vendor/draine/kext_albedo_WD_MW_3.1_60_D03.all"
+from quokka2s.input_paths import DEFAULT_DRAINE_TABLE
 
 
 def load_draine_extinction(path=DEFAULT_DRAINE_TABLE):
