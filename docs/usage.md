@@ -14,8 +14,11 @@ The [process YAML](../configs/emission_process.yaml) specifies these input and o
 | `cloudy_table` | Eight-line Cloudy table |
 | `output_dir` | New directory for the numerical products |
 
-Relative paths are resolved from the YAML file's directory. Processing refuses
-to overwrite an existing output directory; choose a new name for each run.
+Relative paths are resolved from the YAML file's directory. Absolute paths
+keep their location; `~/...` starts from the user's home directory.
+`dataset` must point to the individual snapshot containing `Header`, rather
+than its parent `inputs/snapshots/` directory. Processing refuses to overwrite
+an existing output directory; choose a new name for each run.
 An interrupted emission run starts again from the beginning in a new directory.
 Table-building checkpoints are a separate mechanism.
 

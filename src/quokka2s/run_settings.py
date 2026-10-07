@@ -2,7 +2,8 @@
 
 Only the paths and optional execution settings listed below are accepted. A
 relative path in the YAML file is relative to that file, not to the shell's
-current working directory. Environment variables are never expanded.
+current working directory. A leading ~ expands to the user's home directory;
+environment variables such as $HOME are not expanded.
 """
 from __future__ import annotations
 
@@ -86,7 +87,7 @@ def _read_mapping(path: str | Path, required: set[str], allowed: set[str]) -> tu
     """Read a YAML mapping and reject missing or unknown setting names.
 
     Return its absolute path and values; the path anchors relative input paths."""
-    config_path = Path(path).resolve()
+    config_path = Path(path).expanduser().resolve()
     try:
         with config_path.open(encoding="utf-8") as source:
             values = yaml.safe_load(source)
@@ -106,15 +107,19 @@ def _read_mapping(path: str | Path, required: set[str], allowed: set[str]) -> tu
 
 
 def _path_value(name: str, value: object, directory: Path, *, nullable: bool = False) -> Path | None:
-    """Resolve a nonempty path string relative to the YAML directory.
+    """Expand ~, then anchor a relative path to the YAML directory.
 
-    None is accepted only for nullable settings; no environment expansion occurs."""
+    Absolute paths keep their own location. None is accepted only for nullable
+    settings; environment variables are not expanded.
+    Example: ~/snapshots/plt0655228 uses the user's home, not configs/."""
     if value is None and nullable:
         return None
     if type(value) is not str or not value.strip():
         raise ValueError(f"{name} must be a nonempty path string")
-    path = Path(value)
-    return (directory / path).resolve()
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        path = directory / path
+    return path.resolve()
 
 
 def _positive_int(name: str, value: object, *, nullable: bool = False) -> int | None:

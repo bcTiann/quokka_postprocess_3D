@@ -47,7 +47,11 @@ def check_input_paths(config):
             raise FileNotFoundError(f'{name}: {getattr(config, name)}')
     snapshot_header = config.dataset / 'Header'
     if not snapshot_header.is_file():
-        raise FileNotFoundError(f'Snapshot Header: {snapshot_header}')
+        raise FileNotFoundError(
+            'dataset must point to the snapshot directory containing Header '
+            '(e.g. snapshots/plt0655228), not its parent. '
+            f'Missing file: {snapshot_header}'
+        )
 
 
 def open_snapshot(dataset_path, xy_region=None) -> Snapshot:

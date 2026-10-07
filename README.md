@@ -20,7 +20,7 @@ python -m pip install -e .
 
 ## 3. Set the inputs
 
-Paths are relative to the repository root:
+Default input locations, relative to the repository root:
 
 | Input | Default path | Provided by |
 |---|---|---|
@@ -36,8 +36,11 @@ location:
 dataset: /absolute/path/to/plt0655228
 ```
 
-The snapshot directory must include `Header`, `metadata.yaml`, and its data
-subdirectories. The bundled tables are for the `plt0655228` reference snapshot.
+In YAML, relative paths are resolved from the configuration file's directory.
+Absolute paths and `~/...` paths are also supported. Point `dataset` to the
+individual snapshot containing `Header`, `metadata.yaml`, and its data
+subdirectories, not the parent `inputs/snapshots/` directory.
+The bundled tables are for the `plt0655228` reference snapshot.
 
 ## 4. Process
 
