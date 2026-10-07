@@ -26,6 +26,7 @@
 /yt-env/
 
 # Personal audit and experiment records are not public documentation.
+/AGENTS.md
 /tests/
 /docs/validation/
 /.venv/
