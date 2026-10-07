@@ -9,11 +9,11 @@ cd quokka_postprocess_3D
 
 ## 2. Configure the environment
 
-Use Python 3.11:
+Create a Conda environment with Python 3.11, the version used to validate this pipeline:
 
 ```bash
-python3.11 -m venv .venv
-source .venv/bin/activate
+conda create -n quokka2s python=3.11 pip
+conda activate quokka2s
 python -m pip install -r requirements.txt
 python -m pip install -e .
 ```

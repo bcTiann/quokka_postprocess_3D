@@ -1,8 +1,8 @@
 # Pinned, known-good environment for reproducing the quokka2s pipeline.
 #
 # Usage from the repository root:
-#     python3.11 -m venv .venv
-#     source .venv/bin/activate
+#     conda create -n quokka2s python=3.11 pip
+#     conda activate quokka2s
 #     python -m pip install -r requirements.txt
 #     python -m pip install -e .
 #
