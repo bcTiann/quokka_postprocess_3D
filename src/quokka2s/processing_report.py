@@ -11,7 +11,6 @@ import time
 import numpy as np
 
 from quokka2s.constants import (
-    HYDROGEN_MASS_G,
     BOLTZMANN_ERG_K,
     GRAVITATIONAL_CGS,
     PARSEC_CM,
@@ -19,6 +18,7 @@ from quokka2s.constants import (
     SPEED_OF_LIGHT_CM_S,
     ATOMIC_MASS_UNIT_G,
 )
+from quokka2s.physics.gas_fields import HYDROGEN_MASS_G
 from quokka2s.products import DUST_STATES
 from quokka2s.products.emission_products import VELOCITY_CHANNELS
 

@@ -2,10 +2,14 @@
 
 import numpy as np
 from unyt import s
+from yt.utilities.physical_constants import mh
 
-from ..constants import HYDROGEN_MASS_G
 from . import settings
 from .settings import SIMULATION_DVDR_MIN_S
+
+
+# Mean hydrogen atomic mass supplied by yt [g], used in nH = X_H * rho / m_H.
+HYDROGEN_MASS_G = mh.to_value("g")
 
 
 def hydrogen_number_density_cm3(*, density_g_cm3: np.ndarray) -> np.ndarray:

@@ -95,8 +95,10 @@ snapshot, emission_calculator = load_processing_inputs(config)
 Physical constants come from [constants.py](../src/quokka2s/constants.py), which converts
 Astropy constants once to the units used by NumPy arrays. Functions import
 these constants directly; they are not passed through the calculator or constructors.
-The adopted hydrogen mass is `1.007947 * const.u`, using Astropy's atomic mass
-unit. The old CIAOLoop constants in the table-reuse
+The hydrogen mass is read directly from yt's `mh` and converted to grams in
+[gas_fields.py](../src/quokka2s/physics/gas_fields.py), which owns the snapshot
+density conversions. The shared constants module does not import yt, so plotting
+saved products still works without yt. The old CIAOLoop constants in the table-reuse
 check describe how that table was built and remain historical values.
 
 Opening checks cover missing inputs and numerical compatibility, including the

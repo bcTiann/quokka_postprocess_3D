@@ -38,7 +38,7 @@ def calculate_slice_fields(snapshot, despotic_reader, slice_index, query_chunk):
     The saved valid mask means mixed temperature is available: cold cells require T_DESPOTIC,
     hot cells use T_QUOKKA regardless of DESPOTIC or line-emissivity failures.
     """
-    from quokka2s.constants import HYDROGEN_MASS_G
+    from quokka2s.physics.gas_fields import HYDROGEN_MASS_G
     from quokka2s.physics.gas_fields import mixed_gas_temperature_K
     from quokka2s.physics.settings import X_H, EMISSION_TEMPERATURE_BOUNDARY_K
 
@@ -86,7 +86,7 @@ def calculate_slice_fields(snapshot, despotic_reader, slice_index, query_chunk):
 
 def save_slice_data(payload, snapshot, settings, slice_index):
     """Save raw fields, prepared numerical panels, and a compact report."""
-    from quokka2s.constants import HYDROGEN_MASS_G
+    from quokka2s.physics.gas_fields import HYDROGEN_MASS_G
     from quokka2s.physics.settings import X_H
 
     np.savez_compressed(settings.output_dir / 'slice_data.npz', **payload)

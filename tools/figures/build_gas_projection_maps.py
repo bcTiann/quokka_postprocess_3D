@@ -243,7 +243,7 @@ def main():
         with np.load(output_dir / 'multiview_maps.npz', allow_pickle=False) as data:
             payload = {key: np.array(data[key]) for key in data.files}
     else:
-        from quokka2s.constants import HYDROGEN_MASS_G
+        from quokka2s.physics.gas_fields import HYDROGEN_MASS_G
         from quokka2s.physics.settings import X_H
         from quokka2s.processing_inputs import load_processing_inputs
 
