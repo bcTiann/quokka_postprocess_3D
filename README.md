@@ -1,5 +1,8 @@
 # quokka2s — QUOKKA emission post-processing
 
+Running on Setonix? Follow the [Setonix guide](docs/setonix.md) to configure
+the environment, process a snapshot, and download the results for local plotting.
+
 ## 1. Clone
 
 ```bash
@@ -20,7 +23,8 @@ python -m pip install -e .
 
 ## 3. Set the inputs
 
-Default input locations, relative to the repository root:
+The supplied configuration uses these input paths, relative to the repository
+root. The snapshot and outputs can also be stored outside the repository.
 
 | Input | Default path | Provided by |
 |---|---|---|
@@ -28,15 +32,17 @@ Default input locations, relative to the repository root:
 | DESPOTIC table | `inputs/tables/despotic/interpolated.npz` | Included in Git |
 | Cloudy table | `inputs/tables/cloudy/emission.npz` | Included in Git |
 
-Place the complete snapshot directory at `inputs/snapshots/plt0655228/`,
-including `Header`, `metadata.yaml`, and its data subdirectories.
-For another snapshot name, update `dataset` in
-[configs/emission_process.yaml](configs/emission_process.yaml).
+Set `dataset` in [configs/emission_process.yaml](configs/emission_process.yaml)
+to the complete snapshot directory containing `Header`, `metadata.yaml`, and
+its data subdirectories. Set `output_dir` to a new directory for the results.
+Relative YAML paths are relative to the configuration file; absolute paths
+are also supported.
 
-Default inputs and outputs stay inside this clone. YAML paths are relative
-to the configuration file: `../inputs/` refers to this repository's `inputs/`.
-The program reads the specified files; it does not search outside the repository
-for replacement inputs.
+On Setonix, keep the repository and bundled tables under `$MYSOFTWARE`, and
+store the snapshot and processed results under `$MYSCRATCH`. Use the
+[Setonix configuration instructions](docs/setonix.md#4-create-the-process-configuration)
+to set these paths in a separate configuration file.
+
 The bundled tables are for the `plt0655228` reference snapshot.
 
 ## 4. Process
@@ -48,7 +54,7 @@ python -m quokka2s.process_snapshot
 ```
 
 Settings: [configs/emission_process.yaml](configs/emission_process.yaml).
-Results: `output/plt0655228/processed/`.
+Default results: `output/plt0655228/processed/`.
 For another run, choose a new `output_dir` in the process config.
 
 ## 5. Plot

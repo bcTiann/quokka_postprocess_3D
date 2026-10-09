@@ -14,8 +14,12 @@ The [process YAML](../configs/emission_process.yaml) specifies these input and o
 | `cloudy_table` | Eight-line Cloudy table |
 | `output_dir` | New directory for the numerical products |
 
-Default input and output paths stay inside the cloned repository. Relative
-paths are resolved from the YAML file's directory, so `../inputs/` in
+The supplied YAML uses repository-local input and output paths. To store data
+elsewhere, set `dataset` and `output_dir` to the desired locations. The
+[Setonix guide](setonix.md) keeps the repository and bundled tables under
+`$MYSOFTWARE`, and snapshots and results under `$MYSCRATCH`.
+
+Relative paths are resolved from the YAML file's directory, so `../inputs/` in
 `configs/emission_process.yaml` refers to this clone's `inputs/` directory.
 `dataset` must point to the individual snapshot containing `Header`, rather
 than its parent `inputs/snapshots/` directory. Processing refuses to overwrite
