@@ -40,7 +40,7 @@ are also supported.
 
 On Setonix, keep the repository and bundled tables under `$MYSOFTWARE`, and
 store the snapshot and processed results under `$MYSCRATCH`. Use the
-[Setonix configuration instructions](docs/setonix.md#4-create-the-process-configuration)
+[Setonix input settings](docs/setonix.md#3-set-the-inputs)
 to set these paths in a separate configuration file.
 
 The bundled tables are for the `plt0655228` reference snapshot.

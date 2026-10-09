@@ -9,7 +9,7 @@ The bundled emission tables target the `plt0655228` reference snapshot.
 Before using another snapshot, check that its physical settings and table-query
 coordinates are compatible with these tables. See the [usage guide](usage.md).
 
-## 1. Clone the repository
+## 1. Clone
 
 On Setonix:
 
@@ -26,9 +26,10 @@ If this clone already exists, update it with `git pull --ff-only origin main`.
 Keep machine-specific settings in ignored `runtime/` files so updates do not
 conflict with edits to the supplied configurations.
 
-## 2. Install the Python environment
+## 2. Configure the environment
 
-From the repository root on Setonix:
+From the repository root on Setonix, create the Python environment under
+`$MYSOFTWARE`. Installation temporary files go under `$MYSCRATCH`:
 
 ```bash
 module avail python
@@ -53,7 +54,23 @@ See [Pawsey's Python installation guide](https://pawsey.atlassian.net/wiki/space
 For later sessions, return to the repository, load the same Python module, and
 run `source .venv/bin/activate`. Installation only needs to be done once.
 
-## 3. Upload the complete snapshot
+## 3. Set the inputs
+
+Use these locations on Setonix:
+
+| Input | Location | Provided by |
+|---|---|---|
+| Simulation snapshot | `$MYSCRATCH/quokka_postprocess_3D/inputs/snapshots/plt0655228/` | The user |
+| DESPOTIC table | `$MYSOFTWARE/quokka_postprocess_3D/inputs/tables/despotic/interpolated.npz` | Included in Git |
+| Cloudy table | `$MYSOFTWARE/quokka_postprocess_3D/inputs/tables/cloudy/emission.npz` | Included in Git |
+
+The snapshot directory must contain `Header`, `metadata.yaml`, and all data
+subdirectories. The processed results also go under `$MYSCRATCH`.
+
+### Upload the snapshot, if needed
+
+If the snapshot is already on Setonix, use its existing path in the process
+configuration below. Otherwise, upload it from your laptop.
 
 On Setonix, create the destination:
 
@@ -84,7 +101,7 @@ Wait for rsync to finish without errors. If interrupted, repeat the same
 command. The uploaded directory must contain `Header`, `metadata.yaml`, and
 all data subdirectories; an existing `Header` alone does not prove completion.
 
-## 4. Create the process configuration
+### Configure the input and output paths
 
 On Setonix, from the repository root:
 
@@ -110,7 +127,7 @@ This configuration processes the whole snapshot. Use a **new output directory
 for each run**, including retries after interruption. See
 [processing settings](usage.md#processing-settings).
 
-## 5. Run process
+## 4. Process
 
 With the Setonix Python environment activated:
 
@@ -129,7 +146,9 @@ cat "$MYSCRATCH/quokka_postprocess_3D/output/plt0655228/processed/status.json"
 A completed full-box run has `status: completed`, `processing_complete: true`,
 and `full_snapshot: true`.
 
-## 6. Plot: choose either location
+## 5. Plot
+
+Choose either location below.
 
 ### Option A: Plot on Setonix
 
