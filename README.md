@@ -41,7 +41,7 @@ are also supported.
 On Setonix, keep the repository and bundled tables under `$MYSOFTWARE`, and
 store the snapshot and processed results under `$MYSCRATCH`. Use the
 [Setonix input settings](docs/setonix.md#3-set-the-inputs)
-to set these paths in a separate configuration file.
+to set these paths in `configs/emission_process.yaml`.
 
 The bundled tables are for the `plt0655228` reference snapshot.
 

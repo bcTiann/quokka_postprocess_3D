@@ -23,13 +23,11 @@ Keep the repository and Python environment under `$MYSOFTWARE`. Store the
 snapshot and numerical results under `$MYSCRATCH`, following
 [Pawsey's filesystem guidance](https://pawsey.atlassian.net/wiki/spaces/US/pages/51925876).
 If this clone already exists, update it with `git pull --ff-only origin main`.
-Keep machine-specific settings in ignored `runtime/` files so updates do not
-conflict with edits to the supplied configurations.
 
 ## 2. Configure the environment
 
 From the repository root on Setonix, create the Python environment under
-`$MYSOFTWARE`. Installation temporary files go under `$MYSCRATCH`:
+`$MYSOFTWARE`:
 
 ```bash
 module avail python
@@ -37,110 +35,95 @@ module load python/3.11.6
 python -m venv .venv
 source .venv/bin/activate
 
-mkdir -p "$MYSCRATCH/quokka2s_tmp"
-export TMPDIR="$MYSCRATCH/quokka2s_tmp"
+mkdir -p "$MYSCRATCH/quokka2s_installation_temp"
+export TMPDIR="$MYSCRATCH/quokka2s_installation_temp"
 
 python -m pip install --no-cache-dir -r requirements.txt
 python -m pip install --no-cache-dir -e .
 ```
 
-Python 3.11.6 was used for the Setonix setup. If the available modules change,
-select an available Python 3.11 module and use it for both installation and
-running the pipeline. Both pip commands are needed: `requirements.txt` supplies
-the pinned yt version with the QUOKKA reader, and `-e .` installs this
-repository's package.
-See [Pawsey's Python installation guide](https://pawsey.atlassian.net/wiki/spaces/US/pages/51925902/Installing+Python+Packages).
-
-For later sessions, return to the repository, load the same Python module, and
-run `source .venv/bin/activate`. Installation only needs to be done once.
+`quokka2s_installation_temp/` holds temporary installation files on scratch.
+[`--no-cache-dir`](https://pip.pypa.io/en/stable/topics/caching/#disabling-caching)
+disables pip's persistent download/build cache. These settings concern package
+installation, not simulation inputs or processed results.
 
 ## 3. Set the inputs
 
-Use these locations on Setonix:
+Edit [`configs/emission_process.yaml`](../configs/emission_process.yaml).
+Keep the two bundled table paths unchanged. Set `dataset` and `output_dir`
+to locations under your scratch directory.
 
-| Input | Location | Provided by |
-|---|---|---|
-| Simulation snapshot | `$MYSCRATCH/quokka_postprocess_3D/inputs/snapshots/plt0655228/` | The user |
-| DESPOTIC table | `$MYSOFTWARE/quokka_postprocess_3D/inputs/tables/despotic/interpolated.npz` | Included in Git |
-| Cloudy table | `$MYSOFTWARE/quokka_postprocess_3D/inputs/tables/cloudy/emission.npz` | Included in Git |
+| Setting | Meaning |
+|---|---|
+| `dataset` | Path to the complete simulation snapshot directory. |
+| `despotic_table` | Path to the DESPOTIC table, already included in the clone. |
+| `cloudy_table` | Path to the Cloudy table, already included in the clone. |
+| `output_dir` | Directory where process saves its numerical results. Use a new directory for each run. |
+| `query_chunk` | Maximum number of cells per query batch. |
+| `chunk_workers` | Number of batches processed concurrently. |
+| `spectral_workers` | Number of spectral-integration threads per batch. |
 
-The snapshot directory must contain `Header`, `metadata.yaml`, and all data
-subdirectories. The processed results also go under `$MYSCRATCH`.
+Replace `/path/to/plt0655228` with your complete snapshot directory and
+`/path/to/processed` with a new directory for the numerical results:
 
-### Upload the snapshot, if needed
-
-If the snapshot is already on Setonix, use its existing path in the process
-configuration below. Otherwise, upload it from your laptop.
-
-On Setonix, create the destination:
-
-```bash
-mkdir -p "$MYSCRATCH/quokka_postprocess_3D/inputs/snapshots/plt0655228"
-```
-
-On your laptop, set your username, Setonix scratch path, and local snapshot
-directory:
-
-```bash
-setonix_user=YOUR_USERNAME
-setonix_scratch=/scratch/YOUR_PROJECT/YOUR_USERNAME
-local_snapshot=/absolute/path/to/plt0655228
-
-rsync -rvhL --progress --partial --chmod=Dg+s \
-  --exclude='.DS_Store' \
-  "${local_snapshot}/" \
-  "${setonix_user}@data-mover.pawsey.org.au:${setonix_scratch}/quokka_postprocess_3D/inputs/snapshots/plt0655228/"
-```
-
-The trailing slash copies the snapshot's contents; `-L` follows a local
-snapshot symlink. If your SSH setup needs a specific key, add
-`-e 'ssh -i /path/to/private_key'` to rsync. Transfers use
-[Pawsey's data-mover service](https://pawsey.atlassian.net/wiki/spaces/US/pages/51925882/Transferring+Files+in+out+Pawsey+Filesystems).
-
-Wait for rsync to finish without errors. If interrupted, repeat the same
-command. The uploaded directory must contain `Header`, `metadata.yaml`, and
-all data subdirectories; an existing `Header` alone does not prove completion.
-
-### Configure the input and output paths
-
-On Setonix, from the repository root:
-
-```bash
-mkdir -p runtime
-
-cat > runtime/emission_process_setonix.yaml <<EOF
-dataset: $MYSCRATCH/quokka_postprocess_3D/inputs/snapshots/plt0655228
-despotic_table: $MYSOFTWARE/quokka_postprocess_3D/inputs/tables/despotic/interpolated.npz
-cloudy_table: $MYSOFTWARE/quokka_postprocess_3D/inputs/tables/cloudy/emission.npz
-output_dir: $MYSCRATCH/quokka_postprocess_3D/output/plt0655228/processed
+```yaml
+dataset: /path/to/plt0655228
+despotic_table: ../inputs/tables/despotic/interpolated.npz
+cloudy_table: ../inputs/tables/cloudy/emission.npz
+output_dir: /path/to/processed
 query_chunk: 1000000
 chunk_workers: 2
 spectral_workers: 3
-EOF
 ```
 
-The unquoted `EOF` lets the shell write actual absolute paths into the YAML.
-The YAML reader itself does not expand `$VARIABLE` expressions. Relative YAML
-paths are resolved from the configuration file's directory.
+Place the snapshot at the path set by `dataset`, or point it to the snapshot's
+existing location on scratch. The directory must contain `Header`,
+`metadata.yaml`, and all data subdirectories. The two emission tables are
+already in the clone; `../inputs/` resolves from `configs/` to the repository's
+`inputs/` directory.
 
-This configuration processes the whole snapshot. Use a **new output directory
-for each run**, including retries after interruption. See
-[processing settings](usage.md#processing-settings).
+Example directory layout:
+
+```text
+$MYSOFTWARE/quokka_postprocess_3D/
+├── .venv/
+├── configs/
+│   ├── emission_process.yaml
+│   └── emission_plot.yaml
+└── inputs/tables/
+    ├── despotic/interpolated.npz
+    └── cloudy/emission.npz
+
+$MYSCRATCH/quokka_postprocess_3D/
+├── inputs/snapshots/plt0655228/
+│   ├── Header
+│   ├── metadata.yaml
+│   └── Level_0/
+└── output/plt0655228/
+    ├── processed/       # Numerical results
+    ├── figures/         # Paper figures
+    └── figures_titled/  # Figures with titles
+```
+
+Use actual absolute paths in YAML; `$MYSOFTWARE` and `$MYSCRATCH` above only
+show the storage locations. YAML does not expand environment variables.
+
+This configuration processes the whole snapshot. For optional settings such
+as an x–y region, see [processing settings](usage.md#processing-settings).
 
 ## 4. Process
 
 With the Setonix Python environment activated:
 
 ```bash
-python -m quokka2s.process_snapshot \
-  --config runtime/emission_process_setonix.yaml
+python -m quokka2s.process_snapshot
 ```
 
-Results are saved under
-`$MYSCRATCH/quokka_postprocess_3D/output/plt0655228/processed/`. Check completion:
+Results are saved at `output_dir`. Check its completion status, replacing
+`/path/to/processed` with the same path:
 
 ```bash
-cat "$MYSCRATCH/quokka_postprocess_3D/output/plt0655228/processed/status.json"
+cat /path/to/processed/status.json
 ```
 
 A completed full-box run has `status: completed`, `processing_complete: true`,
@@ -152,48 +135,56 @@ Choose either location below.
 
 ### Option A: Plot on Setonix
 
-Create a plot configuration pointing to the saved scratch results:
+Edit [`configs/emission_plot.yaml`](../configs/emission_plot.yaml), using your
+actual paths. `products` must match the process configuration's `output_dir`;
+the other two paths choose where the figures are saved:
 
-```bash
-cat > runtime/emission_plot_setonix.yaml <<EOF
-products: $MYSCRATCH/quokka_postprocess_3D/output/plt0655228/processed
-output_dir: $MYSCRATCH/quokka_postprocess_3D/output/plt0655228/figures
-titled_output_dir: $MYSCRATCH/quokka_postprocess_3D/output/plt0655228/figures_titled
-EOF
-
-python -m quokka2s.plot_emission_results \
-  --config runtime/emission_plot_setonix.yaml
+```yaml
+products: /path/to/processed
+output_dir: /path/to/figures
+titled_output_dir: /path/to/figures_titled
 ```
 
-Use the same activated environment as process. Figures are saved under
-`$MYSCRATCH/quokka_postprocess_3D/output/plt0655228/figures/` and
-`figures_titled/`, each with `png/` and `pdf/` subdirectories.
+Then run:
+
+```bash
+python -m quokka2s.plot_emission_results
+```
+
+Use the same activated environment as process. Each figure directory contains
+separate `png/` and `pdf/` subdirectories.
 
 ### Option B: Download the results and plot locally
 
 On your laptop, follow the [README](../README.md#1-clone) to clone the same
 repository version and configure the local environment. From the local
-repository root, download the entire `processed/` directory:
+repository root, download the entire `processed/` directory. Replace
+`YOUR_USERNAME` with your Pawsey username and `/path/to/processed` with your
+Setonix process output directory:
 
 ```bash
-setonix_user=YOUR_USERNAME
-setonix_scratch=/scratch/YOUR_PROJECT/YOUR_USERNAME
 mkdir -p output/plt0655228_setonix/processed
 
 rsync -rvh --progress --partial \
-  "${setonix_user}@data-mover.pawsey.org.au:${setonix_scratch}/quokka_postprocess_3D/output/plt0655228/processed/" \
+  "YOUR_USERNAME@data-mover.pawsey.org.au:/path/to/processed/" \
   output/plt0655228_setonix/processed/
+```
 
-mkdir -p runtime
-cat > runtime/emission_plot_local.yaml <<'EOF'
+In your local clone, edit
+[`configs/emission_plot.yaml`](../configs/emission_plot.yaml) to read the
+downloaded results:
+
+```yaml
 products: ../output/plt0655228_setonix/processed
 output_dir: ../output/plt0655228_setonix/figures
 titled_output_dir: ../output/plt0655228_setonix/figures_titled
-EOF
+```
 
+Then run:
+
+```bash
 conda activate quokka2s
-python -m quokka2s.plot_emission_results \
-  --config runtime/emission_plot_local.yaml
+python -m quokka2s.plot_emission_results
 ```
 
 Wait for the download to finish successfully before plotting. If you used a

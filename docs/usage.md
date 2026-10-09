@@ -42,9 +42,9 @@ The program does not search for replacement inputs when a file is missing.
 Resolution does not create files or require output files to exist; input checks
 and output-overwrite rules remain in force.
 
-Explicit absolute paths and `~/...` are supported for custom configurations;
-they are not needed by the default workflow. YAML does not expand `$VARIABLE`
-expressions.
+Absolute paths and `~/...` are supported in the supplied configurations too.
+Use absolute paths for snapshot and result locations outside the clone.
+YAML does not expand `$VARIABLE` expressions.
 
 Optional execution settings control memory and concurrency, not the physics.
 Omitted settings use the same defaults shown in the process YAML:
