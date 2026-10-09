@@ -106,7 +106,7 @@ $MYSCRATCH/quokka_postprocess_3D/
 ```
 
 Use actual absolute paths in YAML; `$MYSOFTWARE` and `$MYSCRATCH` above only
-show the storage locations. YAML does not expand environment variables.
+show the storage locations.
 
 This configuration processes the whole snapshot. For optional settings such
 as an x–y region, see [processing settings](usage.md#processing-settings).
