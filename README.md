@@ -1,7 +1,7 @@
 # quokka2s — QUOKKA emission post-processing
 
 Running on Setonix? Follow the [Setonix guide](docs/setonix.md) to configure
-the environment, process a snapshot, and download the results for local plotting.
+the environment, process a snapshot, and plot on Setonix or locally.
 
 ## 1. Clone
 
