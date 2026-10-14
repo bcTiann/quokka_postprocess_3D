@@ -14,7 +14,7 @@ from quokka2s.physics.dust_attenuation import (
 from quokka2s.snapshot_reader import Snapshot
 from quokka2s.despotic.table_files import load_table
 from quokka2s.despotic.lookup import DespoticLookup
-from quokka2s.despotic.snapshot_domain import validate_snapshot_domain
+from quokka2s.despotic.snapshot_domain import validate_table_domain
 
 
 def load_processing_inputs(config):
@@ -31,7 +31,7 @@ def load_processing_inputs(config):
             "y": config.y_index_range,
         },
     )
-    emission_calculator = load_emission_calculator(config=config, snapshot=snapshot)
+    emission_calculator = load_emission_calculator(config=config)
 
     # Create the output directory only after every input has loaded successfully.
     config.output_dir.mkdir(parents=True, exist_ok=False)
@@ -75,15 +75,15 @@ def open_snapshot(dataset_path, xy_region=None) -> Snapshot:
     )
 
 
-def load_emission_calculator(config, snapshot: Snapshot) -> CellEmissionCalculator:
+def load_emission_calculator(config) -> CellEmissionCalculator:
     """Load shared readers, choose line order, and prepare dust cross-sections.
 
-    config supplies table Paths; snapshot supplies the native grid geometry.
+    config supplies the table Paths. Grid geometry belongs to Snapshot and
+    the product accumulators, so loading the emission tables does not need it.
     Return a calculator holding two readers, line names, and named cross-sections
     [cm^2/H]. No cell queries run here."""
     despotic = load_despotic_lookup(
         table_path=config.despotic_table,
-        snapshot=snapshot,
     )
     cloudy = CloudyLookup(
         path=config.cloudy_table,
@@ -107,19 +107,19 @@ def load_emission_calculator(config, snapshot: Snapshot) -> CellEmissionCalculat
     )
 
 
-def load_despotic_lookup(table_path, snapshot: Snapshot) -> DespoticLookup:
-    """Load DESPOTIC and check its composition and snapshot-domain metadata.
+def load_despotic_lookup(table_path) -> DespoticLookup:
+    """Load DESPOTIC and check its composition and recorded physical domain.
 
-    table_path is the configured Path; snapshot supplies its target geometry.
+    table_path is the configured Path. The reference snapshot's mesh size is
+    retained as build metadata; it does not restrict the new snapshot's size.
     Remaining table NaNs are handled later by DespoticCellReader.read_fields()."""
     from quokka2s.physics import settings as cfg
 
     table = load_table(table_path)
     if table.build_metadata['composition']['setup'] != ABUNDANCE_SETUP:
         raise ValueError('Expected native default DESPOTIC abundances')
-    validate_snapshot_domain(
+    validate_table_domain(
         table=table,
-        shape=snapshot.shape,
         cfg=cfg,
     )
     return DespoticLookup(table)

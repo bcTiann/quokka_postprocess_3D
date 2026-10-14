@@ -112,7 +112,8 @@ results_dir: ../output/region_x64_128_y32_96
 ```
 
 Indices start at zero and the stop is excluded: this example selects
-`64 × 64 × 2048` cells. An omitted or `null` axis uses its full extent; z always spans
+`64 × 64 × Nz` cells, where `Nz` is read from the snapshot (`2048` for the
+reference snapshot). An omitted or `null` axis uses its full extent; z always spans
 the original box. No cell averaging is performed. Gradients use neighbours
 from the original simulation, and both shielding and dust columns use the
 complete original z column.
@@ -136,16 +137,21 @@ phase-histogram tools still use full-box configurations.
 
 ## Saved products
 
-For the current 256 × 256 × 2048 snapshot and ten transitions:
+For a three-dimensional uniform level-0 snapshot of shape `(Nx, Ny, Nz)`
+and the ten transitions:
 
 | File | Main contents | Shape and units |
 |---|---|---|
-| `images.npz` | Intrinsic and dust-attenuated LOS-z luminosity images | `(2, 10, 256, 256)`, erg/s per pixel |
+| `images.npz` | Intrinsic and dust-attenuated LOS-z luminosity images | `(2, 10, Nx, Ny)`, erg/s per pixel |
 | `spectra.npz` | Whole-box spectra, cold/hot contributions, full-profile and window line moments | Spectra `(2, 10, 2, 400)`, erg/s/(km/s); full and window σ `(2, 10)`, km/s |
 | `phase_velocity.npz` | Mass velocity histograms and moments for five gas phases and all gas | Histograms `(6, 400)`, g per channel |
 | `emission_report.json` | Input paths, snapshot grid, physical settings, cell counts, omitted mass, and luminosity checks | Human-readable run record |
 | `status.json` | Running, failed, partial, or completed status | Progress and elapsed time |
 
+The reference snapshot has shape `(256, 256, 2048)`. A full
+`(512, 512, 4096)` snapshot instead produces `(2, 10, 512, 512)` images;
+the spectral channels do not change with spatial resolution. Cell widths
+and volumes are obtained from the snapshot, not the reference grid.
 For a region, the last two image axes are its selected x/y cell counts.
 The report records the selected indices, shape, cell count and projected area;
 the original simulation geometry is also retained. The other array dimensions

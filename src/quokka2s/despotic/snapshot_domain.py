@@ -1,28 +1,27 @@
-"""Match DESPOTIC's recorded table domain to the simulation's physical setup."""
-
-import numpy as np
+"""Check DESPOTIC's recorded physical conventions and table-axis bounds."""
 
 
 # Coordinate order in table metadata and snapshot-domain measurements.
 AXIS_NAMES = ("nH", "NH", "dVdr")
 
 
-def validate_snapshot_domain(table, shape, cfg) -> dict:
-    """Return the recorded domain after checking its geometry and conventions.
+def validate_table_domain(table, cfg) -> dict:
+    """Check recorded physical settings and return the table's reference domain.
 
-    table is a DespoticTable from load_table(). shape is the original snapshot
-    shape, e.g. (256, 256, 2048), even when process selects a smaller x-y region.
+    table is a DespoticTable from load_table(). Its recorded snapshot shape and
+    cell count describe the reference used to choose the axes; they do not
+    restrict the resolution of a new snapshot. This function needs no snapshot.
     cfg supplies X_H, COLUMN_DENSITY_MEAN and COLUMN_DENSITY_DIRECTIONS from
     physics.settings. Require the recorded axis endpoints to match the table.
-    Raw-table failure-mask checks belong to the coverage tool, not this check.
+    Actual cell-coordinate coverage is checked later during table queries.
+    Example: a table built using a 256x256x2048 snapshot can be loaded when
+    processing a 512x512x4096 snapshot; its recorded shape stays unchanged.
     """
     domain = (table.build_metadata or {}).get("snapshot_domain")
     if not domain or domain.get("selection") != "all simulation cells":
         raise ValueError("DESPOTIC table lacks all-cell snapshot-domain metadata")
 
     expected_settings = {
-        "shape": list(shape),
-        "total_cells": int(np.prod(shape)),
         "X_H": float(cfg.X_H),
         "column_mean": cfg.COLUMN_DENSITY_MEAN,
         "column_directions": cfg.COLUMN_DENSITY_DIRECTIONS,

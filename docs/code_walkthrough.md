@@ -117,14 +117,19 @@ saved products still works without yt. The old CIAOLoop constants in the table-r
 check describe how that table was built and remain historical values.
 
 Opening checks cover missing inputs and numerical compatibility, including the
-DESPOTIC table's recorded snapshot grid, density/column settings, and coordinate
-bounds. Final checks verify cell accounting and luminosity conservation. Follow
-the slab and batch calculations below before studying each check.
+DESPOTIC table's density/column settings and recorded coordinate bounds.
+Its build-snapshot shape and cell count are historical metadata; they need not
+match the current snapshot. Final checks verify cell accounting and luminosity
+conservation. Follow the slab and batch calculations below before studying each check.
 
 ## 2. Read one slab: `snapshot_reader.read_slab()`
 
-For the current grid, one slab contains eight x cells and all y,z cells:
-`(8, 256, 2048)`, or 4,194,304 cells. There are 32 such slabs. The reader
+The reader accepts three-dimensional uniform level-0 grids. It reads `(Nx, Ny, Nz)`,
+cell widths and volume from the current snapshot. A full slab has shape
+`(slab_nx, Ny, Nz)`; the last slab may contain fewer x cells.
+
+For the reference `(256, 256, 2048)` grid, one slab contains eight x cells and
+all y,z cells: `(8, 256, 2048)`, or 4,194,304 cells. There are 32 such slabs. The reader
 copies one extra cell on each x/y side, giving loaded fields of shape
 `(10, 258, 2048)`. Only the `(8, 256, 2048)` core contributes to products.
 x/y neighbours wrap across the original box faces: the first x core `0:8`
@@ -416,8 +421,10 @@ gas-phase statistics. `missing_emissivity_cells` and
 | Spectrum | [products/integrated_spectra.py](../src/quokka2s/products/integrated_spectra.py), `IntegratedSpectra.add_batch()` | Centre the line at cell `vz`, integrate its thermal Gaussian over velocity channels, and add luminosity to the selected region's integrated spectrum |
 | Gas phases | [products/gas_phase_velocity.py](../src/quokka2s/products/gas_phase_velocity.py), `GasPhaseVelocityAccumulator.add_batch()` | Assign the mixed-temperature phase, add cell mass to its velocity channel, and accumulate velocity moments |
 
-Image accumulation uses the native 256 × 256 sightlines. Spectrum accumulation
-uses each line's available cells directly; it does not go through a rebinned image.
+Image accumulation uses the selected native x/y sightlines: 256 × 256 for
+the full reference snapshot, or 512 × 512 for a full 512 × 512 × 4096 grid.
+Spectrum accumulation uses each line's available cells directly; it does not
+go through a rebinned image.
 Intrinsic and attenuated spectra share the same thermal integration for a
 cell. They differ only in the luminosity being distributed over channels.
 Each integration thread owns its temporary channel-by-cell arrays. It reuses
@@ -517,7 +524,7 @@ line's arrays with its independent cell sums and checks gas-phase accounting. It
 returned image-conservation report is separate from the generated arrays.
 A failed check raises before writing files. The writer saves:
 
-| File | Main numerical array | Shape for this snapshot |
+| File | Main numerical array | Shape for the reference snapshot |
 |---|---|---|
 | `images.npz` | `line_luminosity_image_erg_s` | `(dust_state=2, line=10, x=256, y=256)` |
 | `spectra.npz` | `dL_dv_erg_s_per_kms` | `(dust_state=2, line=10, regime=2, channel=400)` |
@@ -659,7 +666,8 @@ Table tools also have specific shared owners:
   supplies adopted solver defaults and reviewed source identities.
   [despotic/table_data.py](../src/quokka2s/despotic/table_data.py) owns table
   records and line-result field names; [despotic/snapshot_domain.py](../src/quokka2s/despotic/snapshot_domain.py)
-  checks the recorded full-snapshot geometry, physical settings and axis bounds.
+  checks physical settings and table-axis bounds. The reference snapshot's
+  grid dimensions and cell count remain build metadata.
 - [file_provenance.py](../src/quokka2s/file_provenance.py) calculates file hashes
   for table-build and diagnostic file identities. Process-time table
   compatibility uses the physical-domain checks above, not file hashes.

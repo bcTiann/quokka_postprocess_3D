@@ -17,7 +17,7 @@ from unyt import unyt_array
 
 from quokka2s.despotic.table_files import load_table
 from quokka2s.despotic.lookup import DespoticLookup
-from quokka2s.despotic.snapshot_domain import AXIS_NAMES, validate_snapshot_domain
+from quokka2s.despotic.snapshot_domain import AXIS_NAMES, validate_table_domain
 from quokka2s.file_provenance import file_sha256
 from quokka2s.paths import resolve_path
 from quokka2s.physics import gas_fields, settings
@@ -233,7 +233,11 @@ def main(argv=None):
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--slab-nx", type=int, default=8)
     parser.add_argument("--query-chunk", type=int, default=500_000)
-    parser.add_argument("--expected-cells", type=int, default=134_217_728)
+    parser.add_argument(
+        "--expected-cells",
+        type=int,
+        help="Optional cell-count assertion; the default uses the snapshot's actual grid",
+    )
     args = parser.parse_args(argv)
     args.table = resolve_path(args.table)
     args.dataset = resolve_path(args.dataset)
@@ -242,8 +246,10 @@ def main(argv=None):
         raise FileNotFoundError(f"Candidate table is not complete or is missing: {args.table}")
     if args.output.exists():
         raise FileExistsError(f"Refusing to overwrite coverage report: {args.output}")
-    if min(args.slab_nx, args.query_chunk, args.expected_cells) < 1:
-        raise ValueError("Slab size, query chunk size, and expected cell count must be positive")
+    if min(args.slab_nx, args.query_chunk) < 1:
+        raise ValueError("Slab size and query chunk size must be positive")
+    if args.expected_cells is not None and args.expected_cells < 1:
+        raise ValueError("Expected cell count must be positive")
 
     import yt
     import scipy
@@ -263,15 +269,17 @@ def main(argv=None):
     if ds.max_level != 0 or settings.COLUMN_DENSITY_DIRECTIONS != "z":
         raise ValueError("Coverage requires a full-resolution uniform snapshot and full z columns")
     shape = tuple(int(value) for value in ds.domain_dimensions)
-    if min(shape) < 2 or int(np.prod(shape)) != args.expected_cells:
+    if min(shape) < 2:
+        raise ValueError("Coverage requires at least two cells per axis")
+    snapshot = Snapshot(dataset=ds)
+    expected_cells = snapshot.cell_count
+    if args.expected_cells is not None and expected_cells != args.expected_cells:
         raise ValueError(f"Snapshot shape {shape} does not match expected all-cell count "
                          f"{args.expected_cells}")
-    domain = validate_snapshot_domain(
+    domain = validate_table_domain(
         table=table,
-        shape=shape,
         cfg=settings,
     )
-    snapshot = Snapshot(dataset=ds)
     totals, scanned, extrema = scan_snapshot_coverage(
         snapshot=snapshot,
         lookup=lookup,
@@ -279,7 +287,7 @@ def main(argv=None):
         query_chunk=args.query_chunk,
     )
     groups = totals.result()
-    if scanned != args.expected_cells or groups["all_cells"]["cell_count"] != args.expected_cells:
+    if scanned != expected_cells or groups["all_cells"]["cell_count"] != expected_cells:
         raise RuntimeError("Coverage scan did not include every simulation cell exactly once")
     result = {
         "status": "diagnostic only; adoption and failure acceptance are not decided",

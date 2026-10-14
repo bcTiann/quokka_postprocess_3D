@@ -54,6 +54,9 @@ store the snapshot and processed results under `$MYSCRATCH`. Use the
 to set these paths in `configs/emission.yaml`.
 
 The bundled tables are for the `plt0655228` reference snapshot.
+Snapshot grid dimensions are read from the data; processing supports
+three-dimensional uniform level-0 grids at other resolutions too. A full
+`512 × 512 × 4096` grid produces native `512 × 512` luminosity images.
 
 ## 4. Process
 
