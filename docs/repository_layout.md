@@ -26,11 +26,15 @@ tools and additional paper figures have their own commands.
    two tables and numerical output directory.
 2. [process_snapshot.py](../src/quokka2s/process_snapshot.py): read inputs, process
    slabs, build/check/save results.
-3. [snapshot_reader.py](../src/quokka2s/snapshot_reader.py): read one slab with
-   periodic x/y neighbours. `slab_windows(x_start=..., x_stop=..., slab_nx=...)`
-   yields global core bounds; `slab.iter_batches(batch_size=...)` yields native
-   cell views. Consume batches before releasing the slab: a retained view keeps
-   its underlying arrays alive.
+3. [snapshot_reader.py](../src/quokka2s/snapshot_reader.py): derive six copied
+   core arrays from one slab. [native_snapshot_reader.py](../src/quokka2s/native_snapshot_reader.py)
+   uses yt block/file metadata to copy selected x/y cells plus one periodic
+   neighbour on each side, keeping full z. Sparse block selections use read-only
+   NumPy maps; selections covering all block y/z rows use contiguous temporary
+   field buffers. It caches metadata, retaining no cell payloads or open maps.
+   `slab_windows(x_start=..., x_stop=..., slab_nx=...)` yields global core bounds;
+   `slab.iter_batches(batch_size=...)` yields native cell views. Consume batches
+   before releasing the slab: a retained view keeps its underlying arrays alive.
 4. [cell_emission.py](../src/quokka2s/physics/cell_emission.py): obtain each named
    line's emissivity and temperature, then apply foreground dust.
 5. [emission_products.py](../src/quokka2s/products/emission_products.py): send the

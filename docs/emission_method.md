@@ -92,8 +92,15 @@ Processing saves intrinsic and attenuated native-resolution LOS-z luminosity
 images, integrated spectra, and gas-phase velocity distributions. By default
 these cover the full box. Optional native x/y index ranges select a region with
 the original full z depth; gradients still use original-box neighbours, and
-column densities still use complete z columns. All products accumulate only
-selected cells, and surface-luminosity spectra use the selected projected area.
+column densities still use complete z columns. The native reader uses yt's
+uniform-grid metadata to copy selected x/y cells with one wrapped neighbour
+on each side. Sparse block selections use read-only NumPy maps; selections
+covering all block y/z rows use contiguous temporary field buffers. Maps and
+buffers are discarded after copying; cached file metadata retains no numerical
+payloads or open maps. The six copied core-slab arrays retain the density,
+temperature, column, gradient and velocity definitions and units listed in the
+[code walkthrough](code_walkthrough.md). All products accumulate only selected
+cells, and surface-luminosity spectra use the selected projected area.
 Spectra have
 400 channels over −200 to +200 km/s. Gaussian thermal profiles are integrated
 over channel boundaries. Luminosity outside that window is recorded rather

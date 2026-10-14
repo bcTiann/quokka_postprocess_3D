@@ -6,6 +6,7 @@ from functools import cached_property
 
 import numpy as np
 
+from .native_snapshot_reader import NativeSnapshotReader
 from .physics.dust_attenuation import observer_side_hydrogen_column
 from .physics.gas_fields import hydrogen_number_density_cm3
 
@@ -106,8 +107,13 @@ class Snapshot:
         """Selected image's lower native cell indices, e.g. (64, 80)."""
         return self.xy_region['x'][0], self.xy_region['y'][0]
 
+    @cached_property
+    def native_reader(self) -> NativeSnapshotReader:
+        """Cache native file locations and units once; retain no cell arrays."""
+        return NativeSnapshotReader(dataset=self.dataset)
+
     def read_slab(self, x_start: int, x_stop: int) -> SlabArrays:
-        """Derive fields on original neighbours, then retain selected y rows.
+        """Read selected x/y cells and periodic neighbours, then derive fields.
 
         Parameters
         ----------
@@ -129,25 +135,23 @@ class Snapshot:
 
             slab = snapshot.read_slab(x_start=0, x_stop=8)
         """
-        # Keep neighbour geometry internal: first core 0:8 reads 0:9, while an
-        # interior core 8:16 reads 7:17. Periodic neighbours across the box faces
-        # are read by slab_velocity_gradient(). Only core cells are returned.
-        read_start = max(0, x_start - 1)
-        read_stop = min(self.shape[0], x_stop + 1)
-        core = slice(x_start - read_start, x_stop - read_start)
-
-        # 1. Open the slab's yt grid, including neighbouring x layers.
-        grid = read_slab_grid(
-            snapshot=self,
-            read_start=read_start,
-            read_stop=read_stop,
+        # 1. Copy selected cells plus one periodic neighbour on each x/y side.
+        # Example: x=0:8 reads [255, 0, ..., 7, 8]; y=0:1 reads [255, 0, 1].
+        # All z cells remain present so neither column calculation is truncated.
+        y_start, y_stop = self.xy_region['y']
+        fields = self.native_reader.read_slab_fields(
+            x_start=x_start,
+            x_stop=x_stop,
+            y_start=y_start,
+            y_stop=y_stop,
         )
+        core = (slice(1, -1), slice(1, -1), slice(None))
 
-        # 2. Read the simulation fields and retain only the core cells.
-        # Each returned array has shape (8, 256, 2048) for a normal slab.
+        # 2. Copy the core density, temperature and LOS velocity without halos.
+        # Full-y example: (10, 258, 2048) -> (8, 256, 2048).
         # Units: density [g/cm^3], temperature [K], velocity_z [km/s].
-        density, temperature, velocity_z = read_simulation_fields(
-            grid=grid,
+        density, temperature, velocity_z = select_core_simulation_fields(
+            fields=fields,
             core=core,
         )
 
@@ -159,36 +163,21 @@ class Snapshot:
 
         # 4. Calculate the harmonic mean of the +z and -z columns.
         shielding_column = calculate_shielding_column(
-            grid=grid,
+            fields=fields,
             core=core,
         )
 
         # 5. Calculate dV/dr using neighbouring cells, then retain core.
         # This includes neighbours across the periodic x/y boundaries.
         velocity_gradient = calculate_core_velocity_gradient(
-            snapshot=self,
-            grid=grid,
-            x_start=x_start,
-            x_stop=x_stop,
+            fields=fields,
             core=core,
         )
 
-        # The returned NumPy arrays own their data; release the yt grid.
-        del grid
+        # Core arrays own their data; discard loaded fields and neighbour cells.
+        del fields
 
-        # 6. Crop only after columns and gradients use the original neighbours.
-        # Copy even a one-x-layer crop so it cannot retain the full y arrays.
-        y_start, y_stop = self.xy_region['y']
-        if y_start != 0 or y_stop != self.shape[1]:
-            selected_y = slice(y_start, y_stop)
-            density = density[:, selected_y, :].copy(order='C')
-            temperature = temperature[:, selected_y, :].copy(order='C')
-            velocity_z = velocity_z[:, selected_y, :].copy(order='C')
-            foreground_column = foreground_column[:, selected_y, :].copy(order='C')
-            shielding_column = shielding_column[:, selected_y, :].copy(order='C')
-            velocity_gradient = velocity_gradient[:, selected_y, :].copy(order='C')
-
-        # 7. Flatten each field: (8, 64, 2048) -> (1048576,) for y=80:144.
+        # 6. Flatten each field: (8, 64, 2048) -> (1048576,) for y=80:144.
         # z varies fastest, followed by y, then x.
         slab = SlabArrays(
             density_g_cm3=density.ravel(),
@@ -334,7 +323,7 @@ class SlabArrays:
         Original Ny for global IDs; defaults to shape[1] for full-y slabs.
 
     S = slab_nx * Ny * Nz. Arrays use C order, with z varying fastest.
-    read_slab() removes the x halos and marks these arrays read-only.
+    read_slab() removes the x/y halos and marks these arrays read-only.
     batch() returns views, so they remain alive while any batch uses them.
     """
     density_g_cm3: np.ndarray
@@ -469,104 +458,26 @@ def slab_windows(*, x_start: int, x_stop: int, slab_nx: int):
         yield start, stop
 
 
-def read_x_velocity_plane(snapshot: Snapshot, x_index: int) -> np.ndarray:
-    """Read one full y-z plane of velocity_x for a periodic x neighbour.
-
-    snapshot comes from load_processing_inputs(); x_index is a global x index.
-    Returns a copied NumPy array of shape (Ny, Nz) in cm/s.
-    Example: read_x_velocity_plane(snapshot, x_index=255) is x=0's left neighbour.
-    """
-    ds = snapshot.dataset
-    # yt treats a one-cell covering-grid axis as spanning the entire domain.
-    # Read two adjacent layers instead, then keep only the requested plane.
-    first_x = min(x_index, snapshot.shape[0] - 2)
-    edge = ds.domain_left_edge.copy()
-    edge[0] += first_x * snapshot.cell_widths[0]
-    plane_grid = ds.covering_grid(
-        level=0,
-        left_edge=edge,
-        dims=(2, snapshot.shape[1], snapshot.shape[2]),
-    )
-    velocity_with_units = plane_grid['gas', 'velocity_x'].to('cm/s')
-    plane = np.array(velocity_with_units[x_index - first_x])
-    del velocity_with_units, plane_grid
-    return plane
-
-
-def slab_velocity_gradient(snapshot: Snapshot, grid, x_start: int, x_stop: int):
-    """Calculate a slab's gradient using neighbours across periodic x/y faces.
-
-    grid is the yt covering grid including x halos; x_start/x_stop are the
-    half-open core bounds from slab_windows(), e.g. (0, 8) for the first slab.
-    Returns the full loaded-grid gradient with s^-1 units. The caller then
-    selects [core] to discard the halo layers.
-    """
-    vx_left_cm_s = None
-    vx_right_cm_s = None
-    if x_start == 0:
-        vx_left_cm_s = read_x_velocity_plane(snapshot, x_index=snapshot.shape[0] - 1)
-    if x_stop == snapshot.shape[0]:
-        vx_right_cm_s = read_x_velocity_plane(snapshot, x_index=0)
-
-    from .physics.gas_fields import velocity_gradient
-
-    return velocity_gradient(
-        grid,
-        vx_left_cm_s=vx_left_cm_s,
-        vx_right_cm_s=vx_right_cm_s,
-    )
-
-
-def read_slab_grid(snapshot: Snapshot, read_start: int, read_stop: int):
-    """Open a yt covering grid with the slab's neighbouring x layers.
-
-    snapshot comes from load_processing_inputs(). read_start/read_stop are
-    half-open global x bounds computed inside read_slab(); y/z span the full box.
-    Returns a yt covering grid retaining its field units.
-    Example: bounds (0, 9) give shape (9, 256, 2048) for the first slab.
-    """
-    ds = snapshot.dataset          # The yt dataset opened by yt.load().
-    shape = snapshot.shape         # Current full grid: (256, 256, 2048).
-    widths = snapshot.cell_widths  # (dx, dy, dz), with length units.
-
-    # Move the box's lower corner to the slab's read boundary.
-    edge = ds.domain_left_edge.copy()
-    edge[0] += read_start * widths[0]
-    # First slab: (9, 256, 2048); interior slabs: (10, 256, 2048).
-    read_shape = (read_stop - read_start, shape[1], shape[2])
-    grid = ds.covering_grid(
-        level=0,          # Root-grid resolution; native for this uniform snapshot.
-        left_edge=edge,   # Physical starting corner, with length units.
-        dims=read_shape,  # Number of cells to read along (x, y, z).
-    )
-
-    # Keep velocities in the simulation frame: no bulk velocity subtraction.
-    bulk = np.asarray(grid.get_field_parameter('bulk_velocity'))
-    if not np.isfinite(bulk).all() or np.any(bulk != 0):
-        raise ValueError('Unexpected bulk velocity')
-
-    return grid
-
-
-def read_simulation_fields(
-    grid,
-    core: slice,
+def select_core_simulation_fields(
+    fields: dict,
+    core: tuple[slice, slice, slice],
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Copy density, QUOKKA temperature and vz from the retained x layers.
+    """Copy density, QUOKKA temperature and vz from the retained x/y cells.
 
-    grid comes from read_slab_grid(); core is its retained x slice.
+    fields comes from NativeSnapshotReader.read_slab_fields(); core discards
+    its first and last x/y neighbour layers, while keeping all z cells.
     Returns three 3D NumPy arrays in g/cm^3, K and km/s, respectively.
-    Example: core=slice(0, 8) gives three arrays of shape (8, 256, 2048).
-    The copies remain valid after grid is released.
+    Example: fields shaped (10, 258, 2048) give arrays shaped (8, 256, 2048).
+    The copies remain valid after fields is released.
     """
-    density_with_units = grid['gas', 'density'].to('g/cm**3')
+    density_with_units = fields['gas', 'density'].to('g/cm**3')
     density = np.array(density_with_units[core])
     del density_with_units
 
     # The raw QUOKKA temperature field contains numerical values in kelvin.
-    temperature = np.array(grid['boxlib', 'temperature'][core], dtype=float)
+    temperature = np.array(fields['boxlib', 'temperature'][core], dtype=float)
 
-    velocity_with_units = grid['gas', 'velocity_z'].to('km/s')
+    velocity_with_units = fields['gas', 'velocity_z'].to('km/s')
     velocity_z = np.array(velocity_with_units[core])
     del velocity_with_units
 
@@ -579,7 +490,7 @@ def calculate_dust_foreground_column(
 ) -> np.ndarray:
     """Calculate each cell's hydrogen column to the outer -z observer face.
 
-    density_g_cm3 is the 3D density array from read_simulation_fields().
+    density_g_cm3 is the 3D density array from select_core_simulation_fields().
     snapshot supplies dz; physics.settings supplies X_H.
     Returns a same-shape NumPy array [cm^-2].
     Example: input and output both have shape (8, 256, 2048).
@@ -596,39 +507,38 @@ def calculate_dust_foreground_column(
     return foreground_column
 
 
-def calculate_shielding_column(grid, core: slice) -> np.ndarray:
+def calculate_shielding_column(
+    fields: dict,
+    core: tuple[slice, slice, slice],
+) -> np.ndarray:
     """Calculate the +z/-z harmonic-mean hydrogen column for table queries.
 
-    grid comes from read_slab_grid(); core selects the retained x layers.
+    fields comes from NativeSnapshotReader; core selects retained x/y cells.
     Returns a copied 3D NumPy array [cm^-2], normally shape (8, 256, 2048).
     Uses physics.gas_fields.shielding_hydrogen_column() for the +/-z columns.
     """
     from .physics.gas_fields import shielding_hydrogen_column
 
-    shielding_with_units = shielding_hydrogen_column(grid)
+    shielding_with_units = shielding_hydrogen_column(fields)
     shielding_with_units = shielding_with_units.to('cm**-2')
     shielding_column = np.array(shielding_with_units[core])
     return shielding_column
 
 
 def calculate_core_velocity_gradient(
-    snapshot: Snapshot, grid, x_start: int, x_stop: int, core: slice,
+    fields: dict,
+    core: tuple[slice, slice, slice],
 ) -> np.ndarray:
-    """Calculate dV/dr with neighbours, then copy only the retained x layers.
+    """Calculate dV/dr with neighbours, then copy only retained x/y cells.
 
-    grid comes from read_slab_grid(); x_start/x_stop are the requested global
-    bounds. core selects those cells within the loaded grid, as set by read_slab().
+    fields comes from NativeSnapshotReader with original-box x/y neighbours.
+    core removes neighbour layers after the centred x/y differences are taken.
     Returns a copied 3D NumPy array [s^-1], normally shape (8, 256, 2048).
-    Uses slab_velocity_gradient() for periodic x/y and one-sided z box faces.
+    z retains one-sided differences at the original box faces.
     """
-    # The first/last core slab also needs a neighbour from the opposite x face.
-    # Example: x=0 uses x=255 and x=1; x=255 uses x=254 and x=0.
-    gradient_with_units = slab_velocity_gradient(
-        snapshot=snapshot,
-        grid=grid,
-        x_start=x_start,
-        x_stop=x_stop,
-    )
+    from .physics.gas_fields import velocity_gradient
+
+    gradient_with_units = velocity_gradient(fields)
     gradient_with_units = gradient_with_units.to('s**-1')
     velocity_gradient = np.array(gradient_with_units[core])
     return velocity_gradient

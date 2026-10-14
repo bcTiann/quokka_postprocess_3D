@@ -41,8 +41,8 @@ def mixed_gas_temperature_K(
 def hydrogen_number_density(density):
     """Return hydrogen-nuclei density [cm^-3] from unit-aware gas density.
 
-    density is a yt/unyt array from the slab grid, normally (10, 256, 2048)
-    including two x-neighbour layers. Returns the same shape with units.
+    density is a yt/unyt array from the loaded fields, normally (10, 258, 2048)
+    including x/y neighbour layers. Returns the same shape with units.
     Every chemical and ionization state contributes its hydrogen nuclei.
     """
     # Convert before stripping units so invalid density dimensions still raise.
@@ -63,15 +63,15 @@ def hydrogen_number_density(density):
     )
 
 
-def shielding_hydrogen_column(grid):
+def shielding_hydrogen_column(fields):
     """Return the harmonic mean of the +/-z columns [cm^-2] for every cell.
 
-    grid is a yt covering grid spanning all z cells. Each one-sided column
+    fields supplies unit-aware density and dz spanning all z cells. Each column
     includes the full emitting cell; this is separate from the dust column.
-    Example: a (10, 256, 2048) grid returns the same shape with units.
+    Example: (10, 258, 2048) density returns the same shape with units.
     """
-    hydrogen_density = hydrogen_number_density(grid['gas', 'density'])
-    dz = grid['boxlib', 'dz'].in_cgs()
+    hydrogen_density = hydrogen_number_density(fields['gas', 'density'])
+    dz = fields['boxlib', 'dz'].in_cgs()
     cell_column = hydrogen_density * dz
 
     # Sum toward +z first, as in the original calculation. Reverse twice to
@@ -88,30 +88,24 @@ def shielding_hydrogen_column(grid):
     return (2 / inverse_column_sum).to('cm**-2')
 
 
-def velocity_gradient(grid, *, vx_left_cm_s=None, vx_right_cm_s=None):
+def velocity_gradient(fields):
     """Return abs(div(v))/3 [s^-1] using the slab's neighbouring cells.
 
-    grid supplies three velocities and dx/dy/dz with units. Its y and z axes
-    span the full box. x/y are periodic; z uses one-sided end differences.
-    Optional vx_left_cm_s/vx_right_cm_s are opposite-face (Ny, Nz) planes from
-    read_x_velocity_plane(). Example: x=0 uses the supplied x=255 left neighbour.
-    Returns a same-shape unit-aware array; read_slab() then removes x halos.
+    fields supplies three velocities and dx/dy/dz with units. x/y include
+    wrapped neighbour layers from NativeSnapshotReader; z spans the full box.
+    For example, core x=0 is between loaded x=Nx-1 and x=1. Only the core
+    gradients are retained by read_slab(); outer neighbour values are discarded.
+    Returns a same-shape unit-aware array; z uses one-sided end differences.
     """
-    vx = grid['gas', 'velocity_x'].in_units('cm/s').v
-    vy = grid['gas', 'velocity_y'].in_units('cm/s').v
-    vz = grid['gas', 'velocity_z'].in_units('cm/s').v
-    dx = float(grid['boxlib', 'dx'].in_units('cm').v.flat[0])
-    dy = float(grid['boxlib', 'dy'].in_units('cm').v.flat[0])
-    dz = float(grid['boxlib', 'dz'].in_units('cm').v.flat[0])
+    vx = fields['gas', 'velocity_x'].in_units('cm/s').v
+    vy = fields['gas', 'velocity_y'].in_units('cm/s').v
+    vz = fields['gas', 'velocity_z'].in_units('cm/s').v
+    dx = float(fields['boxlib', 'dx'].in_units('cm').v.flat[0])
+    dy = float(fields['boxlib', 'dy'].in_units('cm').v.flat[0])
+    dz = float(fields['boxlib', 'dz'].in_units('cm').v.flat[0])
 
-    # x neighbours are in the loaded grid, except at a periodic box face.
+    # Both x/y neighbours are present, including across periodic box faces.
     dvx_dx = (np.roll(vx, -1, axis=0) - np.roll(vx, 1, axis=0)) / (2.0 * dx)
-    if vx_left_cm_s is not None:
-        dvx_dx[0] = (vx[1] - vx_left_cm_s) / (2.0 * dx)
-    if vx_right_cm_s is not None:
-        dvx_dx[-1] = (vx_right_cm_s - vx[-2]) / (2.0 * dx)
-
-    # The complete y axis is present, so array wrapping supplies its neighbours.
     dvy_dy = (np.roll(vy, -1, axis=1) - np.roll(vy, 1, axis=1)) / (2.0 * dy)
 
     # Only the z boundary cells use first-order one-sided differences.

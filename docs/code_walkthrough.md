@@ -55,8 +55,9 @@ The objects group related variables; they are not extra copies of the snapshot:
   bounds. `shape`, cell widths/volume, `cell_count`, and `projected_area_cm2`
   describe the original box. `processing_shape`, `processing_cell_count`,
   `processing_area_cm2`, and `processing_xy_origin` describe the selected region.
-  `snapshot.read_slab()` loads cell fields; physical settings and function
-  modules are not attributes.
+  `snapshot.native_reader` caches file locations and units from yt metadata;
+  it retains no numerical payloads or open maps. `snapshot.read_slab()` copies
+  selected cell fields and derives the six slab arrays.
 - `emission_calculator` is a `CellEmissionCalculator`. It holds the DESPOTIC
   and Cloudy readers, ten line names, and named dust cross-sections. Each reader
   holds its fixed lookup table. These objects are created once and shared across
@@ -109,14 +110,13 @@ the slab and batch calculations below before studying each check.
 ## 2. Read one slab: `snapshot_reader.read_slab()`
 
 For the current grid, one slab contains eight x cells and all y,z cells:
-`(8, 256, 2048)`, or 4,194,304 cells. There are 32 such slabs. The code reads
-one extra x cell on each side where available so velocity derivatives can
-use neighbouring cells. Only the eight core x cells contribute to products.
-The x/y boundaries are periodic. For the first and last slabs, the reader
-also loads the opposite x face's `velocity_x` plane. The full y axis is already
-present in each slab. Both directions use centred differences with wrapped
-neighbours; z retains one-sided differences at its two outer faces.
-Full z columns are kept together for both column-density calculations.
+`(8, 256, 2048)`, or 4,194,304 cells. There are 32 such slabs. The reader
+copies one extra cell on each x/y side, giving loaded fields of shape
+`(10, 258, 2048)`. Only the `(8, 256, 2048)` core contributes to products.
+x/y neighbours wrap across the original box faces: the first x core `0:8`
+loads indices `[255, 0, ..., 7, 8]`. Both directions use centred differences;
+z retains one-sided differences at its two outer faces. Full z columns stay
+together for both column-density calculations.
 
 Call `snapshot.read_slab(x_start=0, x_stop=8)` for the first eight x layers.
 The caller supplies only the desired cells; the reader determines all neighbour
@@ -143,20 +143,29 @@ shorter than `slab_nx`; neighbour selection still belongs to `read_slab()`.
 
 Read `read_slab()` from top to bottom as these steps:
 
-1. `read_slab_grid()` opens the slab with its neighbouring x layers.
-2. `read_simulation_fields()` copies density, QUOKKA temperature and vz.
+1. `snapshot.native_reader.read_slab_fields()` copies selected x/y cells plus
+   one wrapped neighbour on each side, keeping full z.
+2. `select_core_simulation_fields()` copies core density, QUOKKA temperature
+   and vz, removing the x/y neighbours.
 3. `calculate_dust_foreground_column()` calculates the column to the observer.
 4. `calculate_shielding_column()` calculates the +z/-z harmonic-mean column.
 5. `calculate_core_velocity_gradient()` calculates dV/dr using neighbours.
-6. Release the yt grid; for a region, copy only the selected y rows after all
-   column and gradient calculations. Flatten the six retained arrays into
-   `SlabArrays`.
+6. Release the loaded fields and neighbours. Flatten the six copied core
+   arrays into read-only `SlabArrays`.
 
 All six numerical field arrays retain their three-dimensional core-slab shape
 until the final flattening in `read_slab()`.
 
-From yt, the code obtains density, QUOKKA temperature, velocities, and cell
-widths. It derives the shielding column and velocity gradient using
+In [native_snapshot_reader.py](../src/quokka2s/native_snapshot_reader.py),
+`NativeSnapshotReader` uses yt's native block bounds, payload offsets, field
+order, dtype and units. It copies selected density, temperature and three
+momenta into compact arrays. Sparse block selections use read-only NumPy
+memory maps; selections covering all block y/z rows use a contiguous temporary
+buffer for each native field. Maps and buffers are discarded after copying;
+cached metadata retains no cell payloads or open maps. Momentum is divided by
+native density, then velocities and density are normalized to yt's declared
+gas units. Cell widths also come from yt. The code derives the
+shielding column and velocity gradient using
 [gas_fields.py](../src/quokka2s/physics/gas_fields.py), and the foreground dust
 column using [physics/dust_attenuation.py](../src/quokka2s/physics/dust_attenuation.py).
 
@@ -185,13 +194,17 @@ Hydrogen density `nH` is calculated later for each query batch, not retained
 as a seventh slab array.
 
 For `x_index_range: [64, 128]` and `y_index_range: [32, 96]`, slabs cover
-global x ranges `64:72`, `72:80`, ..., `120:128`. Each read first calculates
-fields with all 256 original y rows and full z, then retains y=32:96.
-The returned slab shape is `(8, 64, 2048)`. Its `y_start=32` and
+global x ranges `64:72`, `72:80`, ..., `120:128`. The first read copies
+x=63:73 and y=31:97 with full z, giving loaded shape `(10, 66, 2048)`.
+Removing neighbours returns the `(8, 64, 2048)` core. Its `y_start=32` and
 `native_y_size=256` retain the original positions. Images subtract the region's
 origin `(64, 32)` to map these cells to local pixels. Original full-grid cell
 IDs skip the unselected y rows between x layers; they are not a contiguous
 range from first to last.
+
+A one-cell x/y selection loads only `(3, 3, 2048)` fields, including
+original-box neighbours on all four sides. Removing those neighbours returns
+the `(1, 1, 2048)` core with complete z columns.
 
 ## 3. Calculate one batch: `emission_calculator.calculate()`
 
