@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Save the five Figure 1 fields at one x index, using the current process setup.
 
-Build: python tools/figures/build_table_input_slice.py --config configs/emission_process.yaml
+Build: python tools/figures/build_table_input_slice.py --config configs/emission.yaml
        --output-dir output/figure1 --slice-index 216
 Replot: python tools/figures/build_table_input_slice.py --output-dir output/figure1
         --plot-only
@@ -26,7 +26,7 @@ if __package__ in (None, ''):
 from quokka2s.figures.table_input_slices import plot_table_input_slice
 from quokka2s.paths import resolve_path
 from quokka2s.products.table_input_slices import prepare_slice_plot_data
-from quokka2s.run_settings import DEFAULT_PROCESS_CONFIG, load_process_config
+from quokka2s.run_settings import DEFAULT_CONFIG, load_process_config
 
 
 def calculate_slice_fields(snapshot, despotic_reader, slice_index, query_chunk):
@@ -135,7 +135,7 @@ def main():
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument('--config', type=Path, default=ROOT / DEFAULT_PROCESS_CONFIG)
+    parser.add_argument('--config', type=Path, default=ROOT / DEFAULT_CONFIG)
     parser.add_argument('--output-dir', type=Path, required=True)
     parser.add_argument('--slice-index', type=int, default=216)
     parser.add_argument('--plot-only', action='store_true', help='Render saved slice_data.npz only')

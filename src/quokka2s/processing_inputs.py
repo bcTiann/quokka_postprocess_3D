@@ -41,7 +41,10 @@ def load_processing_inputs(config):
 def check_input_paths(config):
     """Require available input paths, a snapshot Header, and a new output path."""
     if config.output_dir.exists():
-        raise FileExistsError('Choose a new output directory')
+        raise FileExistsError(
+            f'Results already exist: {config.output_dir}. '
+            'Choose a new results_dir for this job and snapshot.'
+        )
     for name in ('dataset', 'despotic_table', 'cloudy_table', 'dust_opacity_table'):
         if not getattr(config, name).exists():
             raise FileNotFoundError(f'{name}: {getattr(config, name)}')

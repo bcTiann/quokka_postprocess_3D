@@ -8,7 +8,7 @@ tools and additional paper figures have their own commands.
 
 | Directory | Contents | In Git? |
 |---|---|---|
-| `configs/` | Process and plot YAML files; paths are relative to these files | Yes |
+| `configs/` | Shared `emission.yaml` for process and plot; user paths are relative to this file | Yes |
 | `src/quokka2s/` | Reusable calculations and process/plot entry points | Yes |
 | `tools/cloudy/` | Build radiation inputs, run Cloudy, package its emission table | Yes |
 | `tools/despotic/` | Install required GOW corrections, measure table axes, check coverage | Yes |
@@ -22,8 +22,8 @@ tools and additional paper figures have their own commands.
 
 ## Start reading the current pipeline
 
-1. [process configuration](../configs/emission_process.yaml): choose the snapshot,
-   two tables and numerical output directory.
+1. [shared configuration](../configs/emission.yaml): choose the simulation job,
+   snapshot and results root. The bundled emission tables are defaults.
 2. [process_snapshot.py](../src/quokka2s/process_snapshot.py): read inputs, process
    slabs, build/check/save results.
 3. [snapshot_reader.py](../src/quokka2s/snapshot_reader.py): derive six copied
@@ -40,7 +40,7 @@ tools and additional paper figures have their own commands.
 5. [emission_products.py](../src/quokka2s/products/emission_products.py): send the
    same calculated batch to image, spectrum and gas-phase accumulators.
 6. [plot_emission_results.py](../src/quokka2s/plot_emission_results.py): draw the
-   saved products using the [plot configuration](../configs/emission_plot.yaml).
+   saved products selected by the same [configuration](../configs/emission.yaml).
 
 [line_definitions.py](../src/quokka2s/line_definitions.py) is the shared list of
 line wavelengths and emitter masses.
@@ -76,7 +76,9 @@ The root modules also separate the final processing steps:
 `result_metadata.py` extracts selected pixel geometry and ordered dust values;
 `processing_report.py` builds the readable summary; `result_files.py` writes
 already-built arrays and the report. `run_settings.py` returns `ProcessSettings`
-or `PlotSettings` from YAML, without changing the command-line defaults.
+or `PlotSettings` from the same YAML. Both derive the selected snapshot's
+directory from `results_dir/jobname/snapshot_name`. Process writes its
+`processed/` subdirectory; plot reads that subdirectory and writes figures.
 `input_paths.py` stores bundled input locations without importing calculations.
 `paths.py` resolves user paths once at configuration and command-line entry
 points, expanding `~` and using the appropriate relative-path base.
@@ -94,7 +96,7 @@ inputs/
   tables/despotic/interpolated.npz
   tables/cloudy/emission.npz
 
-output/plt0655228/
+output/sigma13.v2/plt0655228/
   processed/
     images.npz
     images_factor_2.npz       # Optional, separately prepared 2x2-summed image
@@ -110,7 +112,11 @@ output/plt0655228/
     pdf/
 ```
 
+Jobs such as `sigma13.v2` and `sigma50` have separate directories, so both can
+contain a snapshot named `plt0655228`. More snapshots of one job sit alongside
+each other under that job's directory.
+
 Processing writes a new directory per run. Plotting may redraw from the saved
 products many times. Each figure version keeps PNG and PDF files in its own
 `png/` and `pdf/` subdirectories. Raw Cloudy calculation files belong in `runtime/`;
-process and plot read only the paths specified in their configuration files.
+process and plot use only the job and snapshot selected in the shared configuration.

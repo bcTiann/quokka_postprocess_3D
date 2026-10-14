@@ -49,28 +49,26 @@ installation, not simulation inputs or processed results.
 
 ## 3. Set the inputs
 
-Edit [`configs/emission_process.yaml`](../configs/emission_process.yaml).
-Keep the two bundled table paths unchanged. Set `dataset` and `output_dir`
-to locations under your scratch directory.
+Edit the first three settings in
+[`configs/emission.yaml`](../configs/emission.yaml). Use `jobname` for the
+simulation setup, `dataset` for one snapshot, and `results_dir` for the root
+containing saved jobs and snapshots. The bundled tables are used by default.
 
 | Setting | Meaning |
 |---|---|
+| `jobname` | Simulation setup, for example `sigma13.v2` or `sigma50`. |
 | `dataset` | Path to the complete simulation snapshot directory. |
-| `despotic_table` | Path to the DESPOTIC table, already included in the clone. |
-| `cloudy_table` | Path to the Cloudy table, already included in the clone. |
-| `output_dir` | Directory where process saves its numerical results. Use a new directory for each run. |
+| `results_dir` | Root directory for all jobs' numerical results and figures. |
 | `query_chunk` | Maximum number of cells per query batch. |
 | `chunk_workers` | Number of batches processed concurrently. |
 | `spectral_workers` | Number of spectral-integration threads per batch. |
 
-Replace `/path/to/plt0655228` with your complete snapshot directory and
-`/path/to/processed` with a new directory for the numerical results:
+Use actual absolute paths for your project and username. For example:
 
 ```yaml
-dataset: /path/to/plt0655228
-despotic_table: ../inputs/tables/despotic/interpolated.npz
-cloudy_table: ../inputs/tables/cloudy/emission.npz
-output_dir: /path/to/processed
+jobname: sigma13.v2
+dataset: /scratch/YOUR_PROJECT/YOUR_USERNAME/simulations/sigma13.v2/plt0655228
+results_dir: /scratch/YOUR_PROJECT/YOUR_USERNAME/quokka_postprocess_3D/output
 query_chunk: 1000000
 chunk_workers: 2
 spectral_workers: 3
@@ -79,8 +77,8 @@ spectral_workers: 3
 Place the snapshot at the path set by `dataset`, or point it to the snapshot's
 existing location on scratch. The directory must contain `Header`,
 `metadata.yaml`, and all data subdirectories. The two emission tables are
-already in the clone; `../inputs/` resolves from `configs/` to the repository's
-`inputs/` directory.
+already in the clone and need no YAML entries. Advanced configurations can
+override their paths with `despotic_table` and `cloudy_table`.
 
 Example directory layout:
 
@@ -88,21 +86,25 @@ Example directory layout:
 $MYSOFTWARE/quokka_postprocess_3D/
 ├── .venv/
 ├── configs/
-│   ├── emission_process.yaml
-│   └── emission_plot.yaml
+│   └── emission.yaml
 └── inputs/tables/
     ├── despotic/interpolated.npz
     └── cloudy/emission.npz
 
-$MYSCRATCH/quokka_postprocess_3D/
-├── inputs/snapshots/plt0655228/
-│   ├── Header
-│   ├── metadata.yaml
-│   └── Level_0/
-└── output/plt0655228/
-    ├── processed/       # Numerical results
-    ├── figures/         # Paper figures
-    └── figures_titled/  # Figures with titles
+$MYSCRATCH/simulations/sigma13.v2/plt0655228/
+├── Header
+├── metadata.yaml
+└── Level_0/
+
+$MYSCRATCH/quokka_postprocess_3D/output/
+├── sigma13.v2/
+│   ├── plt0655228/
+│   │   ├── processed/       # Numerical results
+│   │   ├── figures/         # Paper figures
+│   │   └── figures_titled/  # Figures with titles
+│   └── plt0916720/
+└── sigma50/
+    └── plt0655228/
 ```
 
 Use actual absolute paths in YAML; `$MYSOFTWARE` and `$MYSCRATCH` above only
@@ -119,11 +121,12 @@ With the Setonix Python environment activated:
 python -m quokka2s.process_snapshot
 ```
 
-Results are saved at `output_dir`. Check its completion status, replacing
-`/path/to/processed` with the same path:
+The snapshot name is taken from the supplied `dataset` path. Process saves to
+`results_dir/jobname/snapshot_name/processed/`. Check its completion status
+using the paths in your YAML:
 
 ```bash
-cat /path/to/processed/status.json
+cat /scratch/YOUR_PROJECT/YOUR_USERNAME/quokka_postprocess_3D/output/sigma13.v2/plt0655228/processed/status.json
 ```
 
 A completed full-box run has `status: completed`, `processing_complete: true`,
@@ -135,24 +138,16 @@ Choose either location below.
 
 ### Option A: Plot on Setonix
 
-Edit [`configs/emission_plot.yaml`](../configs/emission_plot.yaml), using your
-actual paths. `products` must match the process configuration's `output_dir`;
-the other two paths choose where the figures are saved:
-
-```yaml
-products: /path/to/processed
-output_dir: /path/to/figures
-titled_output_dir: /path/to/figures_titled
-```
-
-Then run:
+Keep the same shared YAML and run:
 
 ```bash
 python -m quokka2s.plot_emission_results
 ```
 
-Use the same activated environment as process. Each figure directory contains
-separate `png/` and `pdf/` subdirectories.
+Use the same activated environment as process. Plot reads this job and
+snapshot's `processed/` directory and writes the sibling `figures/` and
+`figures_titled/` directories. Each contains separate `png/` and `pdf/`
+subdirectories. Set `titled_figures: false` to omit the titled version.
 
 ### Option B: Download the results and plot locally
 
@@ -160,25 +155,29 @@ On your laptop, follow the [README](../README.md#1-clone) to clone the same
 repository version and configure the local environment. From the local
 repository root, download the entire `processed/` directory. Replace
 `YOUR_USERNAME` with your Pawsey username and `/path/to/processed` with your
-Setonix process output directory:
+Setonix process output directory. Preserve the job and snapshot names:
 
 ```bash
-mkdir -p output/plt0655228_setonix/processed
+mkdir -p output/sigma13.v2/plt0655228/processed
 
 rsync -rvh --progress --partial \
   "YOUR_USERNAME@data-mover.pawsey.org.au:/path/to/processed/" \
-  output/plt0655228_setonix/processed/
+  output/sigma13.v2/plt0655228/processed/
 ```
 
 In your local clone, edit
-[`configs/emission_plot.yaml`](../configs/emission_plot.yaml) to read the
-downloaded results:
+[`configs/emission.yaml`](../configs/emission.yaml) to select the downloaded
+job and snapshot:
 
 ```yaml
-products: ../output/plt0655228_setonix/processed
-output_dir: ../output/plt0655228_setonix/figures
-titled_output_dir: ../output/plt0655228_setonix/figures_titled
+jobname: sigma13.v2
+dataset: /scratch/YOUR_PROJECT/YOUR_USERNAME/simulations/sigma13.v2/plt0655228
+results_dir: ../output
 ```
+
+Plot uses only the snapshot name `plt0655228` from `dataset`; the original
+Setonix path does not need to exist on your laptop. `results_dir` points to the
+local root containing `sigma13.v2/plt0655228/processed/`.
 
 Then run:
 
@@ -192,7 +191,7 @@ different process output directory, update the download source accordingly.
 Only the processed results need to be downloaded; do not copy the Setonix
 Python environment. Plot reads saved results without rerunning process.
 
-Figures are saved under `output/plt0655228_setonix/figures/` and
+Figures are saved under `output/sigma13.v2/plt0655228/figures/` and
 `figures_titled/`, each with separate `png/` and `pdf/` directories.
 Transfer results to local or long-term storage after processing: scratch is
 temporary storage and is subject to Pawsey's purge policy.

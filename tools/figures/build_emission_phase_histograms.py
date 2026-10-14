@@ -2,7 +2,7 @@
 """Save gas-mass and line-luminosity phase bins from the current process setup.
 
 Build: python tools/figures/build_emission_phase_histograms.py
-       --config configs/emission_process.yaml --output-dir output/emission_phase --no-plot
+       --config configs/emission.yaml --output-dir output/emission_phase --no-plot
 Replot: python tools/figures/build_emission_phase_histograms.py
         --output-dir output/emission_phase --plot-only
 """
@@ -26,7 +26,7 @@ if __package__ in (None, ''):
 
 from quokka2s.figures.emission_phase_histograms import plot_panels
 from quokka2s.paths import resolve_path
-from quokka2s.run_settings import DEFAULT_PROCESS_CONFIG, load_process_config
+from quokka2s.run_settings import DEFAULT_CONFIG, load_process_config
 
 
 def accumulate_phase_batch(histograms, cells, emission_calculator):
@@ -180,7 +180,7 @@ def main():
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument('--config', type=Path, default=ROOT / DEFAULT_PROCESS_CONFIG)
+    parser.add_argument('--config', type=Path, default=ROOT / DEFAULT_CONFIG)
     parser.add_argument('--output-dir', type=Path, required=True)
     parser.add_argument('--max-slabs', type=int, help='Limit this diagnostic run to its first N slabs')
     parser.add_argument('--plot-only', action='store_true', help='Render saved phase_histograms.npz only')

@@ -1,0 +1,28 @@
+# Usually change these three settings. Relative paths start at this YAML file.
+jobname: sigma13.v2
+dataset: ../inputs/snapshots/plt0655228
+results_dir: ../output
+# Results: ../output/sigma13.v2/plt0655228/{processed,figures,figures_titled}/
+
+# Optional native x-y region; null selects the full axis. z stays complete.
+# For example, x_index_range: [64, 128] selects x indices 64 through 127.
+x_index_range: null
+y_index_range: null
+# Use a different results_dir to keep a region run separate.
+
+# Processing: cells per query batch, concurrent batches, threads per batch.
+query_chunk: 1000000
+chunk_workers: 2
+spectral_workers: 3  # Up to 2 x 3 spectral-integration threads in total.
+
+# Plotting: save both manuscript and titled versions at native resolution.
+titled_figures: true
+image_downsample_factor: 1
+# To select factor 2, first prepare it without rereading the simulation:
+# python -m quokka2s.prepare_emission_results --image-downsample-factor 2
+
+# Bundled DESPOTIC, Cloudy and dust tables are selected automatically.
+# Optional overrides, relative to this YAML file:
+# despotic_table: ../inputs/tables/despotic/interpolated.npz
+# cloudy_table: ../inputs/tables/cloudy/emission.npz
+# dust_opacity_table: ../vendor/draine/kext_albedo_WD_MW_3.1_60_D03.all

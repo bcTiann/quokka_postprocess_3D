@@ -32,16 +32,26 @@ root. The snapshot and outputs can also be stored outside the repository.
 | DESPOTIC table | `inputs/tables/despotic/interpolated.npz` | Included in Git |
 | Cloudy table | `inputs/tables/cloudy/emission.npz` | Included in Git |
 
-Set `dataset` in [configs/emission_process.yaml](configs/emission_process.yaml)
-to the complete snapshot directory containing `Header`, `metadata.yaml`, and
-its data subdirectories. Set `output_dir` to a new directory for the results.
+Edit the first three settings in [configs/emission.yaml](configs/emission.yaml):
+
+```yaml
+jobname: sigma13.v2
+dataset: ../inputs/snapshots/plt0655228
+results_dir: ../output
+```
+
+`jobname` identifies the simulation setup. `dataset` points to the complete
+snapshot directory containing `Header`, `metadata.yaml`, and its data
+subdirectories. The snapshot name is taken from this path, here `plt0655228`.
+Process saves numerical results in
+`results_dir/jobname/snapshot_name/processed/`; plot reads that same directory.
 Relative YAML paths are relative to the configuration file; absolute paths
-are also supported.
+are also supported. The two bundled tables are used by default.
 
 On Setonix, keep the repository and bundled tables under `$MYSOFTWARE`, and
 store the snapshot and processed results under `$MYSCRATCH`. Use the
 [Setonix input settings](docs/setonix.md#3-set-the-inputs)
-to set these paths in `configs/emission_process.yaml`.
+to set these paths in `configs/emission.yaml`.
 
 The bundled tables are for the `plt0655228` reference snapshot.
 
@@ -53,9 +63,10 @@ Run from the repository root:
 python -m quokka2s.process_snapshot
 ```
 
-Settings: [configs/emission_process.yaml](configs/emission_process.yaml).
-Default results: `output/plt0655228/processed/`.
-For another run, choose a new `output_dir` in the process config.
+Both commands read [configs/emission.yaml](configs/emission.yaml).
+Default numerical results: `output/sigma13.v2/plt0655228/processed/`.
+For another snapshot, change `dataset`; for another simulation setup, also
+change `jobname`. Processing does not overwrite an existing result directory.
 
 ## 5. Plot
 
@@ -63,14 +74,30 @@ For another run, choose a new `output_dir` in the process config.
 python -m quokka2s.plot_emission_results
 ```
 
-Settings: [configs/emission_plot.yaml](configs/emission_plot.yaml).
-The default `products` path reads `output/plt0655228/processed/`.
+Plot selects the saved snapshot using `results_dir`, `jobname`, and the
+snapshot name from `dataset`. It does not open the snapshot or emission tables.
+To plot an earlier result, set these three values to that job and snapshot.
 Process saves the numerical arrays, normalization and colour limits; plot
 reads them to draw. Optional image-resolution preparation is described in
 the [usage guide](docs/usage.md#plot-settings).
 
-Figures: `output/plt0655228/figures/` and
-`output/plt0655228/figures_titled/`, each with `png/` and `pdf/` subdirectories.
+Figures: `output/sigma13.v2/plt0655228/figures/` and
+`output/sigma13.v2/plt0655228/figures_titled/`, each with `png/` and `pdf/`
+subdirectories. The default `titled_figures: true` writes both versions.
+
+Different jobs can have snapshots with the same name:
+
+```text
+output/
+├── sigma13.v2/
+│   ├── plt0655228/
+│   │   ├── processed/
+│   │   ├── figures/
+│   │   └── figures_titled/
+│   └── plt0916720/
+└── sigma50/
+    └── plt0655228/
+```
 
 ## Example outputs
 

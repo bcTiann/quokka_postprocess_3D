@@ -11,7 +11,7 @@ from quokka2s.figures.gas_phase_spectra import (
 )
 from quokka2s.figures.line_luminosity_images import plot_line_images
 from quokka2s.figures.line_spectra import plot_line_spectra
-from quokka2s.run_settings import DEFAULT_PLOT_CONFIG, load_plot_config
+from quokka2s.run_settings import DEFAULT_CONFIG, load_plot_config
 
 
 def draw_emission_products(
@@ -86,10 +86,10 @@ def draw_emission_products(
 
 
 def main(argv=None) -> None:
-    """Plot saved products from the plotting YAML settings.
+    """Plot the job and snapshot selected by the shared emission YAML.
 
     argv is a sequence of command arguments, or None for sys.argv[1:].
-    From the repository root, the default is configs/emission_plot.yaml;
+    From the repository root, the default is configs/emission.yaml;
     --config PATH selects another YAML file."""
     parser = argparse.ArgumentParser(
         prog='quokka2s-plot',
@@ -97,9 +97,9 @@ def main(argv=None) -> None:
     )
     parser.add_argument(
         '--config',
-        default=DEFAULT_PLOT_CONFIG,
+        default=DEFAULT_CONFIG,
         type=Path,
-        help='Plotting YAML file (default: configs/emission_plot.yaml)',
+        help='Shared emission YAML file (default: configs/emission.yaml)',
     )
     config_path = parser.parse_args(argv).config
     try:

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Save edge-on and face-on gas maps using the available mixed temperatures.
 
-Build: python tools/figures/build_gas_projection_maps.py --config configs/emission_process.yaml
+Build: python tools/figures/build_gas_projection_maps.py --config configs/emission.yaml
        --output-dir output/gas_projection_maps --no-plot
 Replot: python tools/figures/build_gas_projection_maps.py
         --output-dir output/gas_projection_maps --plot-only
@@ -30,7 +30,7 @@ from quokka2s.products.gas_projections import (
     MultiviewAccumulator,
     prepare_projection_map_data,
 )
-from quokka2s.run_settings import DEFAULT_PROCESS_CONFIG, load_process_config
+from quokka2s.run_settings import DEFAULT_CONFIG, load_process_config
 
 
 def accumulate_projection_slab(
@@ -229,7 +229,7 @@ def main():
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument('--config', type=Path, default=ROOT / DEFAULT_PROCESS_CONFIG)
+    parser.add_argument('--config', type=Path, default=ROOT / DEFAULT_CONFIG)
     parser.add_argument('--output-dir', type=Path, required=True)
     parser.add_argument('--figure-stem', type=Path)
     parser.add_argument('--plot-only', action='store_true', help='Render saved multiview_maps.npz only')

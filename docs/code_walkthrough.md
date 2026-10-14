@@ -9,10 +9,24 @@ python -m quokka2s.process_snapshot
 python -m quokka2s.plot_emission_results
 ```
 
-From the repository root, each reads its own default YAML:
-`configs/emission_process.yaml` or `configs/emission_plot.yaml`.
+From the repository root, both read the default `configs/emission.yaml`.
 Use `--config PATH` to select another file. Each runs directly;
 there is no shared dispatcher.
+
+The first three settings select one snapshot and its results:
+
+```yaml
+jobname: sigma13.v2
+dataset: ../inputs/snapshots/plt0655228
+results_dir: ../output
+```
+
+The supplied dataset path names snapshot `plt0655228`. Its results directory
+is `output/sigma13.v2/plt0655228/`: process writes `processed/`, and plot reads
+`processed/` and writes `figures/` plus the optional `figures_titled/`.
+Changing `jobname` to `sigma50` selects a different job even when its snapshot
+is also called `plt0655228`. Plot uses the snapshot name only; it does not
+open the dataset path or emission tables.
 
 The two main commands are in the [root README](../README.md). Detailed
 settings and table-building commands are in the [usage guide](usage.md).
@@ -554,7 +568,10 @@ including the failed stage; it is not a resume checkpoint.
 
 Open [plot_emission_results.py](../src/quokka2s/plot_emission_results.py) and start at `main()`.
 
-1. `load_plot_config()` returns `PlotSettings` with product and figure directories.
+1. `load_plot_config()` reads the shared YAML and returns `PlotSettings` with
+   product and figure directories under `results_dir/jobname/snapshot_name/`.
+   It obtains the snapshot name from the supplied `dataset` path without
+   opening that path or checking emission-table files.
 2. `read_emission_results()` in the root
    [emission_results.py](../src/quokka2s/emission_results.py) reads the three
    saved NPZ files once into `EmissionResults(images, spectra, gas_phases, ...)`.
@@ -571,9 +588,9 @@ Open [plot_emission_results.py](../src/quokka2s/plot_emission_results.py) and st
    and phase comparisons with
    [figures/gas_phase_spectra.py](../src/quokka2s/figures/gas_phase_spectra.py).
 5. Each plotting step saves PNG/PDF in the figure directory's `png/` and `pdf/`
-   subdirectories. If `titled_output_dir` is set, the same loaded numerical
-   products also produce copies with titles under
-   its own `png/` and `pdf/`.
+   subdirectories. With the default `titled_figures: true`, the returned
+   `titled_output_dir` points to `figures_titled/`; the same loaded numerical
+   products also produce copies with titles under its own `png/` and `pdf/`.
 
 No step reopens yt, the snapshot, DESPOTIC, or Cloudy tables. Plotting selects
 saved fields and applies labels, colours, line styles, axis windows and layout.

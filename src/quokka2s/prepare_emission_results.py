@@ -22,7 +22,7 @@ from quokka2s.products.profile_preparation import (
     add_gas_phase_display_fields,
     add_spectral_display_fields,
 )
-from quokka2s.run_settings import DEFAULT_PLOT_CONFIG, load_plot_config
+from quokka2s.run_settings import DEFAULT_CONFIG, load_plot_config
 
 
 def read_product_arrays(path: Path) -> dict[str, np.ndarray]:
@@ -75,9 +75,9 @@ def prepare_saved_emission_results(directory: Path, image_downsample_factor: int
 
 
 def main(argv=None) -> None:
-    """Use plot YAML's products directory, or an explicit --products path."""
+    """Use the shared YAML result selection, or an explicit --products path."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", type=Path, default=DEFAULT_PLOT_CONFIG)
+    parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
     parser.add_argument("--products", type=Path)
     parser.add_argument("--image-downsample-factor", type=int, default=1)
     args = parser.parse_args(argv)

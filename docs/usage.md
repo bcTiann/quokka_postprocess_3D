@@ -3,29 +3,64 @@
 Use the [README](../README.md) for cloning, environment setup, inputs, and the
 two main commands. Run the commands below from the repository root.
 
-## Processing settings
+## Shared configuration
 
-The [process YAML](../configs/emission_process.yaml) specifies these input and output paths:
+Process and plot both read [configs/emission.yaml](../configs/emission.yaml).
+The first three settings select the simulation job, its snapshot, and the
+root directory for saved results:
 
 | Setting | Meaning |
 |---|---|
+| `jobname` | Simulation setup, for example `sigma13.v2` or `sigma50` |
 | `dataset` | Complete QUOKKA snapshot directory |
-| `despotic_table` | Interpolated DESPOTIC table |
-| `cloudy_table` | Eight-line Cloudy table |
-| `output_dir` | New directory for the numerical products |
+| `results_dir` | Root containing all jobs and snapshots |
+
+```yaml
+jobname: sigma13.v2
+dataset: ../inputs/snapshots/plt0655228
+results_dir: ../output
+```
+
+The snapshot name comes from the supplied `dataset` path, here `plt0655228`.
+Both commands select `results_dir/jobname/snapshot_name/`: process writes
+`processed/`, while plot reads `processed/` and writes `figures/` and,
+by default, `figures_titled/`. They do not search for the latest snapshot.
+
+```text
+output/
+├── sigma13.v2/
+│   ├── plt0655228/
+│   │   ├── processed/
+│   │   ├── figures/
+│   │   └── figures_titled/
+│   └── plt0916720/
+└── sigma50/
+    └── plt0655228/
+```
+
+The two bundled tables are selected automatically:
+`inputs/tables/despotic/interpolated.npz` and
+`inputs/tables/cloudy/emission.npz`. These defaults refer to the installed
+repository, even when the YAML file is elsewhere. Advanced configurations
+may set `despotic_table`, `cloudy_table`, or `dust_opacity_table` explicitly.
 
 The supplied YAML uses repository-local input and output paths. To store data
-elsewhere, set `dataset` and `output_dir` to the desired locations. The
+elsewhere, set `dataset` and `results_dir` to the desired locations. The
 [Setonix guide](setonix.md) keeps the repository and bundled tables under
 `$MYSOFTWARE`, and snapshots and results under `$MYSCRATCH`.
 
 Relative paths are resolved from the YAML file's directory, so `../inputs/` in
-`configs/emission_process.yaml` refers to this clone's `inputs/` directory.
+`configs/emission.yaml` refers to this clone's `inputs/` directory.
 `dataset` must point to the individual snapshot containing `Header`, rather
 than its parent `inputs/snapshots/` directory. Processing refuses to overwrite
-an existing output directory; choose a new name for each run.
+an existing `processed/` directory; choose another results root for a rerun
+of the same job and snapshot.
 An interrupted emission run starts again from the beginning in a new directory.
 Table-building checkpoints are a separate mechanism.
+
+Existing numerical products can be reused without rerunning process. Place
+their complete directory at `results_dir/jobname/snapshot_name/processed/`,
+then run plot with that job and snapshot selected.
 
 ### Path rules
 
@@ -35,9 +70,10 @@ Table-building checkpoints are a separate mechanism.
 | Command-line options, including `--config` | Current terminal working directory |
 | Bundled reference data | Repository containing the installed editable package |
 
-Paths are resolved to absolute `Path` objects at the entry point; calculations
-receive those resolved paths. The YAML file retains its relative paths, so
-moving or cloning the repository does not require changing the defaults.
+Paths used by each command are resolved to absolute `Path` objects at the entry
+point; calculations receive those resolved paths. The YAML file retains its
+relative paths, so moving or cloning the repository does not require changing
+the defaults.
 The program does not search for replacement inputs when a file is missing.
 Resolution does not create files or require output files to exist; input checks
 and output-overwrite rules remain in force.
@@ -46,12 +82,14 @@ Absolute paths and `~/...` are supported in the supplied configurations too.
 Use absolute paths for snapshot and result locations outside the clone.
 YAML does not expand `$VARIABLE` expressions.
 
+## Processing settings
+
 Optional execution settings control memory and concurrency, not the physics.
-Omitted settings use the same defaults shown in the process YAML:
+Omitted settings use the same defaults shown in the shared YAML:
 
 | Setting | Meaning | Default |
 |---|---|---|
-| `slab_nx` | Number of x cells read per slab, retaining full y and z | 8 |
+| `slab_nx` | Number of x cells read per slab, retaining selected y and full z | 8 |
 | `query_chunk` | Maximum cells in one table-query batch | 1,000,000 |
 | `chunk_workers` | Concurrent query batches within the loaded slab | 2 |
 | `spectral_workers` | Spectral-integration threads per query batch | 3 |
@@ -64,23 +102,31 @@ run for debugging. Omit it to finish the selected region or full snapshot.
 
 ## Select an x-y region
 
-Copy the [process YAML](../configs/emission_process.yaml) and add native cell-index ranges:
+Copy the [shared YAML](../configs/emission.yaml) and set native cell-index ranges
+and a separate results root:
 
 ```yaml
 x_index_range: [64, 128]
 y_index_range: [32, 96]
-output_dir: ../output/plt0655228/region_x64_128_y32_96/processed
+results_dir: ../output/region_x64_128_y32_96
 ```
 
 Indices start at zero and the stop is excluded: this example selects
-`64 × 64 × 2048` cells. An omitted axis uses its full extent; z always spans
+`64 × 64 × 2048` cells. An omitted or `null` axis uses its full extent; z always spans
 the original box. No cell averaging is performed. Gradients use neighbours
 from the original simulation, and both shielding and dust columns use the
 complete original z column.
 
-Run the copied YAML with the same process command. In a copied [plot YAML](../configs/emission_plot.yaml),
-point `products` at this region's processed directory and choose new figure
-directories. The region's images retain their physical x/y coordinates.
+Pass the same copied YAML to both commands:
+
+```bash
+python -m quokka2s.process_snapshot --config configs/emission_region.yaml
+python -m quokka2s.plot_emission_results --config configs/emission_region.yaml
+```
+
+This example saves under
+`output/region_x64_128_y32_96/sigma13.v2/plt0655228/`.
+The region's images retain their physical x/y coordinates.
 Its spectra, full-profile sigma, and gas-phase statistics use only selected
 cells; spectra per projected area use the region's x-y area. A finished region
 is a complete result and does not require `allow_partial`.
@@ -132,15 +178,18 @@ settings under `physical_settings`. See the
 
 ## Plot settings
 
-Copy the completed numerical-product directory to the laptop. Plotting needs
-those NPZ files and the package; it does not reopen the snapshot or tables.
+Copy the completed `processed/` directory to the laptop, preserving its job
+and snapshot folders. In the same shared YAML, set `results_dir` to the local
+results root and `jobname` to the selected job. The basename of `dataset`
+selects the saved snapshot. Its original Setonix path can remain unchanged;
+plot does not require that path or the tables to exist locally.
 
 | Plot setting | Meaning |
 |---|---|
-| `products` | Directory containing the three NPZ products |
-| `output_dir` | Figures without titles, for manuscript captions |
-| `titled_output_dir` | Optional second directory of titled figures |
+| `titled_figures` | Also save titled figures in `figures_titled/`; default true |
 | `image_downsample_factor` | Select an already prepared image resolution; default 1, native |
+| `raw_luminosity` | Display spectra in luminosity units rather than luminosity per projected area; default false |
+| `allow_partial` | Permit figures from an intentionally incomplete diagnostic run; default false |
 
 To use a factor of 2, prepare that resolution once from the saved native pixels:
 
@@ -151,7 +200,7 @@ python -m quokka2s.prepare_emission_results --image-downsample-factor 2
 This writes `images_factor_2.npz` in the configured products directory, summing
 each 2 × 2 group rather than averaging. It retains `images.npz` at native
 resolution and does not read the snapshot. Set `image_downsample_factor: 2`
-in the plot YAML to select it. For another product directory, use
+in the shared YAML to select it. For another product directory, use
 `--products PATH` when preparing it.
 
 Intrinsic and attenuated images of one line share a colour range from
@@ -162,9 +211,9 @@ the same command without the optional factor, using only their saved arrays.
 
 The command draws individual line images, intrinsic/dust spectrum comparisons,
 and gas-phase/line-profile comparisons as PNG and PDF. Each figure directory
-contains `png/` and `pdf/` subdirectories, including `titled_output_dir` when set.
-For example, `output_dir/png/spectrum_co10.png` and
-`output_dir/pdf/spectrum_co10.pdf` contain the two formats of the same figure.
+contains `png/` and `pdf/` subdirectories, including `figures_titled/` when
+enabled. For example, `figures/png/spectrum_co10.png` and
+`figures/pdf/spectrum_co10.pdf` contain the two formats of the same figure.
 The displayed velocity range is −50 to +50 km/s; all saved channels remain
 intact. H I 21 cm appears once because this dust prescription leaves it unchanged. Set
 `allow_partial: true` only when intentionally plotting diagnostic subsets.
@@ -220,10 +269,10 @@ snapshot reader. Slice and projection maps query DESPOTIC temperature only;
 emission phase histograms reuse the full cell-emission calculator:
 
 ```bash
-python tools/figures/build_table_input_slice.py --config configs/emission_process.yaml \
-  --output-dir output/plt0655228/table_input_slice --slice-index 216 --no-plot
-python tools/figures/build_emission_phase_histograms.py --config configs/emission_process.yaml \
-  --output-dir output/plt0655228/emission_phase_histograms --no-plot
+python tools/figures/build_table_input_slice.py --config configs/emission.yaml \
+  --output-dir output/sigma13.v2/plt0655228/table_input_slice --slice-index 216 --no-plot
+python tools/figures/build_emission_phase_histograms.py --config configs/emission.yaml \
+  --output-dir output/sigma13.v2/plt0655228/emission_phase_histograms --no-plot
 ```
 
 Run either script again with the same `--output-dir` and `--plot-only` to draw

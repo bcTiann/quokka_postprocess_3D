@@ -63,6 +63,8 @@ def build_processing_report(
     result = {
         # Run status and the saved array organization.
         'status': 'completed' if outputs.processing_complete else 'partial diagnostic',
+        'jobname': config.jobname,
+        'snapshot_name': config.snapshot_name,
         'full_snapshot': full,
         'processing_complete': outputs.processing_complete,
         'processing_region': metadata.processing_region,

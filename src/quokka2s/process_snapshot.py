@@ -12,7 +12,7 @@ from pathlib import Path
 import time
 
 from quokka2s.physics.cell_emission import CellEmissionCalculator
-from quokka2s.run_settings import DEFAULT_PROCESS_CONFIG, load_process_config
+from quokka2s.run_settings import DEFAULT_CONFIG, load_process_config
 from quokka2s.processing_inputs import load_processing_inputs
 from quokka2s.result_files import write_emission_results, write_status
 from quokka2s.result_metadata import ResultMetadata
@@ -248,10 +248,10 @@ def process_snapshot(config, snapshot, emission_calculator, products, began):
 
 
 def main(argv=None):
-    """Process a snapshot and save checked numerical products.
+    """Process the selected job/snapshot and save checked numerical products.
 
     argv is a sequence of command arguments, or None for sys.argv[1:].
-    From the repository root, the default is configs/emission_process.yaml;
+    From the repository root, the default is configs/emission.yaml;
     --config PATH selects another YAML file."""
     parser = argparse.ArgumentParser(
         prog='quokka2s-process',
@@ -259,9 +259,9 @@ def main(argv=None):
     )
     parser.add_argument(
         '--config',
-        default=DEFAULT_PROCESS_CONFIG,
+        default=DEFAULT_CONFIG,
         type=Path,
-        help='Processing YAML file (default: configs/emission_process.yaml)',
+        help='Shared emission YAML file (default: configs/emission.yaml)',
     )
     config_path = parser.parse_args(argv).config
     try:
