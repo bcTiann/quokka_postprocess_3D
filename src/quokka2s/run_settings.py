@@ -27,15 +27,19 @@ DEFAULT_CONFIG = Path("configs/emission.yaml")
 
 @dataclass(frozen=True)
 class RunSelection:
-    """One selected job/snapshot and its result directory.
+    """One selected job/snapshot, native x/y ranges, and its result directory.
 
     snapshot_name comes from the supplied dataset folder name, without opening
-    the snapshot or following its symlink. directory is an absolute Path.
-    Example: output/sigma13.v2/plt0916720 contains processed/ and figures/.
+    the snapshot or following its symlink. Index ranges are parsed [start, stop)
+    tuples, or None for a full axis. directory is an absolute Path: the snapshot
+    directory for a full box, or its named region subdirectory for explicit ranges.
+    Example: x=(64, 66), y=None selects plt0916720/region_x64-66_yall/.
     """
 
     jobname: str
     snapshot_name: str
+    x_index_range: tuple[int, int] | None
+    y_index_range: tuple[int, int] | None
     directory: Path
 
 
@@ -85,11 +89,11 @@ class PlotSettings:
 _RUN_REQUIRED_SETTINGS = {"dataset", "jobname", "results_dir"}
 _PROCESS_TABLE_PATHS = ("despotic_table", "cloudy_table", "dust_opacity_table")
 _PROCESS_INTEGERS = ("slab_nx", "query_chunk", "chunk_workers", "spectral_workers", "max_slabs")
-_PROCESS_INDEX_RANGES = ("x_index_range", "y_index_range")
+_REGION_INDEX_RANGES = ("x_index_range", "y_index_range")
 _PROCESS_DEFAULTS = {
     field.name: field.default
     for field in fields(ProcessSettings)
-    if field.default is not MISSING
+    if field.default is not MISSING and field.name not in _REGION_INDEX_RANGES
 }
 for name in _PROCESS_TABLE_PATHS:
     # Bundled defaults stay anchored to this repository, even for external YAML.
@@ -102,6 +106,7 @@ _PLOT_DEFAULTS = {
 _ALLOWED_SETTINGS = (
     _RUN_REQUIRED_SETTINGS
     | set(_PROCESS_DEFAULTS)
+    | set(_REGION_INDEX_RANGES)
     | set(_PLOT_DEFAULTS)
     | {"titled_figures"}
 )
@@ -152,12 +157,13 @@ def _folder_name(name: str, value: object) -> str:
 
 
 def read_run_selection(supplied: dict, config_directory: Path) -> RunSelection:
-    """Select results_dir/jobname/snapshot from the shared YAML settings.
+    """Select the job/snapshot and optional region from the shared YAML settings.
 
     Paths are relative to config_directory. Only the dataset string's last
     folder name is used here: plot can retain a Setonix path on a laptop.
-    Example: dataset='/remote/plt0916720', jobname='sigma13.v2', results_dir
-    '../output' select ../output/sigma13.v2/plt0916720, without reading dataset.
+    Both commands reuse these parsed ranges and the same result directory.
+    Example: x=[64, 66], y=[64, 66] add region_x64-66_y64-66/ under the
+    snapshot directory; omitted or null axes are named 'all'. No cells are read.
     """
     dataset = supplied["dataset"]
     if type(dataset) is not str or not dataset.strip():
@@ -165,10 +171,21 @@ def read_run_selection(supplied: dict, config_directory: Path) -> RunSelection:
     snapshot_name = _folder_name("dataset folder name", Path(dataset).name)
     jobname = _folder_name("jobname", supplied["jobname"])
     results_dir = _path_value("results_dir", supplied["results_dir"], config_directory)
+    x_index_range = _index_range("x_index_range", supplied.get("x_index_range"))
+    y_index_range = _index_range("y_index_range", supplied.get("y_index_range"))
+    directory = results_dir / jobname / snapshot_name
+    region_name = region_directory_name(
+        x_index_range=x_index_range,
+        y_index_range=y_index_range,
+    )
+    if region_name is not None:
+        directory = directory / region_name
     return RunSelection(
         jobname=jobname,
         snapshot_name=snapshot_name,
-        directory=results_dir / jobname / snapshot_name,
+        x_index_range=x_index_range,
+        y_index_range=y_index_range,
+        directory=directory,
     )
 
 
@@ -197,6 +214,30 @@ def _index_range(name: str, value: object) -> tuple[int, int] | None:
     return start, stop
 
 
+def region_directory_name(
+    x_index_range: tuple[int, int] | None,
+    y_index_range: tuple[int, int] | None,
+) -> str | None:
+    """Name explicit native x/y ranges, or return None for an unselected full box.
+
+    Inputs are the validated tuples from _index_range(); stops are excluded.
+    An omitted axis uses 'all', without needing the snapshot's grid dimensions.
+    Example: (64, 66), None -> 'region_x64-66_yall'. Both None keeps the
+    snapshot's existing full-box directory, without an extra region folder.
+    """
+    if x_index_range is None and y_index_range is None:
+        return None
+    x_label = "all"
+    if x_index_range is not None:
+        x_start, x_stop = x_index_range
+        x_label = f"{x_start}-{x_stop}"
+    y_label = "all"
+    if y_index_range is not None:
+        y_start, y_stop = y_index_range
+        y_label = f"{y_start}-{y_stop}"
+    return f"region_x{x_label}_y{y_label}"
+
+
 def load_process_config(path: str | Path) -> ProcessSettings:
     """Read processing settings and derive the selected processed/ directory.
 
@@ -218,8 +259,6 @@ def load_process_config(path: str | Path) -> ProcessSettings:
         values[name] = _path_value(name, values[name], config_path.parent)
     for name in _PROCESS_INTEGERS:
         values[name] = _positive_int(name, values[name], nullable=name == "max_slabs")
-    for name in _PROCESS_INDEX_RANGES:
-        values[name] = _index_range(name, values[name])
     if values["query_chunk"] > 1000000:
         raise ValueError("query_chunk must be at most 1000000 cells")
     return ProcessSettings(
@@ -227,12 +266,14 @@ def load_process_config(path: str | Path) -> ProcessSettings:
         output_dir=run.directory / "processed",
         jobname=run.jobname,
         snapshot_name=run.snapshot_name,
+        x_index_range=run.x_index_range,
+        y_index_range=run.y_index_range,
         **values,
     )
 
 
 def load_plot_config(path: str | Path) -> PlotSettings:
-    """Locate one job/snapshot's saved products and figure output directories.
+    """Locate the selected job/snapshot/region's products and figure directories.
 
     Paths are relative to the YAML directory. image_downsample_factor counts
     native pixels per image axis; raw_luminosity and allow_partial are Boolean.

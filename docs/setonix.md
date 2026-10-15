@@ -111,7 +111,11 @@ Use actual absolute paths in YAML; `$MYSOFTWARE` and `$MYSCRATCH` above only
 show the storage locations.
 
 This configuration processes the whole snapshot. For optional settings such
-as an x–y region, see [processing settings](usage.md#processing-settings).
+as an x–y region, see [region settings](usage.md#select-an-x-y-region). Setting
+`x_index_range: [64, 66]` and `y_index_range: [64, 66]` adds
+`region_x64-66_y64-66/` under the snapshot folder automatically. Keep
+`results_dir` unchanged. An omitted or `null` axis uses `all` in that folder name;
+with both axes omitted or `null`, outputs stay directly under the snapshot.
 
 ## 4. Process
 
@@ -122,8 +126,9 @@ python -m quokka2s.process_snapshot
 ```
 
 The snapshot name is taken from the supplied `dataset` path. Process saves to
-`results_dir/jobname/snapshot_name/processed/`. Check its completion status
-using the paths in your YAML:
+`results_dir/jobname/snapshot_name/processed/` when both x/y ranges are omitted
+or `null`, or inside the automatically named region folder when a range is set.
+Check its completion status using the paths in your YAML:
 
 ```bash
 cat /scratch/YOUR_PROJECT/YOUR_USERNAME/quokka_postprocess_3D/output/sigma13.v2/plt0655228/processed/status.json
@@ -145,8 +150,8 @@ python -m quokka2s.plot_emission_results
 ```
 
 Use the same activated environment as process. Plot reads this job and
-snapshot's `processed/` directory and writes the sibling `figures/` and
-`figures_titled/` directories. Each contains separate `png/` and `pdf/`
+snapshot's selected full-box or region `processed/` directory and writes the
+sibling `figures/` and `figures_titled/` directories. Each contains separate `png/` and `pdf/`
 subdirectories. Set `titled_figures: false` to omit the titled version.
 
 ### Option B: Download the results and plot locally
@@ -155,7 +160,8 @@ On your laptop, follow the [README](../README.md#1-clone) to clone the same
 repository version and configure the local environment. From the local
 repository root, download the entire `processed/` directory. Replace
 `YOUR_USERNAME` with your Pawsey username and `/path/to/processed` with your
-Setonix process output directory. Preserve the job and snapshot names:
+Setonix process output directory. Preserve the job, snapshot and any region
+folder names. This example downloads a full-box result:
 
 ```bash
 mkdir -p output/sigma13.v2/plt0655228/processed
@@ -178,6 +184,10 @@ results_dir: ../output
 Plot uses only the snapshot name `plt0655228` from `dataset`; the original
 Setonix path does not need to exist on your laptop. `results_dir` points to the
 local root containing `sigma13.v2/plt0655228/processed/`.
+For a region, copy into the corresponding folder, such as
+`output/sigma13.v2/plt0655228/region_x64-66_y64-66/processed/`, and retain
+the same x/y index ranges in the local YAML. Plot selects the region using these
+settings alone; it does not read the snapshot.
 
 Then run:
 
@@ -193,5 +203,6 @@ Python environment. Plot reads saved results without rerunning process.
 
 Figures are saved under `output/sigma13.v2/plt0655228/figures/` and
 `figures_titled/`, each with separate `png/` and `pdf/` directories.
+For a region, both figure directories are inside its region folder.
 Transfer results to local or long-term storage after processing: scratch is
 temporary storage and is subject to Pawsey's purge policy.

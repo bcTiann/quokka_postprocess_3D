@@ -27,6 +27,11 @@ is `output/sigma13.v2/plt0655228/`: process writes `processed/`, and plot reads
 Changing `jobname` to `sigma50` selects a different job even when its snapshot
 is also called `plt0655228`. Plot uses the snapshot name only; it does not
 open the dataset path or emission tables.
+If x/y ranges are supplied, both commands add a region folder under the snapshot:
+`region_x64-66_y64-66/` for `[64, 66)` on both axes. An omitted or `null` axis
+uses `all` in the name; both omitted or `null` keep the full-box directory.
+These names come from the YAML alone, so plot can select a region without
+the original snapshot.
 
 The two main commands are in the [root README](../README.md). Detailed
 settings and table-building commands are in the [usage guide](usage.md).
@@ -100,6 +105,13 @@ Inside `load_processing_inputs(config)`, follow three named steps:
 3. `load_emission_calculator()` loads the tables, creates their cell readers,
    and prepares the per-line dust cross-sections. It derives line names once
    from Cloudy plus `co10` and `co21`, then constructs `CellEmissionCalculator`.
+
+`print_run_settings()` displays the selected run and paths before input loading.
+After yt opens the snapshot, `print_snapshot_summary()` displays its native grid,
+physical cell widths and selected index ranges without reading cell fields.
+Stage messages precede table loading, each slab read/calculation, and final
+construction/check/saving. They are terminal messages only; the numerical
+products and the existing progress timing remain unchanged.
 
 The function creates the output directory after loading succeeds and returns:
 
@@ -177,11 +189,21 @@ until the final flattening in `read_slab()`.
 
 In [native_snapshot_reader.py](../src/quokka2s/native_snapshot_reader.py),
 `NativeSnapshotReader` uses yt's native block bounds, payload offsets, field
-order, dtype and units. It copies selected density, temperature and three
-momenta into compact arrays. Sparse block selections use read-only NumPy
-memory maps; selections covering all block y/z rows use a contiguous temporary
-buffer for each native field. Maps and buffers are discarded after copying;
-cached metadata retains no cell payloads or open maps. Momentum is divided by
+order, dtype and units. FAB header reads use an 8 KiB buffer to avoid unnecessary
+cell-payload read-ahead while locating each block's data start.
+It copies selected density, temperature and three
+momenta into compact arrays. The selected block geometry determines how it reads:
+
+- Full block y/z coverage: read a contiguous temporary buffer for each field.
+- Full block x coverage with partial y/z coverage: read only the required
+  contiguous y bands in each z plane, sharing one read-only file handle across
+  the block's five fields. This is the usual range-scan y-strip case.
+- Other selections, including the emission workflow's narrow x slabs: copy
+  selected values from read-only NumPy memory maps.
+
+Every path fills the same compact arrays in the same order. Maps, file handles
+and temporary buffers are released after copying; cached metadata retains no
+cell payloads or open maps. Momentum is divided by
 native density, then velocities and density are normalized to yt's declared
 gas units. Cell widths also come from yt. The code derives the
 shielding column and velocity gradient using
@@ -577,6 +599,7 @@ Open [plot_emission_results.py](../src/quokka2s/plot_emission_results.py) and st
 
 1. `load_plot_config()` reads the shared YAML and returns `PlotSettings` with
    product and figure directories under `results_dir/jobname/snapshot_name/`.
+   Supplied x/y index ranges add the same region folder used by process.
    It obtains the snapshot name from the supplied `dataset` path without
    opening that path or checking emission-table files.
 2. `read_emission_results()` in the root
@@ -638,6 +661,79 @@ owns the phase names and temperature bounds and saves them as `phase_keys` and
 figure's phase footer uses the saved definitions.
 
 ## Shared physical helpers and additional figures
+
+### Reusable table-input survey
+
+`python -m quokka2s.check_table_input_ranges` reads the same emission YAML.
+Follow its two distinct actions:
+
+1. `table_input_survey.load_or_measure_input_ranges()` reuses completed statistics or calls
+   `scan_snapshot_input_ranges()`. `Snapshot.read_column_tile()` reads an explicit
+   x/y rectangle with complete z columns and periodic x/y neighbours;
+   `TableInputStatistics.record_batch()` records physical nH/NH/dVdr for all
+   cells and nH/NH/T_QUOKKA for hot cells. Only extrema/counts survive each batch.
+2. `build_table_range_report()` compares those stored extrema with the current
+   axes. It performs no cell reads and no table interpolation. Cloudy NH
+   clipping is allowed; all other axes use the same coverage tolerance as process.
+
+`TableInputFiles` stores `input_ranges.json` separately from the freshly built
+`table_range_report.json`. Source file state and plain physical definitions
+guard reuse; tables are not a dependency of raw coordinate statistics.
+Region/partial scans retain explicit completeness information. This survey
+checks ranges only, so it does not claim interpolation holes have been checked.
+
+The range scan divides the selected y range into strips of `tile_ny` cells
+(default 8), retaining the complete selected x range and every z cell. For a
+full `(512, 512, 4096)` snapshot, the first core tile is `(512, 8, 4096)`.
+AMReX stores x cells contiguously, so this layout follows the file's x-fastest
+order instead of requesting narrow x slices across every block y/z row.
+The same derived-field functions calculate the two columns and velocity
+gradient. Each tile then yields in-memory batches; workers do not reread each
+batch from disk. Emission processing still uses `read_slab()` and x slabs,
+preserving its existing cell-accumulation order.
+
+For the single-snapshot command, `--tile-ny 8` sets the strip width and
+`--max-tiles 1` requests a labelled partial diagnostic. The emission YAML's
+`slab_nx` and `max_slabs` control emission processing, not this range scan.
+
+For several jobs, `python -m quokka2s.check_job_table_input_ranges` reads
+`configs/table_input_survey.yaml`. `source_root` contains the configured job
+directories, and each job contains `plt` plus digits snapshot directories.
+Follow its actions in this order:
+
+1. `read_job_survey_config()` reads the job locations, scan sizes and invocation
+   limits (`snapshot_workers`, `max_new_snapshots`, `max_runtime_minutes`),
+   plus the scan's `tile_ny`, `query_chunk` and optional `max_tiles`.
+2. `discover_job_snapshots()` lists direct snapshot directories in numeric order;
+   `check_batch_output_paths()` protects the entire source root from output writes.
+3. `scan_job_snapshots()` reuses completed statistics and dispatches unfinished
+   snapshots to separate workers. Each worker reads one snapshot and saves its
+   own statistics. The coordinator compares ranges with the current tables and
+   records results in inventory order.
+4. `build_job_survey_summary()` combines extrema from full successful scans only;
+   the entry point saves `snapshots.csv`, `jobs.csv` and `summary.json`.
+
+These actions belong to [table_input_jobs.py](../src/quokka2s/table_input_jobs.py).
+Both commands pass a small `SnapshotInputSettings` record to the shared scan;
+emission, plotting and dust settings are not required.
+
+`snapshot_workers` defaults to one; setting it to two scans two snapshots at
+once. Each worker uses one calculation thread and owns its snapshot reader and
+tile arrays. A tile retains its copied cell arrays until its batches are reduced;
+afterward only scalar extrema and counts remain.
+There are no image/spectrum accumulators and no emission-table interpolation.
+Completed snapshots survive interruption. With multiple workers, Ctrl-C stops
+new dispatch and lets active snapshots finish and save. In single-worker mode,
+Ctrl-C interrupts the current snapshot; that snapshot is restarted next time.
+Source-file state and physical rules must match before completed statistics are
+reused. Failed, partial and not-selected snapshots remain visible in summaries.
+`max_new_snapshots` counts newly dispatched scans, not reused statistics;
+`--max-new-snapshots` overrides this limit. `max_runtime_minutes` stops new
+dispatches after the budget, while active workers finish and save their results.
+Neither limit truncates an active snapshot. `--max-snapshots 1` instead selects
+the first inventory entry, including an already completed entry. Unscanned
+snapshots keep the survey incomplete. `max_tiles` limits each scan and cannot
+establish full input ranges.
 
 [physics/settings.py](../src/quokka2s/physics/settings.py) defines X_H, the
 QUOKKA temperature branch boundary, the measured velocity-gradient floor, and

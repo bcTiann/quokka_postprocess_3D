@@ -160,6 +160,11 @@ def process_one_slab(
         x_start=x_start,
         x_stop=x_stop,
     )
+    print(
+        f'Calculating slab: x=[{x_start}, {x_stop}); {slab.cell_count:,} cells; '
+        'line emission, images, spectra and gas phases...',
+        flush=True,
+    )
 
     if config.chunk_workers == 1:
         process_serial_batches(
@@ -221,12 +226,19 @@ def process_snapshot(config, snapshot, emission_calculator, products, began):
     selected_slabs = select_slabs_to_process(config, snapshot)
     total_slabs = len(selected_slabs)  # Full run: 32 slabs for Nx=256, slab_nx=8.
     total_cells = count_cells_in_slabs(snapshot, selected_slabs)  # Full run: 134,217,728.
+    print(f'Processing plan: {total_cells:,} cells; slab count: {total_slabs}.', flush=True)
 
     # 2. Create the batch worker pool once and reuse it for all selected slabs.
     # With chunk_workers=2, two batches can run together within the current slab.
     with ThreadPoolExecutor(max_workers=config.chunk_workers) as executor:
         for slab_number, window in enumerate(selected_slabs, start=1):
             # 3. Read, calculate, accumulate, and release this slab's cell arrays.
+            x_start, x_stop = window
+            print(
+                f'Reading slab: {slab_number}/{total_slabs}; x=[{x_start}, {x_stop}); '
+                'reading cell fields and deriving columns and velocity gradients...',
+                flush=True,
+            )
             process_one_slab(
                 config=config,
                 snapshot=snapshot,
@@ -245,6 +257,24 @@ def process_snapshot(config, snapshot, emission_calculator, products, began):
                 total_slabs=total_slabs,
                 total_cells=total_cells,
             )
+
+
+def print_run_settings(config, config_path: Path) -> None:
+    """Print the selected run, resolved data/output paths, and worker settings.
+
+    config is ProcessSettings from load_process_config(); config_path is the
+    supplied YAML filename. This startup summary does not open any input data.
+    Example: sigma13.v2/plt0916720 saves under that job/snapshot's processed/.
+    """
+    print(f'Configuration: {config_path}', flush=True)
+    print(f'Processing run: {config.jobname}/{config.snapshot_name}', flush=True)
+    print(f'Simulation: {config.dataset}', flush=True)
+    print(f'Numerical output: {config.output_dir}', flush=True)
+    print(
+        f'Execution: slab_nx={config.slab_nx}; query_chunk={config.query_chunk:,}; '
+        f'chunk_workers={config.chunk_workers}; spectral_workers={config.spectral_workers}',
+        flush=True,
+    )
 
 
 def main(argv=None):
@@ -269,7 +299,9 @@ def main(argv=None):
     except (ValueError, OSError) as exc:
         parser.error(str(exc))
 
+    print_run_settings(config=config, config_path=config_path)
     snapshot, emission_calculator = load_processing_inputs(config)
+    print('Outputs: allocating image, spectrum and gas-phase accumulators...', flush=True)
     products = EmissionProducts(
         snapshot=snapshot,
         line_keys=emission_calculator.line_keys,
@@ -292,6 +324,7 @@ def main(argv=None):
             began=began,
         )
         stage = "building results"
+        print('Outputs: building image, spectrum and gas-phase results...', flush=True)
         outputs = products.build_outputs()
         metadata = ResultMetadata.from_processing_inputs(
             snapshot=snapshot,
@@ -299,8 +332,10 @@ def main(argv=None):
         )
         outputs.add_metadata(metadata=metadata)
         stage = "checking results"
+        print('Outputs: checking luminosity conservation and cell accounting...', flush=True)
         image_conservation = products.check_outputs(outputs)
         stage = "building report"
+        print('Outputs: preparing the processing report...', flush=True)
         report = build_processing_report(
             config=config,
             snapshot=snapshot,
@@ -312,6 +347,7 @@ def main(argv=None):
             began=began,
         )
         stage = "saving results"
+        print(f'Outputs: saving numerical products and report to: {config.output_dir}', flush=True)
         write_emission_results(
             directory=config.output_dir,
             outputs=outputs,
@@ -325,7 +361,10 @@ def main(argv=None):
             processing_complete=outputs.processing_complete,
             full_snapshot=outputs.full_snapshot,
         )
+        print(f'Run finished: {report["status"]}.', flush=True)
+        print(f'Saved numerical results: {config.output_dir}', flush=True)
     except BaseException as exc:
+        print(f'Failed while {stage}: {type(exc).__name__}: {exc}', flush=True)
         write_status(
             output_dir=config.output_dir,
             counts=products.counts,

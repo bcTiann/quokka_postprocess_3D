@@ -135,10 +135,36 @@ class Snapshot:
 
             slab = snapshot.read_slab(x_start=0, x_stop=8)
         """
+        y_start, y_stop = self.xy_region['y']
+        return self.read_column_tile(
+            x_start=x_start,
+            x_stop=x_stop,
+            y_start=y_start,
+            y_stop=y_stop,
+        )
+
+    def read_column_tile(
+        self,
+        *,
+        x_start: int,
+        x_stop: int,
+        y_start: int,
+        y_stop: int,
+    ) -> SlabArrays:
+        """Read an x/y rectangle, keeping complete z columns and periodic halos.
+
+        Bounds are global native cell indices; stops are excluded. The returned
+        SlabArrays owns six read-only, C-order flattened arrays with shape
+        ((x_stop-x_start) * (y_stop-y_start) * Nz,), in the usual physical units.
+        Both column calculations keep every z cell. Only velocity gradients
+        need the extra x/y neighbours; these wrap around the original box.
+
+        Example: on a (512, 512, 4096) grid, x=0:512 and y=0:8 returns
+        a (512, 8, 4096) core after discarding its neighbour layers.
+        """
         # 1. Copy selected cells plus one periodic neighbour on each x/y side.
         # Example: x=0:8 reads [255, 0, ..., 7, 8]; y=0:1 reads [255, 0, 1].
         # All z cells remain present so neither column calculation is truncated.
-        y_start, y_stop = self.xy_region['y']
         fields = self.native_reader.read_slab_fields(
             x_start=x_start,
             x_stop=x_stop,

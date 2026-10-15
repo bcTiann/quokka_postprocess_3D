@@ -3,14 +3,18 @@
 yt still opens the snapshot and supplies its block geometry, file offsets,
 field order and units. This reader returns compact copies of a slab's selected
 x/y cells and periodic neighbours; every sightline retains the full z depth.
-Sparse block selections use read-only maps. Selections covering all block
-y/z rows use contiguous temporary field buffers. Both are discarded after
-the selected values are copied into compact arrays.
+Selections covering all block y/z rows use contiguous temporary field buffers.
+Sparse y selections covering every block x cell read contiguous x/y bands per
+z plane. Other sparse selections use read-only maps. Source buffers and maps
+are discarded after the selected values are copied into compact arrays.
 """
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from dataclasses import dataclass
+import os
+from typing import BinaryIO
 
 import numpy as np
 from unyt import unyt_array
@@ -45,7 +49,7 @@ class NativeSnapshotReader:
     """Read compact unit-aware slabs from a uniform native QUOKKA plotfile.
 
     ``dataset`` is the opened yt dataset. Construction caches small block and
-    field metadata once; it does not read the blocks' numerical payloads.
+    field metadata once; it does not cache the blocks' numerical payloads.
     Only three-dimensional, level-zero BoxLib/AMReX native files are supported,
     because the processing workflow uses one uniform native cell grid.
 
@@ -53,9 +57,10 @@ class NativeSnapshotReader:
     returns fields of shape ``(10, 66, Nz)``. Its x indices are
     ``[Nx - 1, 0, ..., 7, 8]`` and its y indices are ``[31, ..., 96]``.
     The caller removes the first and last x/y cells after deriving columns
-    and gradients. Sparse selections copy from read-only maps; selections
-    covering all block y/z rows copy from contiguous temporary buffers.
-    Returned arrays retain neither source maps nor whole-block buffers.
+    and gradients. Full block y/z coverage uses contiguous field buffers;
+    sparse y selections covering every block x cell use contiguous row bands.
+    Other sparse selections copy from read-only maps. Returned arrays retain
+    neither source maps nor temporary field or band buffers.
     """
 
     def __init__(self, dataset):
@@ -98,7 +103,13 @@ class NativeSnapshotReader:
                 )
             ):
                 raise ValueError('Native block bounds must lie inside the original cell grid')
-            with open(grid.filename, 'rb') as source_file:
+            # Only the short FAB header is needed here. Limit read-ahead on
+            # filesystems whose default buffer would also read cell payloads.
+            with open(
+                file=grid.filename,
+                mode='rb',
+                buffering=8192,
+            ) as source_file:
                 payload_offset = grid._get_offset(source_file)
             cell_count = int(np.prod(block_shape))
             field_bytes = cell_count * self._native_dtype.itemsize
@@ -145,7 +156,7 @@ class NativeSnapshotReader:
         three ``('gas', 'velocity_x/y/z')`` fields. Density and velocities use
         yt's declared gas units; temperature uses its native declared units.
         ``('boxlib', 'dx/dy/dz')`` are unit-aware scalar cell widths. All field
-        values are owned copies; source maps or temporary whole-block field
+        values are owned copies; source maps and temporary field or band
         buffers are discarded after each copy.
         """
         for axis_name, start, stop, axis_size in (
@@ -215,7 +226,7 @@ class NativeSnapshotReader:
         requested arrays. AMReX payloads use their native dtype and Fortran
         order. Output buffers use float64, matching yt's fluid-selection
         promotion even when the plotfile stores float32 values. Source maps
-        or contiguous field buffers are released after copying selected cells.
+        and temporary field or band buffers are released after copying cells.
         """
         selected_shape = tuple(indices.size for indices in requested_indices)
         native_fields = {
@@ -230,27 +241,123 @@ class NativeSnapshotReader:
             if selection is None:
                 continue
             destination_selection, source_zyx_selection = selection
-            all_yz_rows_selected = (
-                source_zyx_selection[1].size >= block.shape[1]
-                and source_zyx_selection[0].size >= block.shape[2]
+            read_geometry = _select_block_read_geometry(
+                block=block,
+                source_zyx_selection=source_zyx_selection,
             )
 
-            for field_name in NATIVE_FIELD_NAMES:
-                block_field = self._read_block_field(
-                    block=block,
-                    field_name=field_name,
-                    all_yz_rows_selected=all_yz_rows_selected,
-                )
-                # Disk cells use x-fastest order. Copy in that order to avoid
-                # repeatedly visiting distant file pages, then restore x/y/z.
-                # Both transposes change axis order only, never cell values.
-                block_field_zyx = block_field.transpose(2, 1, 0)
-                selected_values_zyx = block_field_zyx[source_zyx_selection]
-                selected_values_xyz = selected_values_zyx.transpose(2, 1, 0)
-                native_fields[field_name][destination_selection] = selected_values_xyz
-                del block_field_zyx
-                del block_field
+            # Band reads share one read-only descriptor across the five fields.
+            # Other geometries retain their existing map/fromfile operations.
+            if read_geometry == 'complete_x_rows':
+                source_context = open(block.filename, 'rb')
+            else:
+                source_context = nullcontext(None)
+            with source_context as source_file:
+                for field_name in NATIVE_FIELD_NAMES:
+                    selected_values_zyx = self._read_selected_block_field(
+                        block=block,
+                        field_name=field_name,
+                        source_zyx_selection=source_zyx_selection,
+                        read_geometry=read_geometry,
+                        source_file=source_file,
+                    )
+                    # Read in native x-fastest order, then restore x/y/z.
+                    # The transpose changes axis order only, never cell values.
+                    selected_values_xyz = selected_values_zyx.transpose(2, 1, 0)
+                    native_fields[field_name][destination_selection] = selected_values_xyz
         return native_fields
+
+    def _read_selected_block_field(
+        self,
+        *,
+        block: _NativeBlock,
+        field_name: str,
+        source_zyx_selection: tuple[np.ndarray, np.ndarray, np.ndarray],
+        read_geometry: str,
+        source_file: BinaryIO | None,
+    ) -> np.ndarray:
+        """Return selected native values as a C-order (z, y, x) owned array.
+
+        The index tuple comes from _select_block_cells() and retains requested
+        periodic duplicates. Values keep the file's f32/f64 dtype and native
+        field units. Only complete-x-row geometry supplies an open source_file;
+        other geometries use the existing whole-field or mapped read path.
+        """
+        if source_file is not None:
+            return self._read_selected_field_bands(
+                source_fd=source_file.fileno(),
+                block=block,
+                field_name=field_name,
+                source_x=source_zyx_selection[2].ravel(),
+                source_y=source_zyx_selection[1].ravel(),
+                source_z=source_zyx_selection[0].ravel(),
+            )
+
+        block_field = self._read_block_field(
+            block=block,
+            field_name=field_name,
+            all_yz_rows_selected=read_geometry == 'all_yz_rows',
+        )
+        block_field_zyx = block_field.transpose(2, 1, 0)
+        return block_field_zyx[source_zyx_selection]
+
+    def _read_selected_field_bands(
+        self,
+        *,
+        source_fd: int,
+        block: _NativeBlock,
+        field_name: str,
+        source_x: np.ndarray,
+        source_y: np.ndarray,
+        source_z: np.ndarray,
+    ) -> np.ndarray:
+        """Read native values into a C-order selected (z, y, x) buffer.
+
+        Source indices are block-local cell positions in requested output order;
+        repeated periodic indices remain repeated. Each read contains one
+        contiguous +1 y run and all block x cells from one native z plane.
+        Values retain the file's f32/f64 dtype and native field units.
+        """
+        selected_values_zyx = np.empty(
+            shape=(source_z.size, source_y.size, source_x.size),
+            dtype=self._native_dtype,
+            order='C',
+        )
+        field_position = self._field_positions[field_name]
+        field_offset = block.payload_offset + field_position * block.field_bytes
+        native_x_size = block.shape[0]
+        native_y_size = block.shape[1]
+        item_bytes = self._native_dtype.itemsize
+
+        # Splitting on anything except +1 preserves wraparound and duplicates.
+        run_boundaries = np.flatnonzero(np.diff(source_y) != 1) + 1
+        run_starts = np.concatenate(([0], run_boundaries))
+        run_stops = np.concatenate((run_boundaries, [source_y.size]))
+        for destination_z, local_z in enumerate(source_z):
+            for run_start, run_stop in zip(run_starts, run_stops):
+                run_y_size = int(run_stop - run_start)
+                first_local_y = int(source_y[run_start])
+                first_cell = (int(local_z) * native_y_size + first_local_y) * native_x_size
+                band_offset = field_offset + first_cell * item_bytes
+                band_cell_count = run_y_size * native_x_size
+                band_bytes = band_cell_count * item_bytes
+                band_payload = os.pread(source_fd, band_bytes, band_offset)
+                if len(band_payload) != band_bytes:
+                    raise OSError(
+                        f'Short native field read: {block.filename}, '
+                        f'{field_name}, offset={band_offset}, '
+                        f'expected={band_bytes}, actual={len(band_payload)}'
+                    )
+                band_values = np.frombuffer(
+                    buffer=band_payload,
+                    dtype=self._native_dtype,
+                    count=band_cell_count,
+                )
+                band_values_yx = band_values.reshape((run_y_size, native_x_size))
+                selected_values_zyx[destination_z, run_start:run_stop, :] = (
+                    band_values_yx[:, source_x]
+                )
+        return selected_values_zyx
 
     def _read_block_field(
         self,
@@ -261,8 +368,8 @@ class NativeSnapshotReader:
     ) -> np.ndarray:
         """Return one native x/y/z field using its cached dtype and file offset.
 
-        Small regions use a read-only map, so copying touches only selected
-        pages. When every y/z row is needed, even a narrow x slice touches
+        Sparse x selections use a read-only map, touching selected pages.
+        When every y/z row is needed, even a narrow x slice touches
         pages throughout the field; one contiguous read avoids page-fault
         overhead. That full buffer is discarded after copying selected cells.
         Both paths retain the native dtype and Fortran cell order on disk.
@@ -286,6 +393,30 @@ class NativeSnapshotReader:
             shape=block.shape,
             order='F',
         )
+
+
+def _select_block_read_geometry(
+    *,
+    block: _NativeBlock,
+    source_zyx_selection: tuple[np.ndarray, np.ndarray, np.ndarray],
+) -> str:
+    """Select full-y/z, complete-x-row, or partial-x-row field reading.
+
+    Indices address block-local (z, y, x) cells and may repeat at periodic
+    boundaries. Full y/z coverage keeps the existing contiguous-field path.
+    Otherwise bands require every native x cell; narrow x keeps mapped reads.
+    """
+    all_yz_rows_selected = (
+        source_zyx_selection[1].size >= block.shape[1]
+        and source_zyx_selection[0].size >= block.shape[2]
+    )
+    if all_yz_rows_selected:
+        return 'all_yz_rows'
+    source_x = source_zyx_selection[2].ravel()
+    all_native_x_selected = np.unique(source_x).size == block.shape[0]
+    if all_native_x_selected:
+        return 'complete_x_rows'
+    return 'partial_x_rows'
 
 
 def _select_block_cells(

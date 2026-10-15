@@ -25,6 +25,9 @@ The snapshot name comes from the supplied `dataset` path, here `plt0655228`.
 Both commands select `results_dir/jobname/snapshot_name/`: process writes
 `processed/`, while plot reads `processed/` and writes `figures/` and,
 by default, `figures_titled/`. They do not search for the latest snapshot.
+If either x/y index range is set, these directories go inside the corresponding
+`region_xSTART-STOP_ySTART-STOP/` folder. An omitted or `null` axis uses `all`;
+with both axes omitted or `null`, no region folder is added.
 
 ```text
 output/
@@ -32,7 +35,11 @@ output/
 │   ├── plt0655228/
 │   │   ├── processed/
 │   │   ├── figures/
-│   │   └── figures_titled/
+│   │   ├── figures_titled/
+│   │   └── region_x64-66_y64-66/
+│   │       ├── processed/
+│   │       ├── figures/
+│   │       └── figures_titled/
 │   └── plt0916720/
 └── sigma50/
     └── plt0655228/
@@ -54,13 +61,14 @@ Relative paths are resolved from the YAML file's directory, so `../inputs/` in
 `dataset` must point to the individual snapshot containing `Header`, rather
 than its parent `inputs/snapshots/` directory. Processing refuses to overwrite
 an existing `processed/` directory; choose another results root for a rerun
-of the same job and snapshot.
+of the same job, snapshot and region selection.
 An interrupted emission run starts again from the beginning in a new directory.
 Table-building checkpoints are a separate mechanism.
 
 Existing numerical products can be reused without rerunning process. Place
 their complete directory at `results_dir/jobname/snapshot_name/processed/`,
-then run plot with that job and snapshot selected.
+then run plot with that job and snapshot selected. For region results, retain
+the region folder and set the same x/y ranges in the shared YAML.
 
 ### Path rules
 
@@ -100,15 +108,22 @@ make a complete run faster; select them using end-to-end timing and memory
 measurements. `max_slabs: 1` in a separate YAML makes a labelled partial
 run for debugging. Omit it to finish the selected region or full snapshot.
 
+The terminal prints the selected job, snapshot path, output path, native grid,
+cell widths, and selected region before processing. It identifies each table
+as it loads. Each slab prints separate reading and emission-calculation
+messages, followed by percentage, elapsed time, and ETA. Result construction,
+conservation checks, and saving also print their stages and the final output
+directory. Messages are flushed immediately, including when output is redirected
+to a log file.
+
 ## Select an x-y region
 
-Copy the [shared YAML](../configs/emission.yaml) and set native cell-index ranges
-and a separate results root:
+Set native cell-index ranges in the [shared YAML](../configs/emission.yaml).
+Keep the same `results_dir`; process and plot automatically select a region folder:
 
 ```yaml
 x_index_range: [64, 128]
 y_index_range: [32, 96]
-results_dir: ../output/region_x64_128_y32_96
 ```
 
 Indices start at zero and the stop is excluded: this example selects
@@ -118,15 +133,19 @@ the original box. No cell averaging is performed. Gradients use neighbours
 from the original simulation, and both shielding and dust columns use the
 complete original z column.
 
-Pass the same copied YAML to both commands:
+Run both commands with the same YAML:
 
 ```bash
-python -m quokka2s.process_snapshot --config configs/emission_region.yaml
-python -m quokka2s.plot_emission_results --config configs/emission_region.yaml
+python -m quokka2s.process_snapshot
+python -m quokka2s.plot_emission_results
 ```
 
 This example saves under
-`output/region_x64_128_y32_96/sigma13.v2/plt0655228/`.
+`output/sigma13.v2/plt0655228/region_x64-128_y32-96/`.
+Setting only x gives `region_x64-128_yall/`; setting only y gives
+`region_xall_y32-96/`. With both ranges omitted or `null`, outputs remain directly
+under the snapshot folder. Explicit ranges use their supplied indices in the
+folder name, even if they cover an entire axis.
 The region's images retain their physical x/y coordinates.
 Its spectra, full-profile sigma, and gas-phase statistics use only selected
 cells; spectra per projected area use the region's x-y area. A finished region
@@ -184,11 +203,13 @@ settings under `physical_settings`. See the
 
 ## Plot settings
 
-Copy the completed `processed/` directory to the laptop, preserving its job
-and snapshot folders. In the same shared YAML, set `results_dir` to the local
-results root and `jobname` to the selected job. The basename of `dataset`
+Copy the completed `processed/` directory to the laptop, preserving its job,
+snapshot and, if present, region folders. In the same shared YAML, set
+`results_dir` to the local results root and `jobname` to the selected job.
+The basename of `dataset`
 selects the saved snapshot. Its original Setonix path can remain unchanged;
-plot does not require that path or the tables to exist locally.
+plot does not require that path or the tables to exist locally. Retain the same
+x/y ranges to select a downloaded region; omit them to select the full-box result.
 
 | Plot setting | Meaning |
 |---|---|
@@ -267,6 +288,174 @@ Runtime inputs/logs go to `runtime/cloudy_eightline/`; the final table is
 `inputs/tables/cloudy/emission.npz`. Both table builders require `--force` to replace
 existing final tables. The [physics reference](emission_method.md)
 summarizes the table-query rules used during emission processing.
+
+## Check table-input ranges
+
+Select a job/snapshot in the same `configs/emission.yaml`, then run:
+
+```bash
+python -m quokka2s.check_table_input_ranges
+```
+
+The command uses `Snapshot.read_column_tile()` to read y strips across the
+selected x range, always retaining complete z columns and periodic x/y
+neighbours. `--tile-ny 8` (the default) selects eight y layers per tile. This
+follows the file's x-fastest storage order. The `nH` conversion, column and
+velocity-gradient definitions are the same as process. Emission processing
+retains its x-slab order; its YAML settings `slab_nx` and `max_slabs` do not
+control the range scan. The range scan records DESPOTIC inputs for all cells
+(including hot CO) and Cloudy inputs for
+`T_QUOKKA >= 3000 K`. It does not calculate emission products or query table
+values. Inputs outside the current table are reported rather than rejected.
+
+Two files are saved in the selected run's `table_input_check/` directory,
+alongside `processed/`:
+
+| File | Contents |
+|---|---|
+| `input_ranges.json` | Physical extrema, units, invalid counts, hot-cell count, scan completeness and field definitions; independent of tables |
+| `table_range_report.json` | Comparison with the currently configured table axes, using processing's endpoint tolerances |
+
+Cloudy NH records both the unchanged physical range and the permitted clipped
+lookup range. Only NH permits arbitrary lookup clipping; DESPOTIC coordinates
+and Cloudy nH/T must be covered. Range coverage alone does not certify remaining
+table holes or the suitability of composition/radiation assumptions.
+
+Rerunning the command reuses a completed scan when source file paths/sizes/
+modification times, physical definitions and the requested region match.
+It reloads the current tables and rebuilds their comparison. Changing the
+tables therefore does not require rereading cells. Changed simulation data or
+field definitions require a new directory, selected with `--output-dir PATH`.
+An interrupted snapshot is scanned again; no full-snapshot field cache is saved.
+
+Optional x/y ranges restrict the survey just as they restrict process; such a
+report describes that region only. `--max-tiles 1` produces an explicitly partial
+diagnostic and cannot certify complete range coverage. For example:
+
+```bash
+python -m quokka2s.check_table_input_ranges --tile-ny 8 --max-tiles 1
+```
+
+Omit x/y restrictions and `--max-tiles` for a full-snapshot survey.
+Every output is checked against the resolved source directories, including
+symlink destinations. Snapshot files are only read.
+
+### Survey several simulation jobs
+
+Use [configs/table_input_survey.yaml](../configs/table_input_survey.yaml) to select
+directories containing snapshots:
+
+```yaml
+source_root: ../inputs/snapshots
+jobs:
+  reference: .
+output_dir: ../output/table_input_ranges
+snapshot_workers: 1
+tile_ny: 8
+query_chunk: 1000000
+```
+
+Each `jobs` key is a label for the saved results. Its value is a directory
+relative to `source_root`; here `.` selects snapshots directly inside
+`inputs/snapshots/`. For several simulation setups, use entries such as
+`jobA: jobA/run1` and `jobB: jobB/run1`. The scanner selects child directories
+named `plt` followed by digits, in numeric snapshot order. Configured job
+directories must exist inside `source_root`; an empty job is reported as
+incomplete. Paths in this YAML follow the same rules as the emission
+configuration.
+
+```bash
+python -m quokka2s.check_job_table_input_ranges
+```
+
+The command scans full snapshots using the same complete-z tile reader and
+statistics as the single-snapshot command. By default, one snapshot is scanned
+at a time.
+Set `snapshot_workers: 2` to scan two independent snapshots concurrently;
+each worker uses one calculation thread and saves its own statistics. The
+coordinator reuses completed scans, compares ranges with the tables, and writes
+the shared summaries in inventory order. It does not calculate emission.
+The bundled tables are defaults; optional `despotic_table` and `cloudy_table`
+settings select other tables. `tile_ny: 8` sets y layers per reading tile, and
+`query_chunk` sets cells per in-memory statistics batch. Each tile retains the
+complete selected x range and z depth; the command does not reread files for
+each batch.
+
+To scan a small batch with a soft time limit, add:
+
+```yaml
+snapshot_workers: 1
+max_new_snapshots: 2
+max_runtime_minutes: 120
+```
+
+`max_new_snapshots` counts newly launched scans, including failed attempts;
+reusing completed statistics does not consume this limit. The command stops
+launching new scans after `max_runtime_minutes`, but lets running scans finish
+and save their results. It can therefore finish later than the requested time.
+The command-line `--max-new-snapshots N` overrides the YAML limit. Omit both
+limits to continue through all configured snapshots.
+
+```text
+output/table_input_ranges/
+├── snapshots/
+│   └── reference/
+│       └── plt0655228/
+│           ├── input_ranges.json
+│           └── table_range_report.json
+├── snapshots.csv
+├── jobs.csv
+└── summary.json
+```
+
+`snapshots.csv` records each snapshot's status and ranges: `complete`, `partial`,
+`failed` or `not_selected`. `jobs.csv` and `summary.json` combine extrema only
+from successfully completed full snapshots. They also report
+whether the complete survey finished. The entire resolved `source_root` is
+protected from output writes, and resolved output targets must remain inside
+`output_dir`, including when directories contain symlinks.
+
+Rerunning reuses completed snapshot statistics and compares them with the
+current tables. An interrupted snapshot starts again from its first tile.
+Changed source files or physical definitions are rejected for reuse; choose a
+new output directory rather than mixing old and new statistics.
+Snapshot read failures are recorded and skipped; broken snapshot links, unsafe
+outputs, stale checkpoints and output-write failures stop the survey.
+
+To measure one full snapshot first:
+
+```bash
+python -m quokka2s.check_job_table_input_ranges --max-snapshots 1
+```
+
+This selects the first snapshot in the inventory, even if its statistics have
+already been saved. To scan the next unfinished snapshot instead, use
+`--max-new-snapshots 1`. Unscanned snapshots remain visible in the summary,
+leaving the survey incomplete. Rerun with the same configuration to continue;
+completed statistics are reused. `max_tiles: 1` instead creates a partial
+diagnostic for each selected snapshot; its extrema cannot certify
+full-snapshot coverage.
+
+## Header ranges across multiple snapshots
+
+To summarize stored extrema without reading cell payloads or querying tables:
+
+```bash
+python tools/snapshots/measure_header_ranges.py \
+  --source-root /path/to/simulations \
+  --runs jobA/run1 jobB/run1 \
+  --output-dir output/header_ranges
+```
+
+The tool reads `Header`, `Level_0/Cell_H` and `metadata.yaml` for each `plt` plus
+digits directory. It combines stored block extrema and converts density to
+`nH` using the processing workflow's `X_H` and hydrogen mass. `snapshots.csv`
+lists snapshot ranges; `jobs.csv` and `summary.json` give combined ranges and
+report unreadable headers. Outputs must be new and outside the source tree;
+the tool resolves symlinks and never writes to snapshots. A readable header
+does not confirm binary payload completeness. This survey supports uniform
+3-D level-zero snapshots with the cgs/K metadata and stored extrema format
+used here. `NH`, `dV/dr` and hot-only input ranges still require a cell scan.
 
 ## Additional figures
 

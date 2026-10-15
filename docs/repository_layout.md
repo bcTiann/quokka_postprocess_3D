@@ -8,10 +8,11 @@ tools and additional paper figures have their own commands.
 
 | Directory | Contents | In Git? |
 |---|---|---|
-| `configs/` | Shared `emission.yaml` for process and plot; user paths are relative to this file | Yes |
+| `configs/` | Shared `emission.yaml` for process/plot and `table_input_survey.yaml` for job surveys; paths are relative to their YAML file | Yes |
 | `src/quokka2s/` | Reusable calculations and process/plot entry points | Yes |
 | `tools/cloudy/` | Build radiation inputs, run Cloudy, package its emission table | Yes |
 | `tools/despotic/` | Install required GOW corrections, measure table axes, check coverage | Yes |
+| `tools/snapshots/` | Survey stored field extrema from snapshot text headers | Yes |
 | `tools/figures/` | Additional slice, phase, gas-projection, dust and radiation figures | Yes |
 | `docs/` | Usage instructions, physical methods and code walkthrough | Yes |
 | `vendor/` | Pinned external source, dust table, molecular data and their notes | Yes |
@@ -29,9 +30,10 @@ tools and additional paper figures have their own commands.
 3. [snapshot_reader.py](../src/quokka2s/snapshot_reader.py): derive six copied
    core arrays from one slab. [native_snapshot_reader.py](../src/quokka2s/native_snapshot_reader.py)
    uses yt block/file metadata to copy selected x/y cells plus one periodic
-   neighbour on each side, keeping full z. Sparse block selections use read-only
-   NumPy maps; selections covering all block y/z rows use contiguous temporary
-   field buffers. It caches metadata, retaining no cell payloads or open maps.
+   neighbour on each side, keeping full z. Full-x, partial-y/z selections read
+   contiguous y bands in each z plane. Full-y/z selections read temporary field
+   buffers; other selections use read-only NumPy maps. It caches metadata,
+   retaining no cell payloads or open maps.
    `slab_windows(x_start=..., x_stop=..., slab_nx=...)` yields global core bounds;
    `slab.iter_batches(batch_size=...)` yields native cell views. Consume batches
    before releasing the slab: a retained view keeps its underlying arrays alive.
@@ -79,7 +81,32 @@ already-built arrays and the report. `run_settings.py` returns `ProcessSettings`
 or `PlotSettings` from the same YAML. Both derive the selected snapshot's
 directory from `results_dir/jobname/snapshot_name`. Process writes its
 `processed/` subdirectory; plot reads that subdirectory and writes figures.
+Explicit x/y ranges add a shared region subdirectory, for example
+`region_x64-66_y64-66/`; an omitted or `null` axis is named `all`. Both axes
+omitted or `null` keep the full-box result directory.
 `input_paths.py` stores bundled input locations without importing calculations.
+`check_table_input_ranges.py` reuses the same configuration and snapshot reader
+to survey physical input coordinates. It calls `Snapshot.read_column_tile()`
+with explicit x/y bounds and complete z columns, reading y strips of width
+`tile_ny` (default 8) across the selected x range. This follows AMReX's x-fastest
+storage order. Emission processing retains x slabs and its existing reduction
+order; `slab_nx` and `max_slabs` remain emission settings.
+`table_input_statistics.py` accumulates named scalar ranges;
+`table_input_range_check.py` compares them with current
+axes. `table_input_files.py` owns safe output and completed-scan reuse. The
+statistics are table-independent and are separate from emission products.
+`check_job_table_input_ranges.py` selects snapshots from the jobs in
+`configs/table_input_survey.yaml` and runs that same scan with one worker by
+default. Its YAML controls `tile_ny`, `query_chunk` and diagnostic `max_tiles`;
+the single-snapshot command accepts `--tile-ny` and `--max-tiles`.
+`snapshot_workers` enables independent concurrent snapshot scans;
+optional invocation limits cap new scans and stop dispatch after a time budget.
+Already running scans finish. The command saves per-snapshot statistics plus
+CSV/JSON summaries in the configured output
+directory. `table_input_jobs.py` owns job selection, scan order and summaries;
+`table_input_survey.py` owns the shared scan-or-reuse action for both commands.
+Completed scans can be reused; summaries distinguish `complete`, `partial`,
+`failed` and `not_selected` snapshots.
 `paths.py` resolves user paths once at configuration and command-line entry
 points, expanding `~` and using the appropriate relative-path base.
 `prepare_emission_results.py` prepares figure arrays from existing numerical
@@ -110,6 +137,10 @@ output/sigma13.v2/plt0655228/
   figures_titled/
     png/
     pdf/
+  region_x64-66_y64-66/       # Only when x/y ranges are selected
+    processed/
+    figures/
+    figures_titled/
 ```
 
 Jobs such as `sigma13.v2` and `sigma50` have separate directories, so both can

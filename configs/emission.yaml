@@ -8,7 +8,9 @@ results_dir: ../output
 # For example, x_index_range: [64, 128] selects x indices 64 through 127.
 x_index_range: null
 y_index_range: null
-# Use a different results_dir to keep a region run separate.
+# Explicit ranges automatically add a region subdirectory, for example
+# ../output/sigma13.v2/plt0655228/region_x64-128_yall/.
+# Process and plot select the same region directory from these settings.
 
 # Processing: cells per query batch, concurrent batches, threads per batch.
 query_chunk: 1000000

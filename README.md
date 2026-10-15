@@ -45,6 +45,11 @@ snapshot directory containing `Header`, `metadata.yaml`, and its data
 subdirectories. The snapshot name is taken from this path, here `plt0655228`.
 Process saves numerical results in
 `results_dir/jobname/snapshot_name/processed/`; plot reads that same directory.
+If either x/y index range is set, both commands instead select an automatically
+named region folder, for example
+`results_dir/jobname/snapshot_name/region_x64-66_y64-66/processed/`.
+An omitted or `null` axis uses `all` in the name. Keep `results_dir` unchanged
+when selecting a region; see [region settings](docs/usage.md#select-an-x-y-region).
 Relative YAML paths are relative to the configuration file; absolute paths
 are also supported. The two bundled tables are used by default.
 
@@ -57,6 +62,8 @@ The bundled tables are for the `plt0655228` reference snapshot.
 Snapshot grid dimensions are read from the data; processing supports
 three-dimensional uniform level-0 grids at other resolutions too. A full
 `512 × 512 × 4096` grid produces native `512 × 512` luminosity images.
+For another snapshot, [check its table-input ranges](docs/usage.md#check-table-input-ranges)
+before processing; grid support does not imply that the bundled axes cover it.
 
 ## 4. Process
 
@@ -78,8 +85,10 @@ python -m quokka2s.plot_emission_results
 ```
 
 Plot selects the saved snapshot using `results_dir`, `jobname`, and the
-snapshot name from `dataset`. It does not open the snapshot or emission tables.
-To plot an earlier result, set these three values to that job and snapshot.
+snapshot name from `dataset`, together with any x/y index ranges. It does not
+open the snapshot or emission tables.
+To plot an earlier result, select its job and snapshot and the corresponding
+x/y ranges; omit the ranges for a full-box result.
 Process saves the numerical arrays, normalization and colour limits; plot
 reads them to draw. Optional image-resolution preparation is described in
 the [usage guide](docs/usage.md#plot-settings).
@@ -96,7 +105,11 @@ output/
 │   ├── plt0655228/
 │   │   ├── processed/
 │   │   ├── figures/
-│   │   └── figures_titled/
+│   │   ├── figures_titled/
+│   │   └── region_x64-66_y64-66/
+│   │       ├── processed/
+│   │       ├── figures/
+│   │       └── figures_titled/
 │   └── plt0916720/
 └── sigma50/
     └── plt0655228/

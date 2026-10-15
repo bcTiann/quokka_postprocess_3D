@@ -6,6 +6,10 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+
+# Relative endpoint tolerance shared by processing and table-range diagnostics.
+COORDINATE_BOUNDARY_RTOL = 1e-6
+
 if TYPE_CHECKING:
     from quokka2s.despotic.lookup import DespoticLookup, DespoticQueries, DespoticTemperatureCO
     from quokka2s.snapshot_reader import CellBatch
@@ -253,7 +257,7 @@ class DespoticCellReader:
         or relative endpoint offsets >1e-6 raise ValueError. Example: for an nH
         upper bound of 100, 100.00001 may be clipped, whereas 101 is rejected.
         """
-        boundary_rtol = 1e-6
+        boundary_rtol = COORDINATE_BOUNDARY_RTOL
         coordinates = (hydrogen_density_cm3, shielding_NH_cm2, velocity_gradient_s)
         axes = (
             self.lookup.table.nH_values,

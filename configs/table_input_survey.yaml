@@ -1,0 +1,29 @@
+# Batch input-range survey. Relative paths start at this YAML file.
+# source_root protects the entire simulation tree from output writes.
+source_root: ../inputs/snapshots
+
+# Output job name: run directory relative to source_root.
+# Each run is searched for direct plt+digits directories only.
+jobs:
+  reference: .
+
+output_dir: ../output/table_input_ranges
+
+# Read one snapshot at a time by default. Each tile spans the selected x
+# range and the complete z column, following x-fastest disk storage.
+snapshot_workers: 1
+tile_ny: 8
+query_chunk: 1000000
+
+# Optional limits for one invocation. Completed scans are reused without
+# counting toward max_new_snapshots. The time limit stops new scans from
+# starting; scans already running finish and save their results.
+# max_new_snapshots: 2
+# max_runtime_minutes: 120
+
+# Diagnostic only; omit this to scan every y tile of every snapshot.
+# max_tiles: 1
+
+# Bundled table paths are defaults. Optional overrides start at this YAML file.
+# despotic_table: ../inputs/tables/despotic/interpolated.npz
+# cloudy_table: ../inputs/tables/cloudy/emission.npz

@@ -15,6 +15,8 @@ from quokka2s.physics.composition import reject_superseded_composition
 
 
 TOUCH_EPS = 1.0e-12
+# Log-coordinate endpoint tolerance shared by processing and range diagnostics.
+COORDINATE_LOG_BOUNDARY_RTOL = 1.0e-12
 
 
 class CloudyFailureTouchError(RuntimeError):
@@ -351,7 +353,7 @@ class CloudyLookup:
             ("log_nH", self.log_nH, log_density),
             ("log_T", self.log_T, log_temperature),
         ):
-            tolerance = 1.0e-12 * max(1.0, abs(axis[0]), abs(axis[-1]))
+            tolerance = COORDINATE_LOG_BOUNDARY_RTOL * max(1.0, abs(axis[0]), abs(axis[-1]))
             if np.any(coordinate < axis[0] - tolerance) or np.any(
                 coordinate > axis[-1] + tolerance
             ):
