@@ -62,7 +62,7 @@ current scientific rules.
 | `cloudy/` | `lookup.py`: interpolation; `cell_fields.py`: batch queries; `table_definition.py`: ordered build lines, grid and radiation recipe; `incident_spectrum.py`: continuum-export reader |
 | `despotic/` | `solver_settings.py`: adopted solver defaults/source identities; `table_data.py`: table records/field names; `snapshot_domain.py`: physical settings/bounds checks and recorded build-snapshot metadata |
 | `despotic/` | `table_files.py`: NPZ serialization; `cell_solver.py`: equilibrium at one state; `table_builder.py`: grid calculation |
-| `despotic/` | `lookup.py` and `cell_fields.py`: process-time queries; `build_table.py`, `interpolate_failed.py`, `list_failures.py`: table commands; `prepare_table_plots.py`/`table_figure_data.py`: numerical figure preparation; `plot_table.py`/`table_plots.py`: draw saved panels |
+| `despotic/` | `lookup.py` and `cell_fields.py`: process-time queries; `build_table.py`, `extend_table.py`, `interpolate_failed.py`, `list_failures.py`: table commands; `table_extension.py`: exact axis extension and raw-source validation; `prepare_table_plots.py`/`table_figure_data.py`: numerical figure preparation; `plot_table.py`/`table_plots.py`: draw saved panels |
 | `products/` | Image, spectrum, gas-phase and auxiliary numerical accumulation; `profile_preparation.py` prepares saved normalized/per-area curves; auxiliary preparation modules save masks, logarithmic panels, limits and radiation/dust samples |
 | `figures/` | `line_luminosity_images.py`, `line_spectra.py`, `gas_phase_spectra.py`: saved-product renderers; `line_labels.py`: titles; `figure_files.py`: PNG/PDF paths and saving; other modules: additional figures |
 
@@ -73,6 +73,13 @@ temperature rule to gas-phase statistics, projection maps and phase histograms.
 belong to `figures/line_labels.py`. `file_provenance.py` provides file hashes for
 table-build and diagnostic identities; process-time table checks use the
 physical domain, not file hashes.
+
+`configs/despotic_extension.yaml` selects an existing raw table and new bounds.
+`extend_table.py` prints a plan or runs the extension. `table_builder.py` owns
+the writable table arrays, copies raw successes by exact coordinate maps, and
+submits only new coordinates to the solver. Old failed nodes stay missing for
+the separate interpolation step. Newly solved points use their own checkpoint
+directory; the old input table is never overwritten.
 
 The root modules also separate the final processing steps:
 `result_metadata.py` extracts selected pixel geometry and ordered dust values;

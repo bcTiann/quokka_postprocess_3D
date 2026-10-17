@@ -1,0 +1,19 @@
+# Paths are relative to this YAML file. The old tables are inputs only.
+source_table: ../inputs/tables/despotic/raw.npz
+output: ../output/tables/despotic_extended/raw.npz
+checkpoint_dir: ../output/tables/despotic_extended/checkpoints
+
+# Requested coverage; the actual outer nodes may extend a little farther.
+# Every old coordinate and its original log spacing are retained.
+bounds:
+  nH:                  # Hydrogen nuclei [cm^-3].
+    minimum: 1.0e-6
+    maximum: 1.0e7
+  NH:                  # Harmonic-mean shielding column [cm^-2].
+    minimum: 4.350476542e12
+    maximum: 1.674700481e26
+  dVdr:                # Velocity gradient [s^-1]; keep the old minimum.
+    maximum: 3.475318445e-10
+
+# Only newly added coordinates are solved; old failed points are not retried.
+workers: 1

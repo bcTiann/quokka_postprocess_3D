@@ -276,6 +276,52 @@ DESPOTIC nodes after an interruption. Inputs, solver settings and source
 identity must match. Use a new checkpoint directory when changing them.
 Set `--workers` to the CPUs allocated to the build job.
 
+### Extend an existing raw DESPOTIC table
+
+Use [configs/despotic_extension.yaml](../configs/despotic_extension.yaml) to
+select the old raw table, requested bounds, a separate output and a new
+checkpoint directory. Paths are relative to that YAML. The raw source is
+local build data; only the interpolated process table is bundled in Git.
+
+Inspect the plan without solving nodes or creating output directories:
+
+```bash
+python -m quokka2s.despotic.extend_table --dry-run
+```
+
+The plan lists the actual extended axes and counts of reused successes,
+retained old failures and new coordinates. Each old coordinate is kept
+exactly. New nodes are added outside the old bounds at the original log
+spacing, so the outer endpoints may go slightly beyond the requested bounds.
+Omit an axis or endpoint to retain its old range. `--config PATH` selects
+another extension YAML.
+
+When ready to solve the planned new nodes, run the same command without
+`--dry-run`. The extension refuses existing output files; it has no overwrite
+option. It copies complete directly solved raw states, including temperature,
+abundances, line fields and diagnostics. It does not accept an interpolated
+source, retry old failed coordinates, or treat missing values as zero.
+Source and current solver settings/species must match.
+
+The new checkpoint directory saves newly calculated points, including failed
+attempts. Repeating the same command resumes them without solving them again.
+The old source table and old checkpoint directory are not modified. Different
+axes, source-table contents or solver settings require a new checkpoint
+directory. The original measured snapshot domain remains historical metadata;
+the chosen extended endpoints are saved separately as `table_domain`.
+
+After building, apply the normal convex-hull filling to the new raw table:
+
+```bash
+python -m quokka2s.despotic.interpolate_failed \
+  --source output/tables/despotic_extended/raw.npz \
+  --output output/tables/despotic_extended/interpolated.npz
+```
+
+Directly solved old nodes remain unchanged. Old failed positions may receive
+different interpolated values because the set of real supporting nodes has
+grown. Keep the existing process tables until the new pair has been reviewed.
+
 Cloudy requires a separately installed Cloudy 17.02 executable:
 
 ```bash

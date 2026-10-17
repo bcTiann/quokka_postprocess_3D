@@ -12,7 +12,9 @@ def validate_table_domain(table, cfg) -> dict:
     cell count describe the reference used to choose the axes; they do not
     restrict the resolution of a new snapshot. This function needs no snapshot.
     cfg supplies X_H, COLUMN_DENSITY_MEAN and COLUMN_DENSITY_DIRECTIONS from
-    physics.settings. Require the recorded axis endpoints to match the table.
+    physics.settings. A table extension records its chosen endpoints separately
+    in table_domain; snapshot_domain remains the original measurement. Require
+    the relevant recorded axis endpoints to match the actual table.
     Actual cell-coordinate coverage is checked later during table queries.
     Example: a table built using a 256x256x2048 snapshot can be loaded when
     processing a 512x512x4096 snapshot; its recorded shape stays unchanged.
@@ -33,9 +35,10 @@ def validate_table_domain(table, cfg) -> dict:
                 f"table={domain.get(name)!r}, current={expected!r}"
             )
 
+    axis_domain = (table.build_metadata or {}).get("table_domain", domain)
     axes = (table.nH_values, table.col_density_values, table.dVdr_values)
     for name, axis in zip(AXIS_NAMES, axes):
-        recorded = domain["axes"][name]
+        recorded = axis_domain["axes"][name]
         if axis[0] != recorded["minimum"] or axis[-1] != recorded["maximum"]:
-            raise ValueError(f"Candidate {name} bounds differ from recorded snapshot extrema")
+            raise ValueError(f"Candidate {name} bounds differ from the recorded table domain")
     return domain

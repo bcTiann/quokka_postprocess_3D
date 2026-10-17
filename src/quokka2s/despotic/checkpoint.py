@@ -103,6 +103,7 @@ def source_metadata() -> dict:
     # Solver files are local; the shared composition moved to physics/.
     project_files = {
         "table_builder.py": local / "table_builder.py",
+        "table_extension.py": local / "table_extension.py",
         "checkpoint.py": local / "checkpoint.py",
         "cell_solver.py": local / "cell_solver.py",
         "solver_settings.py": local / "solver_settings.py",
