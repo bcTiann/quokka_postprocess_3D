@@ -90,10 +90,20 @@ output/
 
 The two bundled tables are selected automatically:
 `inputs/tables/despotic/interpolated.npz` and
-`inputs/tables/cloudy/emission.npz`. These defaults refer to the source
-checkout supplying `quokka2s`, even when the YAML file is elsewhere. Advanced
-configurations may set `despotic_table`, `cloudy_table`, or
-`dust_opacity_table` explicitly.
+`inputs/tables/cloudy/emission.npz`. DESPOTIC now supplies the validated expanded
+55 × 60 × 64 interpolated table; the previous table is retained unchanged at
+`inputs/tables/despotic/interpolated_old.npz`. Cloudy and the dust table are
+unchanged. The expanded DESPOTIC table still has 184 unavailable nodes outside
+the finite-support hull. Coordinate coverage alone does not guarantee a usable
+interpolation stencil or physical accuracy.
+
+The supplied YAML explicitly names `despotic_table`, `cloudy_table`, and
+`dust_opacity_table` using paths relative to `configs/`. If you copy that YAML
+elsewhere, update these paths, use absolute paths, or remove those three entries
+to use the source checkout's bundled defaults. Omitted table settings stay
+anchored to the checkout even when the YAML is elsewhere. To reproduce an old
+run, explicitly select `interpolated_old.npz` and use a new results root; changing
+the table does not update existing saved products.
 
 The supplied YAML uses repository-local input and output paths. To store data
 elsewhere, set `dataset` and `results_dir` to the desired locations. The
