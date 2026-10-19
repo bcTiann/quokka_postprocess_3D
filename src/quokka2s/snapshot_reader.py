@@ -109,7 +109,7 @@ class Snapshot:
 
     @cached_property
     def native_reader(self) -> NativeSnapshotReader:
-        """Cache native file locations and units once; retain no cell arrays."""
+        """Cache native metadata; process contexts may retain bounded fields."""
         return NativeSnapshotReader(dataset=self.dataset)
 
     def read_slab(self, x_start: int, x_stop: int) -> SlabArrays:

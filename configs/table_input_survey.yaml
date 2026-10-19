@@ -9,10 +9,9 @@ jobs:
 
 output_dir: ../output/table_input_ranges
 
-# Read one snapshot at a time by default. Each tile spans the selected x
-# range and the complete z column, following x-fastest disk storage.
+# Read one snapshot at a time by default. Native XY block columns retain
+# complete z-column physics through two passes over contiguous block fields.
 snapshot_workers: 1
-tile_ny: 8
 query_chunk: 1000000
 
 # Optional limits for one invocation. Completed scans are reused without
@@ -21,8 +20,8 @@ query_chunk: 1000000
 # max_new_snapshots: 2
 # max_runtime_minutes: 120
 
-# Diagnostic only; omit this to scan every y tile of every snapshot.
-# max_tiles: 1
+# Diagnostic only; omit this to scan every native XY block column.
+# max_columns: 1
 
 # Bundled table paths are defaults. Optional overrides start at this YAML file.
 # despotic_table: ../inputs/tables/despotic/interpolated.npz

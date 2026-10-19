@@ -92,6 +92,18 @@ def validated_solver_metadata() -> dict[str, object]:
             "chemistry_patch": "check fixed-temperature GOW integration; retry failed segment from same state",
             "scipy_version": distribution("scipy").version,
         },
+        "execution_implementation": {
+            "fixed_temperature_rhs": "prepared_gow_segment_v2",
+            "source_sha256": {
+                name: file_sha256(Path(__file__).with_name(name))
+                for name in (
+                    "fixed_temperature_chemistry.py",
+                    "two_body_rates.py",
+                    "reaction_terms.py",
+                    "abundance_workspace.py",
+                )
+            },
+        },
         "numerical_settings": {
             "chemistry_tolerance": CHEMISTRY_RELATIVE_TOLERANCE,
             "chemistry_acceptance": "native setChemEq relative species-change and temperature criteria",
@@ -332,7 +344,7 @@ def _solve_gow_lvg_point_once(
     if sigma_nt_cms < 0.0:
         raise ValueError("sigma_nt_cms must be non-negative")
     _configure_despotic_home()
-    from despotic.chemistry import GOW
+    from quokka2s.despotic.fixed_temperature_chemistry import TableGOW
 
     species_order = tuple(species)
     last_lines = _nan_line_results(species_order)
@@ -377,7 +389,7 @@ def _solve_gow_lvg_point_once(
 
         with contextlib.redirect_stdout(output):
             converged = cell.setChemEq(
-                network=GOW,
+                network=TableGOW,
                 evolveTemp="iterateDust",
                 tol=CHEMISTRY_RELATIVE_TOLERANCE,
                 maxTime=CHEMISTRY_MAX_TIME_S,

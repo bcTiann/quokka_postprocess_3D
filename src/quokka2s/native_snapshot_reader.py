@@ -11,13 +11,15 @@ are discarded after the selected values are copied into compact arrays.
 
 from __future__ import annotations
 
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 import os
 from typing import BinaryIO
 
 import numpy as np
 from unyt import unyt_array
+
+from .slab_field_cache import SlabFieldCache
 
 
 NATIVE_FIELD_NAMES = (
@@ -30,7 +32,7 @@ NATIVE_FIELD_NAMES = (
 
 
 @dataclass(frozen=True)
-class _NativeBlock:
+class NativeBlock:
     """One level-zero block: native cell bounds and its file payload location.
 
     Each field occupies ``field_bytes`` bytes from ``payload_offset`` onward,
@@ -69,6 +71,7 @@ class NativeSnapshotReader:
         self._native_shape = tuple(int(size) for size in dataset.domain_dimensions)
         self._cell_widths = dataset.domain_width / dataset.domain_dimensions
         self._z_indices = np.arange(self._native_shape[2])
+        self._active_slab_field_cache = None
 
         # 2. Isolate yt's private file metadata access in construction.
         # These are the same dtype, field order and payload offsets used by
@@ -114,7 +117,7 @@ class NativeSnapshotReader:
             cell_count = int(np.prod(block_shape))
             field_bytes = cell_count * self._native_dtype.itemsize
             blocks.append(
-                _NativeBlock(
+                NativeBlock(
                     filename=grid.filename,
                     start=block_start,
                     shape=block_shape,
@@ -137,7 +140,132 @@ class NativeSnapshotReader:
             for field_name in ('density', 'velocity_x', 'velocity_y', 'velocity_z')
         }
 
+    @property
+    def blocks(self) -> tuple[NativeBlock, ...]:
+        """Immutable block geometry/offset records from yt; no cell payloads."""
+        return self._blocks
+
+    def read_block_field(self, *, block: NativeBlock, field_name: str) -> np.ndarray:
+        """Read one complete native field, e.g. (256,256,128), in one request.
+
+        Returns float64 XYZ values in native units. The array owns its bytes
+        or a promoted copy; no source map/file survives this call. AMReX's
+        x-fastest bytes are interpreted with yt's dtype and field offset.
+        """
+        values = self._read_block_bytes(
+            block=block,
+            field_name=field_name,
+            within_field_offset=0,
+            byte_count=block.field_bytes,
+        )
+        native_zyx = values.reshape(block.shape[::-1])
+        return np.asarray(native_zyx.transpose(2, 1, 0), dtype=np.float64)
+
+    def read_block_z_plane(
+        self,
+        *,
+        block: NativeBlock,
+        field_name: str,
+        local_z: int,
+    ) -> np.ndarray:
+        """Read one native XY plane, e.g. (256,256), without the whole field.
+
+        local_z is the cell index within block, not the global z coordinate.
+        Returns promoted float64 XY values in native units, with no open file.
+        """
+        if not isinstance(local_z, (int, np.integer)) or not 0 <= local_z < block.shape[2]:
+            raise ValueError('local_z must select a cell inside the native block')
+        plane_bytes = block.shape[0] * block.shape[1] * self._native_dtype.itemsize
+        values = self._read_block_bytes(
+            block=block,
+            field_name=field_name,
+            within_field_offset=local_z * plane_bytes,
+            byte_count=plane_bytes,
+        )
+        return np.asarray(values.reshape(block.shape[1], block.shape[0]).T, dtype=np.float64)
+
+    def _read_block_bytes(
+        self,
+        *,
+        block: NativeBlock,
+        field_name: str,
+        within_field_offset: int,
+        byte_count: int,
+    ) -> np.ndarray:
+        """Open a source read-only and check its complete requested return."""
+        field_position = self._field_positions[field_name]
+        offset = block.payload_offset + field_position * block.field_bytes + within_field_offset
+        with open(file=block.filename, mode='rb', buffering=0) as source_file:
+            payload = os.pread(source_file.fileno(), byte_count, offset)
+        if len(payload) != byte_count:
+            raise ValueError(f'Short native field read: {block.filename}, {field_name}')
+        return np.frombuffer(buffer=payload, dtype=self._native_dtype)
+
+    def attach_density_units(self, *, values: np.ndarray):
+        """Native float64 XYZ density -> yt's declared gas-density units."""
+        native_density = self._dataset.arr(
+            input_array=values,
+            units=self._native_units['gasDensity'],
+        )
+        return native_density.to(self._gas_units['density'])
+
+    @contextmanager
+    def reuse_slab_fields(
+        self,
+        *,
+        selected_slabs,
+        selected_y_range: tuple[int, int],
+        slabs_per_read: int = 4,
+    ):
+        """Reuse bounded native fields for the actual ordered process windows.
+
+        Global half-open windows include any max_slabs truncation. Each group
+        keeps original z and periodic x/y neighbours. Outside this context the
+        reader retains no value cache. Empty selections perform no payload reads.
+        """
+        if self._active_slab_field_cache is not None:
+            raise RuntimeError('Native slab field reuse contexts cannot be nested')
+        cache = SlabFieldCache(
+            native_reader=self,
+            selected_slabs=selected_slabs,
+            selected_y_range=selected_y_range,
+            slabs_per_read=slabs_per_read,
+        )
+        self._active_slab_field_cache = cache
+        try:
+            yield
+        finally:
+            self._active_slab_field_cache = None
+            cache.close()
+
     def read_slab_fields(
+        self,
+        *,
+        x_start: int,
+        x_stop: int,
+        y_start: int,
+        y_stop: int,
+    ) -> dict[tuple[str, str], unyt_array]:
+        """Read owned halo fields, or their read-only views inside a reuse context.
+
+        Values, shapes and units match the direct native read. Reuse only changes
+        field ownership and source request repetition; slab derivation is separate.
+        """
+        if self._active_slab_field_cache is not None:
+            return self._active_slab_field_cache.read_slab_fields(
+                x_start=x_start,
+                x_stop=x_stop,
+                y_start=y_start,
+                y_stop=y_stop,
+            )
+        return self._read_uncached_slab_fields(
+            x_start=x_start,
+            x_stop=x_stop,
+            y_start=y_start,
+            y_stop=y_stop,
+        )
+
+    def _read_uncached_slab_fields(
         self,
         *,
         x_start: int,
@@ -181,7 +309,16 @@ class NativeSnapshotReader:
             requested_indices=requested_indices,
         )
 
-        # 3. Reproduce yt's density and momentum-derived velocity unit stages.
+        return self.attach_field_units(native_fields=native_fields)
+
+    def attach_field_units(self, *, native_fields: dict[str, np.ndarray]):
+        """Attach units to rho/T/three momenta from either native reading path.
+
+        Inputs are five same-shape float64 XYZ arrays in native units. Returns
+        unit-aware density, raw temperature, three velocities and cell widths.
+        Both the slab reader and range scanner use this exact conversion order.
+        """
+        # Reproduce yt's density and momentum-derived velocity unit stages.
         # Divide native momentum by native density first, then normalize to
         # declared gas units. Later cgs/km conversions must see these same
         # values; simplifying the unit path can change floating-point results.
@@ -270,7 +407,7 @@ class NativeSnapshotReader:
     def _read_selected_block_field(
         self,
         *,
-        block: _NativeBlock,
+        block: NativeBlock,
         field_name: str,
         source_zyx_selection: tuple[np.ndarray, np.ndarray, np.ndarray],
         read_geometry: str,
@@ -305,7 +442,7 @@ class NativeSnapshotReader:
         self,
         *,
         source_fd: int,
-        block: _NativeBlock,
+        block: NativeBlock,
         field_name: str,
         source_x: np.ndarray,
         source_y: np.ndarray,
@@ -362,7 +499,7 @@ class NativeSnapshotReader:
     def _read_block_field(
         self,
         *,
-        block: _NativeBlock,
+        block: NativeBlock,
         field_name: str,
         all_yz_rows_selected: bool,
     ) -> np.ndarray:
@@ -397,7 +534,7 @@ class NativeSnapshotReader:
 
 def _select_block_read_geometry(
     *,
-    block: _NativeBlock,
+    block: NativeBlock,
     source_zyx_selection: tuple[np.ndarray, np.ndarray, np.ndarray],
 ) -> str:
     """Select full-y/z, complete-x-row, or partial-x-row field reading.
@@ -422,7 +559,7 @@ def _select_block_read_geometry(
 def _select_block_cells(
     *,
     requested_indices: tuple[np.ndarray, np.ndarray, np.ndarray],
-    block: _NativeBlock,
+    block: NativeBlock,
 ):
     """Locate requested cells inside one block, or return None if disjoint.
 

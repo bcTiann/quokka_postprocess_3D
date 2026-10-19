@@ -1,0 +1,13 @@
+# Paths are relative to this YAML. Only density and QUOKKA temperature are read.
+source_root: ../inputs/snapshots
+jobs:
+  reference: .
+output_dir: ../output/cold_gas_phases
+
+# Independent snapshots; each worker reads full z columns for exact shielding NH.
+snapshot_workers: 1
+query_chunk: 1000000
+
+# Bundled DESPOTIC axes supply the original table outline. The extension YAML
+# supplies the expanded outline; no emissivity query or table build is run.
+# despotic_table: ../inputs/tables/despotic/interpolated.npz

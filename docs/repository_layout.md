@@ -39,8 +39,14 @@ reading and table solving separate from plotting saved products.
    uses yt block/file metadata to copy selected x/y cells plus one periodic
    neighbour on each side, keeping full z. Full-x, partial-y/z selections read
    contiguous y bands in each z plane. Full-y/z selections read temporary field
-   buffers; other selections use read-only NumPy maps. It caches metadata,
-   retaining no cell payloads or open maps.
+   buffers; other selections use read-only NumPy maps. It caches metadata.
+   During process, [slab_field_cache.py](../src/quokka2s/slab_field_cache.py)
+   shares five converted halo-field arrays among up to four adjacent selected
+   slabs, under a 3 GiB retained-value limit. The reading thread owns this scoped
+   cache; each slab still derives its six copied core arrays in the same order.
+   Groups shrink to fit, an unshared slab uses the direct reader, and the
+   context releases retained values on success or failure. It retains no open
+   maps or full-snapshot field arrays.
    `slab_windows(x_start=..., x_stop=..., slab_nx=...)` yields global core bounds;
    `slab.iter_batches(batch_size=...)` yields native cell views. Consume batches
    before releasing the slab: a retained view keeps its underlying arrays alive.
@@ -68,7 +74,7 @@ current scientific rules.
 | `physics/` | `settings.py`: shared physical choices; `gas_fields.py`: derived fields and mixed temperature; `line_emissivity.py`, `hydrogen_emissivity.py`, `dust_attenuation.py`: emission calculations |
 | `cloudy/` | `lookup.py`: interpolation; `cell_fields.py`: batch queries; `table_definition.py`: ordered build lines, grid and radiation recipe; `incident_spectrum.py`: continuum-export reader |
 | `despotic/` | `solver_settings.py`: adopted solver defaults/source identities; `table_data.py`: table records/field names; `snapshot_domain.py`: physical settings/bounds checks and recorded build-snapshot metadata |
-| `despotic/` | `table_files.py`: NPZ serialization; `cell_solver.py`: equilibrium at one state; `table_builder.py`: grid calculation |
+| `despotic/` | `table_files.py`: NPZ serialization; `cell_solver.py`: equilibrium at one state; `fixed_temperature_chemistry.py`: fixed-temperature GOW callable; `abundance_workspace.py`, `two_body_rates.py`, `reaction_terms.py`: its composition and reaction helpers; `table_builder.py`: grid calculation |
 | `despotic/` | `lookup.py` and `cell_fields.py`: process-time queries; `build_table.py`, `extend_table.py`, `interpolate_failed.py`, `list_failures.py`: table commands; `table_extension.py`: exact axis extension and raw-source validation; `prepare_table_plots.py`/`table_figure_data.py`: numerical figure preparation; `plot_table.py`/`table_plots.py`: draw saved panels |
 | `products/` | Image, spectrum, gas-phase and auxiliary numerical accumulation; `profile_preparation.py` prepares saved normalized/per-area curves; auxiliary preparation modules save masks, logarithmic panels, limits and radiation/dust samples |
 | `figures/` | `line_luminosity_images.py`, `line_spectra.py`, `gas_phase_spectra.py`: saved-product renderers; `line_labels.py`: titles; `figure_files.py`: PNG/PDF paths and saving; other modules: additional figures |
@@ -99,20 +105,26 @@ Explicit x/y ranges add a shared region subdirectory, for example
 `region_x64-66_y64-66/`; an omitted or `null` axis is named `all`. Both axes
 omitted or `null` keep the full-box result directory.
 `input_paths.py` stores bundled input locations without importing calculations.
-`check_table_input_ranges.py` reuses the same configuration and snapshot reader
-to survey physical input coordinates. It calls `Snapshot.read_column_tile()`
-with explicit x/y bounds and complete z columns, reading y strips of width
-`tile_ny` (default 8) across the selected x range. This follows AMReX's x-fastest
-storage order. Emission processing retains x slabs and its existing reduction
-order; `slab_nx` and `max_slabs` remain emission settings.
+`check_table_input_ranges.py` reuses the same configuration and physical field
+definitions to survey input coordinates. `table_input_reader.py` reads complete
+native fields and shares them among XY columns at the same z. Its ascending
+density pass saves exact cumulative columns at z faces; its descending pass
+visits every selected column at each z before moving down and clearing that
+layer's native-field cache. Four owned range fields preserve complete z-column
+physics without retaining full-snapshot arrays. It reuses block metadata,
+file reads and unit stages in `native_snapshot_reader.py`. Emission processing retains its six fields,
+x slabs and existing reduction order; `slab_nx` and `max_slabs` remain emission
+settings.
 `table_input_statistics.py` accumulates named scalar ranges;
 `table_input_range_check.py` compares them with current
 axes. `table_input_files.py` owns safe output and completed-scan reuse. The
 statistics are table-independent and are separate from emission products.
 `check_job_table_input_ranges.py` selects snapshots from the jobs in
 `configs/table_input_survey.yaml` and runs that same scan with one worker by
-default. Its YAML controls `tile_ny`, `query_chunk` and diagnostic `max_tiles`;
-the single-snapshot command accepts `--tile-ny` and `--max-tiles`.
+default. Its YAML controls `query_chunk` and diagnostic `max_columns`;
+the single-snapshot command accepts `--max-columns`. The limit counts native
+XY block columns, each using its complete z depth; omitted columns make a scan
+partial.
 `snapshot_workers` enables independent concurrent snapshot scans;
 optional invocation limits cap new scans and stop dispatch after a time budget.
 Already running scans finish. The command saves per-snapshot statistics plus
@@ -121,6 +133,16 @@ directory. `table_input_jobs.py` owns job selection, scan order and summaries;
 `table_input_survey.py` owns the shared scan-or-reuse action for both commands.
 Completed scans can be reused; summaries distinguish `complete`, `partial`,
 `failed` and `not_selected` snapshots.
+
+`prepare_cold_gas_phase.py` prepares the cold nH–NH distribution for the jobs
+in `configs/cold_gas_phase.yaml`. `cold_gas_reader.py` reads density and
+temperature and reuses exact complete-z shielding columns; it does not read
+momentum or calculate velocity gradients. `cold_gas_survey.py` owns source
+protection, complete-result reuse and independent snapshot workers.
+`products/cold_gas_phase.py` prepares histograms and every figure array;
+`plot_cold_gas_phase.py` and `figures/cold_gas_phase.py` draw saved products.
+`snapshot_headers.py` shares the text-header reader with the header-survey
+tool, allowing fresh headers to prove a snapshot contains no cold cells.
 `paths.py` resolves user paths once at configuration and command-line entry
 points, expanding `~` and using the appropriate relative-path base.
 `prepare_emission_results.py` prepares figure arrays from existing numerical

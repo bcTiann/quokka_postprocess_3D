@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 
 from quokka2s.physics.line_emissivity import CIII_CIV_LINE_KEYS
 from quokka2s.physics.gas_fields import mixed_gas_temperature_K
+from quokka2s.products.cold_despotic_luminosity import ColdGasLuminosityByDespoticTemperature
 from quokka2s.products.integrated_spectra import IntegratedSpectra, check_spectrum_luminosity
 from quokka2s.products.gas_phase_velocity import GasPhaseVelocityAccumulator, check_phase_accounting
 from quokka2s.products.line_luminosity_images import (
@@ -146,6 +147,9 @@ class EmissionProducts:
         # 10 emission lines; cold and hot branches.
         self.intrinsic_luminosity_erg_s = np.zeros((len(self.line_keys), 2))
         self.attenuated_luminosity_erg_s = np.zeros_like(self.intrinsic_luminosity_erg_s)
+        self.cold_despotic_luminosity = ColdGasLuminosityByDespoticTemperature(
+            line_keys=self.line_keys,
+        )
 
         self.despotic_coordinate_clipped_cells = {
             "nH": 0,    # Cells whose density lookup coordinate was clipped.
@@ -175,7 +179,8 @@ class EmissionProducts:
         Returns
         -------
         None
-            Updates cell counts, gas masses [g] and line luminosities [erg/s].
+            Updates cell counts, gas masses [g], line luminosities [erg/s] and
+            cold-branch light above the recorded DESPOTIC temperature thresholds.
             Each light total skips that line's missing emissivities. Gas-phase
             counts depend on mixed temperature, not on any line's availability.
 
@@ -187,6 +192,7 @@ class EmissionProducts:
         self.record_line_luminosities(cells, emission)
         self.record_missing_line_emissivities(cells, emission)
         self.record_cell_counts_and_masses(cells, emission)
+        self.cold_despotic_luminosity.add_batch(cells=cells, emission=emission)
 
     def record_lookup_clipping_counts(self, emission):
         """Add lookup-coordinate clipping counts for retained cells only."""
@@ -298,6 +304,7 @@ class EmissionProducts:
         self.phases.merge(other.phases)
         self.intrinsic_luminosity_erg_s += other.intrinsic_luminosity_erg_s
         self.attenuated_luminosity_erg_s += other.attenuated_luminosity_erg_s
+        self.cold_despotic_luminosity.merge(other.cold_despotic_luminosity)
         for name in (
             'counts', 'mass_g', 'missing_emissivity_cells', 'missing_emissivity_mass_g',
             'despotic_coordinate_clipped_cells', 'cloudy_column_clipped_cells',

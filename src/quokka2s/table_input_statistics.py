@@ -1,6 +1,7 @@
 """Accumulate physical table-input ranges without querying emission tables."""
 from __future__ import annotations
 
+from contextlib import closing
 from dataclasses import dataclass
 import math
 from pathlib import Path
@@ -9,7 +10,8 @@ import numpy as np
 
 from quokka2s.physics import settings
 from quokka2s.physics.gas_fields import HYDROGEN_MASS_G
-from quokka2s.snapshot_reader import CellBatch, Snapshot
+from quokka2s.snapshot_reader import Snapshot
+from quokka2s.table_input_reader import NativeBlockRangeReader, TableInputBatch
 
 
 @dataclass(frozen=True)
@@ -17,18 +19,17 @@ class SnapshotInputSettings:
     """Inputs needed to scan one snapshot, without emission-product settings.
 
     dataset is an absolute snapshot Path; names identify its saved record.
-    tile_ny counts y layers per complete-z tile; query_chunk counts cells.
-    Optional x/y ranges use native [start, stop) indices; max_tiles limits
-    a diagnostic scan only. Each tile spans the selected x range.
+    query_chunk counts cells per in-memory reduction batch. Optional x/y
+    ranges use native [start, stop) indices. max_columns limits a diagnostic
+    scan to this many native XY columns, each retaining full-z physics.
     Single-snapshot and multi-job commands pass this same small record.
     """
 
     dataset: Path
     jobname: str
     snapshot_name: str
-    tile_ny: int = 8
     query_chunk: int = 1_000_000
-    max_tiles: int | None = None
+    max_columns: int | None = None
     x_index_range: tuple[int, int] | None = None
     y_index_range: tuple[int, int] | None = None
 
@@ -103,10 +104,10 @@ class TableInputStatistics:
         self.hot_cell_count = 0
         self.invalid_quokka_temperature_count = 0
 
-    def record_batch(self, *, cells: CellBatch) -> None:
+    def record_batch(self, *, cells: TableInputBatch) -> None:
         """Record unchanged batch coordinates, then select the QUOKKA hot branch.
 
-        cells comes from slab.iter_batches(). Its fields have shape (B,);
+        cells comes from layer.iter_batches(). Its fields have shape (B,);
         hydrogen_density_cm3 uses the pipeline's cached rho-to-nH conversion.
         Physical zeros/invalid inputs are counted rather than dropped silently.
         """
@@ -175,47 +176,46 @@ def input_definitions() -> dict:
 def scan_snapshot_input_ranges(
     *,
     snapshot: Snapshot,
-    tile_ny: int,
     query_chunk: int,
-    max_tiles: int | None = None,
+    max_columns: int | None = None,
     progress_label: str = "",
 ) -> dict:
-    """Read complete-z y strips and retain scalar ranges, not full field cubes.
+    """Reduce shared z layers to six ranges, with unchanged full-z physics.
 
-    snapshot is the pipeline Snapshot from open_snapshot(), including any x/y
-    selection. tile_ny counts y layers; each tile keeps the selected x range.
-    This follows the file's x-fastest order, avoiding full-block reads for
-    repeated narrow x slices. query_chunk counts cells per in-memory batch.
-    max_tiles limits a diagnostic run only. Returns plain saved statistics;
-    partial scans are explicitly labelled and cannot certify full coverage.
+    snapshot comes from open_snapshot(); query_chunk limits cells per reduction
+    batch. max_columns optionally selects the first N intersecting native XY
+    columns for a labelled diagnostic. No emission tables/cubes are loaded.
+    Returns geometry, traversal metadata and TableInputStatistics scalars.
     """
     statistics = TableInputStatistics()
+    reader = NativeBlockRangeReader(snapshot=snapshot)
+    columns = reader.columns
+    if max_columns is not None:
+        columns = columns[:max_columns]
+    planned_blocks = sum(len(column.blocks) for column in columns)
+    completed_blocks = 0
     prefix = f"[{progress_label}] " if progress_label else ""
-    x_start, x_stop = snapshot.xy_region["x"]
-    y_start, y_stop = snapshot.xy_region["y"]
-    tile_count = math.ceil((y_stop - y_start) / tile_ny)
-    if max_tiles is not None:
-        tile_count = min(tile_count, max_tiles)
-    for tile_index, start in enumerate(range(y_start, y_stop, tile_ny), start=1):
-        if tile_index > tile_count:
-            break
-        stop = min(start + tile_ny, y_stop)
-        print(
-            f"{prefix}Reading table inputs: tile {tile_index}/{tile_count}, "
-            f"x=[{x_start}, {x_stop}), y=[{start}, {stop}), full z",
-            flush=True,
-        )
-        tile = snapshot.read_column_tile(
-            x_start=x_start,
-            x_stop=x_stop,
-            y_start=start,
-            y_stop=stop,
-        )
-        for cells in tile.iter_batches(batch_size=query_chunk):
-            statistics.record_batch(cells=cells)
-        del cells, tile
-        percentage = 100.0 * tile_index / tile_count
-        print(f"{prefix}Input statistics: {percentage:.1f}% ({statistics.cell_count:,} cells)", flush=True)
+    print(
+        f"{prefix}Preparing full-z column sums for {len(columns)} XY columns; "
+        f"scanning {planned_blocks} blocks with shared z-layer fields",
+        flush=True,
+    )
+    layers = reader.iter_layers(columns=columns)
+    # Closing also releases cached fields if reduction or progress output fails.
+    with closing(layers):
+        for layer in layers:
+            for cells in layer.iter_batches(batch_size=query_chunk):
+                statistics.record_batch(cells=cells)
+            completed_blocks += 1
+            percentage = 100.0 * completed_blocks / planned_blocks
+            print(
+                f"{prefix}Input statistics: {percentage:.1f}% "
+                f"({completed_blocks}/{planned_blocks} blocks; "
+                f"{statistics.cell_count:,} cells)",
+                flush=True,
+            )
+            del cells
+            del layer
 
     selection_complete = statistics.cell_count == snapshot.processing_cell_count
     full_snapshot = selection_complete and snapshot.processing_shape == snapshot.shape
@@ -227,7 +227,12 @@ def scan_snapshot_input_ranges(
         "selected_shape": list(snapshot.processing_shape),
         "xy_region": {axis: list(bounds) for axis, bounds in snapshot.xy_region.items()},
         "expected_selected_cells": snapshot.processing_cell_count,
-        "reading": {"tile_axis": "y", "tile_ny": tile_ny, "tile_count": tile_count},
+        "reading": {
+            "strategy": "native_z_layer_reuse",
+            "column_count": len(columns),
+            "available_column_count": len(reader.columns),
+            "block_count": completed_blocks,
+        },
         "time_s": float(snapshot.dataset.current_time.to_value("s")),
         "definitions": input_definitions(),
         **ranges,

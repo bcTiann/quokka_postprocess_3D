@@ -230,33 +230,38 @@ def process_snapshot(config, snapshot, emission_calculator, products, began):
 
     # 2. Create the batch worker pool once and reuse it for all selected slabs.
     # With chunk_workers=2, two batches can run together within the current slab.
-    with ThreadPoolExecutor(max_workers=config.chunk_workers) as executor:
-        for slab_number, window in enumerate(selected_slabs, start=1):
-            # 3. Read, calculate, accumulate, and release this slab's cell arrays.
-            x_start, x_stop = window
-            print(
-                f'Reading slab: {slab_number}/{total_slabs}; x=[{x_start}, {x_stop}); '
-                'reading cell fields and deriving columns and velocity gradients...',
-                flush=True,
-            )
-            process_one_slab(
-                config=config,
-                snapshot=snapshot,
-                emission_calculator=emission_calculator,
-                products=products,
-                window=window,
-                executor=executor,
-            )
+    with snapshot.native_reader.reuse_slab_fields(
+        selected_slabs=selected_slabs,
+        selected_y_range=snapshot.xy_region['y'],
+        slabs_per_read=4,
+    ):
+        with ThreadPoolExecutor(max_workers=config.chunk_workers) as executor:
+            for slab_number, window in enumerate(selected_slabs, start=1):
+                # 3. Read, calculate, accumulate, and release this slab's cell arrays.
+                x_start, x_stop = window
+                print(
+                    f'Reading slab: {slab_number}/{total_slabs}; x=[{x_start}, {x_stop}); '
+                    'reading cell fields and deriving columns and velocity gradients...',
+                    flush=True,
+                )
+                process_one_slab(
+                    config=config,
+                    snapshot=snapshot,
+                    emission_calculator=emission_calculator,
+                    products=products,
+                    window=window,
+                    executor=executor,
+                )
 
-            # 4. Report a finished slab (1/32, 2/32, ...) before reading the next.
-            report_snapshot_progress(
-                config=config,
-                products=products,
-                began=began,
-                completed_slabs=slab_number,
-                total_slabs=total_slabs,
-                total_cells=total_cells,
-            )
+                # 4. Report a finished slab (1/32, 2/32, ...) before reading the next.
+                report_snapshot_progress(
+                    config=config,
+                    products=products,
+                    began=began,
+                    completed_slabs=slab_number,
+                    total_slabs=total_slabs,
+                    total_cells=total_cells,
+                )
 
 
 def print_run_settings(config, config_path: Path) -> None:

@@ -85,6 +85,10 @@ def build_processing_report(
         # Integrated luminosities, dispersions and query clipping counts.
         'intrinsic_luminosity_erg_s': products.intrinsic_luminosity_erg_s.tolist(),
         'transmitted_luminosity_erg_s': products.attenuated_luminosity_erg_s.tolist(),
+        'cold_gas_luminosity_by_despotic_temperature': products.cold_despotic_luminosity.build_report(
+            intrinsic_luminosity_by_branch_erg_s=products.intrinsic_luminosity_erg_s,
+            attenuated_luminosity_by_branch_erg_s=products.attenuated_luminosity_erg_s,
+        ),
         'line_sigma_window_kms': line_sigma_window,
         'line_sigma_full_kms': line_sigma_full,
         'line_centroid_window_kms': line_centroid_window,

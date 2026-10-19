@@ -14,12 +14,13 @@ if __package__ in (None, ""):
 from quokka2s.despotic.solver_settings import (
     CHEMISTRY_ORIGINAL_SOURCE_SHA256,
     CHECKED_CHEMISTRY_SOURCE_SHA256,
+    REFERENCE_CHEMISTRY_SOURCE_SHA256,
 )
 
 BEFORE = b"""        xOut = odeint(cloud.chemnetwork.dxdt, cloud.chemnetwork.x,
                       tOut1)
 """
-AFTER = b"""        from .GOW import GOW
+REFERENCE_AFTER = b"""        from .GOW import GOW
         if not isinstance(cloud.chemnetwork, GOW):
             xOut = odeint(cloud.chemnetwork.dxdt, cloud.chemnetwork.x,
                           tOut1)
@@ -64,6 +65,29 @@ AFTER = b"""        from .GOW import GOW
                     'attempts rejected: ' + status['message'])
 """
 
+# The fixed-T callable owns its constants. Recreate it for every attempt,
+# including a same-state local-time retry; native GOW retains its own RHS.
+REFERENCE_LOOP = b"""            for offset in offsets:
+                if offset == 0.0:
+                    rhs = cloud.chemnetwork.dxdt
+                else:
+                    def rhs(state, local_time):
+                        return cloud.chemnetwork.dxdt(state, local_time + offset)
+"""
+PREPARED_LOOP = b"""            for offset in offsets:
+                prepare_rhs = getattr(cloud.chemnetwork, 'prepare_fixed_temperature_rhs', None)
+                if prepare_rhs is None:
+                    physical_rhs = cloud.chemnetwork.dxdt
+                else:
+                    physical_rhs = prepare_rhs()
+                if offset == 0.0:
+                    rhs = physical_rhs
+                else:
+                    def rhs(state, local_time):
+                        return physical_rhs(state, local_time + offset)
+"""
+AFTER = REFERENCE_AFTER.replace(REFERENCE_LOOP, PREPARED_LOOP)
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -75,13 +99,18 @@ def main() -> None:
     if digest == CHECKED_CHEMISTRY_SOURCE_SHA256:
         print(f"Checked GOW integration is installed: {path}")
         return
-    if digest != CHEMISTRY_ORIGINAL_SOURCE_SHA256:
+    if digest not in (CHEMISTRY_ORIGINAL_SOURCE_SHA256, REFERENCE_CHEMISTRY_SOURCE_SHA256):
         raise SystemExit(f"Unrecognized chemEvol.py ({digest}); review before patching: {path}")
     if args.check:
         raise SystemExit("Checked GOW integration is not installed.")
-    if original.count(BEFORE) != 1:
-        raise SystemExit("Expected one fixed-temperature integration call.")
-    updated = original.replace(BEFORE, AFTER)
+    if digest == CHEMISTRY_ORIGINAL_SOURCE_SHA256:
+        if original.count(BEFORE) != 1:
+            raise SystemExit("Expected one fixed-temperature integration call.")
+        updated = original.replace(BEFORE, AFTER)
+    else:
+        if original.count(REFERENCE_LOOP) != 1:
+            raise SystemExit("Expected one checked fixed-temperature retry loop.")
+        updated = original.replace(REFERENCE_LOOP, PREPARED_LOOP)
     if hashlib.sha256(updated).hexdigest() != CHECKED_CHEMISTRY_SOURCE_SHA256:
         raise SystemExit("Patched source does not match the reviewed change.")
     path.write_bytes(updated)

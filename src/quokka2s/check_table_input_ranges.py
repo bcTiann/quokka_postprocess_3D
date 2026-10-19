@@ -1,9 +1,9 @@
 """Measure a snapshot's physical inputs and compare them with current table axes.
 
-Uses the same emission.yaml selection, reader, derived fields and table paths
-as process. It saves scalar statistics only, without calculating line emission,
-dust attenuation, images or spectra. Saved ranges can be compared again without
-reading the snapshot cells.
+Uses the same emission.yaml selection, field definitions and table paths as
+process, reading native block columns in two passes. It saves scalar statistics
+only, without calculating line emission, dust attenuation, images or spectra.
+Saved ranges can be compared again without reading the snapshot cells.
 """
 from __future__ import annotations
 
@@ -42,11 +42,14 @@ def main(argv=None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
     parser.add_argument("--output-dir", type=Path, help="Override the default selected-run/table_input_check directory")
-    parser.add_argument("--tile-ny", type=int, default=8, help="Y cells per complete-z reading tile (default: 8)")
-    parser.add_argument("--max-tiles", type=int, help="Read only this many y tiles for a labelled partial scan")
+    parser.add_argument(
+        "--max-columns",
+        type=int,
+        help="Limit native XY block columns; each retains complete z-column physics",
+    )
     args = parser.parse_args(argv)
-    if args.tile_ny < 1 or (args.max_tiles is not None and args.max_tiles < 1):
-        parser.error("--tile-ny and --max-tiles must be positive")
+    if args.max_columns is not None and args.max_columns < 1:
+        parser.error("--max-columns must be positive")
     config = load_process_config(path=args.config)
     output_directory = config.output_dir.parent / "table_input_check"
     if args.output_dir is not None:
@@ -58,9 +61,8 @@ def main(argv=None) -> None:
         dataset=config.dataset,
         jobname=config.jobname,
         snapshot_name=config.snapshot_name,
-        tile_ny=args.tile_ny,
         query_chunk=config.query_chunk,
-        max_tiles=args.max_tiles,
+        max_columns=args.max_columns,
         x_index_range=config.x_index_range,
         y_index_range=config.y_index_range,
     )
