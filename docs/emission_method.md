@@ -1,7 +1,7 @@
 # Current emission physics and products
 
-The current entry points are `uv run --no-sync python src/quokka2s/process_snapshot.py` and
-`uv run --no-sync python src/quokka2s/plot_emission_results.py`, with `src/` on `PYTHONPATH`.
+The current entry points are `uv run --no-sync process` and
+`uv run --no-sync plot`, after automatic editable installation with `uv sync`.
 Each uses its default YAML in `configs/`; `--config PATH` selects another file.
 Use the [root README](../README.md) for the main commands, the
 [usage guide](usage.md) for settings and table building, and the

@@ -5,21 +5,22 @@ Read what each call receives and returns before opening the function itself.
 Process and plot have independent entry points:
 
 ```bash
-uv run --no-sync python -m quokka2s.process_snapshot
-uv run --no-sync python -m quokka2s.plot_emission_results
+uv run --no-sync process
+uv run --no-sync plot
 ```
 
 From the repository root, both read the default `configs/emission.yaml`.
 Use `--config PATH` to select another file. Each runs directly;
 there is no shared dispatcher.
 
-First prepare the environment with `uv sync --locked --extra process` and put
-the checkout on the import path with
-`export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"`.
-No activation or installation of `quokka2s` itself is needed. Use
-`uv run --no-sync python src/quokka2s/process_snapshot.py` and
-`uv run --no-sync python src/quokka2s/plot_emission_results.py` for direct-file
-entry points, or the equivalent module commands above.
+First prepare the environment with `uv sync --locked --extra process`. uv
+automatically installs the checkout in editable mode and registers the two
+commands from `[project.scripts]` in `pyproject.toml`. They call the existing
+`process_snapshot.main()` and `plot_emission_results.main()` functions directly.
+No activation, import-path export, or manual editable installation is needed.
+The equivalent `uv run --no-sync python -m quokka2s.process_snapshot` and
+`uv run --no-sync python -m quokka2s.plot_emission_results` commands remain useful
+for Python debugging.
 
 The first three settings select one snapshot and its results:
 

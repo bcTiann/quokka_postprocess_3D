@@ -5,22 +5,23 @@ two main commands. Run the commands below from the repository root.
 
 ## Source environment and dependencies
 
-uv manages `.venv` from `pyproject.toml` and the committed `uv.lock`. The
-`quokka2s` project itself is not installed (`tool.uv.package = false`); Python
-imports the source checkout through `PYTHONPATH`. No activation is required.
-From the repository root:
+uv manages `.venv` from `pyproject.toml` and the committed `uv.lock`. It installs
+`quokka2s` in editable mode automatically, so imports use the current checkout's
+`src/`. Source edits take effect on the next run. No activation, `PYTHONPATH`
+export, or manual `pip install -e .` is required. From the repository root:
 
 ```bash
 uv sync --locked --extra process
-export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
 ```
 
 `.python-version` selects Python 3.11. On Setonix, load the Python module and
 add `--python "$(command -v python)"` to sync, as shown in the Setonix guide.
-In later shells, return to the repository and set `PYTHONPATH` again. Run
-commands as `uv run --no-sync python ...`; this uses the prepared environment
-without installing or updating dependencies during scientific work. Repeat
-sync after pulling a changed lockfile.
+In later shells, return to the repository and use `uv run --no-sync process`
+or `uv run --no-sync plot`. These commands use the prepared environment without
+installing or updating dependencies during scientific work. The other Python
+tools below also work in this environment without an import-path export. Repeat
+sync after pulling changes to project metadata or the lockfile. On Setonix,
+the documented Slurm script loads the module and selects uv automatically.
 
 The base dependencies support saved-products plotting; `process` adds the
 pinned yt reader, and `tables` adds the optional DESPOTIC solver and build tools.
@@ -199,8 +200,8 @@ complete original z column.
 Run both commands with the same YAML:
 
 ```bash
-uv run --no-sync python src/quokka2s/process_snapshot.py
-uv run --no-sync python src/quokka2s/plot_emission_results.py
+uv run --no-sync process
+uv run --no-sync plot
 ```
 
 This example saves under

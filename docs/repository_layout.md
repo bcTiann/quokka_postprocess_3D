@@ -6,9 +6,13 @@ tools and additional paper figures have their own commands.
 
 `pyproject.toml` declares dependencies; `uv.lock` records the resolved versions
 and source identities. uv creates `.venv` with `uv sync` and selects it for
-`uv run`. The checkout imports through `PYTHONPATH=src`, without installing
-`quokka2s` itself. Optional `process` and `tables` dependencies keep snapshot
-reading and table solving separate from plotting saved products.
+`uv run`. Sync automatically installs `quokka2s` in editable mode from `src/`
+and registers the `process` and `plot` commands. No `PYTHONPATH` export or manual
+package installation is needed. The repository remains the source of bundled
+tables and configuration; this workflow uses an editable checkout, not a
+standalone wheel with embedded input data. Optional `process` and `tables`
+dependencies keep snapshot reading and table solving separate from plotting
+saved products.
 
 ## Where each kind of file belongs
 

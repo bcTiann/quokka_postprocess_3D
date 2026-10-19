@@ -92,7 +92,7 @@ def main(argv=None) -> None:
     From the repository root, the default is configs/emission.yaml;
     --config PATH selects another YAML file."""
     parser = argparse.ArgumentParser(
-        prog='quokka2s-plot',
+        prog='plot',
         description=__doc__,
     )
     parser.add_argument(

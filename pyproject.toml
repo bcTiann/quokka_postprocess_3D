@@ -1,3 +1,7 @@
+[build-system]
+requires = ["uv_build==0.11.31"]
+build-backend = "uv_build"
+
 [project]
 name = "quokka2s"
 version = "0.1.0"
@@ -14,6 +18,10 @@ dependencies = [
     "unyt==3.0.4",
     "PyYAML==6.0.3",
 ]
+
+[project.scripts]
+process = "quokka2s.process_snapshot:main"
+plot = "quokka2s.plot_emission_results:main"
 
 [project.optional-dependencies]
 # The fixed source commit supplies the validated QUOKKA snapshot frontend.
@@ -32,10 +40,6 @@ tables = [
     "joblib==1.5.2",
     "tqdm==4.67.1",
 ]
-
-[tool.uv]
-# Run the checkout through PYTHONPATH=src; install only third-party dependencies.
-package = false
 
 [tool.uv.extra-build-dependencies]
 # The pinned setup.py imports DESPOTIC and these libraries to read its version.

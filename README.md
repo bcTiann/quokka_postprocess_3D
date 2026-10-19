@@ -12,8 +12,10 @@ cd quokka_postprocess_3D
 
 ## 2. Configure the environment
 
-Install [uv](https://docs.astral.sh/uv/getting-started/installation/) once if it
-is not available. The tested uv version is 0.11.31:
+On Setonix, use the [Setonix setup](docs/setonix.md#2-configure-the-environment)
+to keep uv, its cache and the environment out of your home quota. On a local
+computer, install [uv](https://docs.astral.sh/uv/getting-started/installation/)
+once if it is not available. The tested uv version is 0.11.31:
 
 ```bash
 curl -LsSf https://astral.sh/uv/0.11.31/install.sh | sh
@@ -24,21 +26,22 @@ From the repository root:
 
 ```bash
 uv sync --locked --extra process
-export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
 ```
 
-uv creates and manages `.venv` automatically; there is no activation step and
-`quokka2s` itself is not installed. `.python-version` selects Python 3.11.
-`pyproject.toml` declares dependencies and `uv.lock` fixes their resolved
-versions, including the tested yt source commit. The first yt source build
-needs Git and C/C++ build tools. On Setonix, use the module's Python as shown
-in the [Setonix guide](docs/setonix.md#2-configure-the-environment).
+uv creates `.venv`, installs the locked dependencies and registers this
+checkout in editable mode. No environment activation, `PYTHONPATH` or separate
+`pip install` command is needed. Source edits are used on the next run.
+`.python-version` selects Python 3.11. `pyproject.toml` declares dependencies and
+`uv.lock` fixes their resolved versions, including the tested yt source commit.
+The first yt source build needs Git and C/C++ build tools.
 
-Run commands with `uv run --no-sync` to use the prepared environment without
-installing or updating dependencies during processing. In a later terminal,
-return to this repository and set `PYTHONPATH` again. After pulling a changed
-lockfile, repeat `uv sync --locked --extra process`. Source changes are used on
-the next run. For plotting-only environments and dependency maintenance, see
+After setup, return to the repository root and use `uv run --no-sync process`
+and `uv run --no-sync plot`. These use the prepared environment without
+installing or updating dependencies during a run. After pulling a changed
+lockfile or project metadata, repeat `uv sync --locked --extra process`.
+On Setonix, the [batch script](docs/setonix.md#4-process) loads the site's Python
+module and environment settings for each job. For plotting-only environments
+and dependency maintenance, see
 [the usage guide](docs/usage.md#source-environment-and-dependencies).
 
 ## 3. Set the inputs
@@ -103,7 +106,7 @@ before processing; grid support does not imply that the bundled axes cover it.
 Run from the repository root:
 
 ```bash
-uv run --no-sync python src/quokka2s/process_snapshot.py
+uv run --no-sync process
 ```
 
 On Setonix, run this on an allocated CPU compute node through Slurm; the
@@ -122,7 +125,7 @@ change `jobname`. Processing does not overwrite an existing result directory.
 ## 5. Plot
 
 ```bash
-uv run --no-sync python src/quokka2s/plot_emission_results.py
+uv run --no-sync plot
 ```
 
 Plot selects the saved snapshot using `results_dir`, `jobname`, and the
