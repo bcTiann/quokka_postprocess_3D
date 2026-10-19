@@ -39,64 +39,43 @@ git pull --ff-only
 
 ## 2. Configure the environment
 
-If uv is not on `PATH`, install the tested standalone version under your own
-`$MYSOFTWARE`. This does not need pip or administrator access and leaves shell
-profiles unchanged. The installation path and flags follow the
-[uv installer documentation](https://docs.astral.sh/uv/reference/installer/):
+Install [uv](https://docs.astral.sh/uv/getting-started/installation/) once if
+it is not already available:
 
 ```bash
-curl -LsSf https://astral.sh/uv/0.11.31/install.sh | \
-  env UV_INSTALL_DIR="$MYSOFTWARE/uv/bin" UV_NO_MODIFY_PATH=1 sh
-export PATH="$MYSOFTWARE/uv/bin:$PATH"
-uv --version
+curl -LsSf https://astral.sh/uv/0.11.31/install.sh | sh
+export PATH="$HOME/.local/bin:$PATH"
 ```
 
-Create the environment from the repository root, using the module's Python
-3.11 interpreter. This setup has been checked with Python 3.11.6:
-
-```bash
-module avail python
-module load python/3.11.6
-
-mkdir -p "$MYSCRATCH/quokka2s_uv_cache" "$MYSCRATCH/quokka2s_installation_temp"
-export UV_CACHE_DIR="$MYSCRATCH/quokka2s_uv_cache"
-export TMPDIR="$MYSCRATCH/quokka2s_installation_temp"
-
-uv venv --python "$(command -v python)"
-source .venv/bin/activate
-uv pip install -r requirements.txt
-uv pip check
-export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
-python -c 'import quokka2s, yt; print(quokka2s.__file__); print(yt.__version__)'
-```
-
-`UV_CACHE_DIR` keeps reusable downloads and builds on scratch; `TMPDIR` holds
-installation working files. These settings concern package installation, not
-simulation inputs or processed results. The locked yt dependency is built from
-a Git commit, so its first source build needs Git and C/C++ build tools in the
-module environment. Cached builds can be reused.
-
-The project itself is not installed: commands read the current `src/` through
-`PYTHONPATH`. In each later terminal session or batch-job shell, return to the
-repository root and activate that same environment:
+From the repository root, use the site's Python 3.11.6 interpreter:
 
 ```bash
 module load python/3.11.6
-source .venv/bin/activate
+uv sync --locked --extra process --python "$(command -v python)"
 export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
 ```
 
-The printed `quokka2s` path must point into this checkout's `src/`; do not
-install an editable copy or mix in an old conda environment. Installation needs
-internet access for the pinned yt source and dependencies. Complete it before
-submitting a compute job; the job does not need to install anything.
+uv creates `.venv` and installs the versions in `uv.lock`. No manual environment
+activation or installation of `quokka2s` is needed. Python imports the current
+checkout's `src/` through `PYTHONPATH`. The processing lock preserves the
+previously validated dependency versions and yt commit; the uv project commands
+still need validation on Setonix.
 
-Repeat the scratch-cache exports and `uv pip install -r requirements.txt` only
-when installing an updated dependency lock. Source changes are used directly
-on the next run. `pyproject.toml` maintains the direct dependencies; the lock
-also includes their transitive dependencies. See
-[dependency setup and maintenance](usage.md#source-environment-and-dependencies)
-for saved-products-only installation and intentional lock updates.
+Complete `uv sync` before submitting a compute job. Its first yt source build
+needs internet access, Git and C/C++ build tools. Processing and plotting use
+`uv run --no-sync`, so they do not install or resolve dependencies on compute
+nodes. After pulling a changed lockfile, repeat the same sync command.
+
+In later terminal sessions, return to the repository root and run:
+
+```bash
+module load python/3.11.6
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
+```
+
+Then use the process and plot commands below. For plotting-only environments,
+optional table-building dependencies and lock maintenance, see
+[the usage guide](usage.md#source-environment-and-dependencies).
 
 ## 3. Set the inputs
 
@@ -214,7 +193,7 @@ unchanged until the job finishes.
 set -e
 module load python/3.11.6
 cd "$MYSOFTWARE/quokka_postprocess_3D"
-source .venv/bin/activate
+export PATH="$HOME/.local/bin:$PATH"
 export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
 
 # The YAML owns batch/spectral concurrency; keep numerical libraries at one.
@@ -226,11 +205,9 @@ export NUMEXPR_NUM_THREADS=1
 export BLIS_NUM_THREADS=1
 export PYTHONUNBUFFERED=1
 export MPLBACKEND=Agg
-export MPLCONFIGDIR="$MYSCRATCH/quokka2s_matplotlib"
-mkdir -p "$MPLCONFIGDIR"
 
-srun --ntasks=1 --cpus-per-task=8 python src/quokka2s/process_snapshot.py
-srun --ntasks=1 --cpus-per-task=8 python src/quokka2s/plot_emission_results.py
+srun --ntasks=1 --cpus-per-task=8 uv run --no-sync python src/quokka2s/process_snapshot.py
+srun --ntasks=1 --cpus-per-task=8 uv run --no-sync python src/quokka2s/plot_emission_results.py
 ```
 
 The eight requested CPU cores allow the configured two concurrent batches,
@@ -252,7 +229,7 @@ If you already have a suitable interactive CPU allocation with the same
 environment and thread settings, the direct command remains:
 
 ```bash
-python src/quokka2s/process_snapshot.py
+uv run --no-sync python src/quokka2s/process_snapshot.py
 ```
 
 The snapshot name is taken from the supplied `dataset` path. Process saves to
@@ -284,10 +261,10 @@ Choose either location below.
 Keep the same shared YAML and run:
 
 ```bash
-python src/quokka2s/plot_emission_results.py
+uv run --no-sync python src/quokka2s/plot_emission_results.py
 ```
 
-Use the same activated environment as process. Plot reads this job and
+Use the same uv environment as process. Plot reads this job and
 snapshot's selected full-box or region `processed/` directory and writes the
 sibling `figures/` and `figures_titled/` directories. Each contains separate `png/` and `pdf/`
 subdirectories. Set `titled_figures: false` to omit the titled version.
@@ -330,9 +307,9 @@ settings alone; it does not read the snapshot.
 Then run:
 
 ```bash
-source .venv/bin/activate
+export PATH="$HOME/.local/bin:$PATH"
 export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
-python src/quokka2s/plot_emission_results.py
+uv run --no-sync python src/quokka2s/plot_emission_results.py
 ```
 
 Wait for the download to finish successfully before plotting. If you used a
@@ -345,3 +322,11 @@ Figures are saved under `output/sigma13.v2/plt0655228/figures/` and
 For a region, both figure directories are inside its region folder.
 Transfer results to local or long-term storage after processing: scratch is
 temporary storage and is subject to Pawsey's purge policy.
+
+## Optional installation troubleshooting
+
+uv chooses its cache and temporary storage automatically. If installation
+actually fails because the default storage is full or unavailable, choose a
+writable cache with `UV_CACHE_DIR`; change `TMPDIR` only for a temporary-storage
+error. These are storage workarounds, not required setup steps. The Python
+environment stays in `.venv`. See [uv cache settings](https://docs.astral.sh/uv/concepts/cache/).

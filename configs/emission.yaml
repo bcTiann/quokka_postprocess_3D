@@ -21,7 +21,7 @@ spectral_workers: 3  # Up to 2 x 3 spectral-integration threads in total.
 titled_figures: true
 image_downsample_factor: 1
 # To select factor 2, first prepare it without rereading the simulation:
-# python -m quokka2s.prepare_emission_results --image-downsample-factor 2
+# uv run --no-sync python -m quokka2s.prepare_emission_results --image-downsample-factor 2
 
 # Explicit bundled inputs, relative to this YAML file.
 # DESPOTIC is the validated expanded 55 x 60 x 64 interpolated table.

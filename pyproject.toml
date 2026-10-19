@@ -3,8 +3,7 @@ name = "quokka2s"
 version = "0.1.0"
 requires-python = ">=3.11"
 
-# Maintain direct dependencies here. Generate the complete processing lock with:
-# uv pip compile pyproject.toml --extra process --python-version 3.11 --universal -o requirements.txt
+# Maintain direct dependencies here; uv.lock records resolved versions.
 # These are the numerical versions used by the validated process and plot runs.
 # Plotting saved products does not require yt or the optional table solver.
 dependencies = [
@@ -22,8 +21,7 @@ process = [
     "yt @ git+https://github.com/yt-project/yt@fd4cf99963cdebcd0c578dc2e5ab8dea77be6437",
 ]
 
-# Install third-party table-building dependencies without installing this project:
-# uv pip install -r pyproject.toml --extra process --extra tables -c requirements.txt
+# Optional solver environment: uv sync --locked --extra process --extra tables
 # Prebuilt-table processing does not import the chemistry solver or joblib.
 # DESPOTIC reports version 2.2 on its official Bitbucket master, but 2.2 was
 # never published to PyPI (whose latest release is 2.1 and predates the GOW
@@ -38,3 +36,7 @@ tables = [
 [tool.uv]
 # Run the checkout through PYTHONPATH=src; install only third-party dependencies.
 package = false
+
+[tool.uv.extra-build-dependencies]
+# The pinned setup.py imports DESPOTIC and these libraries to read its version.
+despotic = ["numpy==2.2.6", "scipy==1.16.3"]
