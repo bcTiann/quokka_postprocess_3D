@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+import time
 
 from quokka2s.emission_results import EmissionResults, read_emission_results
 from quokka2s.figures.gas_phase_spectra import (
@@ -47,6 +48,7 @@ def draw_emission_products(
         for key in LINE_ORDER
     }
 
+    print('Plot: preparing Matplotlib (the first run may build its font cache)...', flush=True)
     import matplotlib
     matplotlib.use("Agg")
 
@@ -55,6 +57,7 @@ def draw_emission_products(
         destinations.append(("titled", Path(titled_output_dir), True))
     paths = {}
     for style, output, titled in destinations:
+        print(f'Figures ({style}): {output}', flush=True)
         image_paths = plot_line_images(
             images=images,
             output=output,
@@ -82,6 +85,8 @@ def draw_emission_products(
             "spectra": spectrum_paths,
             "gas_phases": phase_paths,
         }
+        file_count = len(image_paths) + len(spectrum_paths) + len(phase_paths)
+        print(f'Figures ({style}): saved {file_count} files.', flush=True)
     return paths
 
 
@@ -102,23 +107,31 @@ def main(argv=None) -> None:
         help='Shared emission YAML file (default: configs/emission.yaml)',
     )
     config_path = parser.parse_args(argv).config
+    started = time.perf_counter()
+    print(f'Plot configuration: {config_path}', flush=True)
     try:
         config = load_plot_config(config_path)
     except (ValueError, OSError) as exc:
         parser.error(str(exc))
+    print(f'Plot: reading saved numerical products from {config.products}', flush=True)
     products = read_emission_results(
         directory=config.products,
         image_downsample_factor=config.image_downsample_factor,
     )
+    line_count = len(products.images.line_keys)
+    print(f'Plot: loaded {line_count} lines. No simulation or table lookup is needed.', flush=True)
     # raw_luminosity selects saved erg/s/(km/s) instead of light per area.
     # It does not select intrinsic versus dust-attenuated emission.
-    draw_emission_products(
+    paths = draw_emission_products(
         products=products,
         output_dir=config.output_dir,
         titled_output_dir=config.titled_output_dir,
         per_projected_area=not config.raw_luminosity,
         allow_partial=config.allow_partial,
     )
+    file_count = sum(len(files) for groups in paths.values() for files in groups.values())
+    elapsed_seconds = time.perf_counter() - started
+    print(f'Plot finished: saved {file_count} files in {elapsed_seconds:.1f} s.', flush=True)
 
 
 if __name__ == "__main__":

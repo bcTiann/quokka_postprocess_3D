@@ -20,8 +20,8 @@ In later shells, return to the repository and use `uv run --no-sync process`
 or `uv run --no-sync plot`. These commands use the prepared environment without
 installing or updating dependencies during scientific work. The other Python
 tools below also work in this environment without an import-path export. Repeat
-sync after pulling changes to project metadata or the lockfile. On Setonix,
-the documented Slurm script loads the module and selects uv automatically.
+sync after pulling changes to project metadata or the lockfile. For Setonix
+environment commands, see the [Setonix guide](setonix.md).
 
 The base dependencies support saved-products plotting; `process` adds the
 pinned yt reader, and `tables` adds the optional DESPOTIC solver and build tools.

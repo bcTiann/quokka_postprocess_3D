@@ -30,6 +30,7 @@ def plot_line_images(
 
     image_paths = []
     for line_index, key in enumerate(images.line_keys):
+        print(f'  Line images [{line_index + 1}/{len(images.line_keys)}]: {key}', flush=True)
         norm = None
         if images.line_has_emission[line_index]:
             minimum, maximum = images.color_limits_erg_s[line_index]

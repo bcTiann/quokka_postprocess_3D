@@ -18,6 +18,8 @@ automatically installs the checkout in editable mode and registers the two
 commands from `[project.scripts]` in `pyproject.toml`. They call the existing
 `process_snapshot.main()` and `plot_emission_results.main()` functions directly.
 No activation, import-path export, or manual editable installation is needed.
+Plot reports the saved-results directory, each line being drawn, output paths,
+and the final file count and elapsed time; these messages do not alter products.
 The equivalent `uv run --no-sync python -m quokka2s.process_snapshot` and
 `uv run --no-sync python -m quokka2s.plot_emission_results` commands remain useful
 for Python debugging.

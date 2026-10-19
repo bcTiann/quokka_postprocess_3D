@@ -33,7 +33,8 @@ def plot_line_spectra(
     else:
         ylabel = r"$dL/dv$ [erg s$^{-1}$ (km s$^{-1}$)$^{-1}$]"
     spectrum_paths = []
-    for key in spectra.line_keys:
+    for line_index, key in enumerate(spectra.line_keys, start=1):
+        print(f'  Line spectra [{line_index}/{len(spectra.line_keys)}]: {key}', flush=True)
         intrinsic = spectra.for_line(
             line=key,
             dust_state="intrinsic",
