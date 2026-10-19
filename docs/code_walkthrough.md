@@ -5,20 +5,21 @@ Read what each call receives and returns before opening the function itself.
 Process and plot have independent entry points:
 
 ```bash
-python -m quokka2s.process_snapshot
-python -m quokka2s.plot_emission_results
+uv run --no-sync python -m quokka2s.process_snapshot
+uv run --no-sync python -m quokka2s.plot_emission_results
 ```
 
 From the repository root, both read the default `configs/emission.yaml`.
 Use `--config PATH` to select another file. Each runs directly;
 there is no shared dispatcher.
 
-First activate the uv environment and put the checkout on the import path:
-`source .venv/bin/activate` and
+First prepare the environment with `uv sync --locked --extra process` and put
+the checkout on the import path with
 `export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"`.
-No installation of `quokka2s` itself is needed. The direct-file forms
-`python src/quokka2s/process_snapshot.py` and
-`python src/quokka2s/plot_emission_results.py` use the same entry points.
+No activation or installation of `quokka2s` itself is needed. Use
+`uv run --no-sync python src/quokka2s/process_snapshot.py` and
+`uv run --no-sync python src/quokka2s/plot_emission_results.py` for direct-file
+entry points, or the equivalent module commands above.
 
 The first three settings select one snapshot and its results:
 
@@ -669,7 +670,7 @@ moments, including emission outside the saved channel window. Both full and
 window moments remain available in the saved numerical products.
 
 For an optional new image resolution, run
-`python -m quokka2s.prepare_emission_results --image-downsample-factor 2` once.
+`uv run --no-sync python -m quokka2s.prepare_emission_results --image-downsample-factor 2` once.
 It sums neighbouring native pixels, saves their own edges and colour limits
 in a separate file, and leaves native image values unchanged. The same command
 without a factor prepares older saved products from their accumulated arrays;
@@ -735,7 +736,7 @@ requires the exact implementation identity.
 
 ### Reusable table-input survey
 
-`python -m quokka2s.check_table_input_ranges` reads the same emission YAML.
+`uv run --no-sync python -m quokka2s.check_table_input_ranges` reads the same emission YAML.
 Follow its two distinct actions:
 
 1. `table_input_survey.load_or_measure_input_ranges()` reuses completed statistics or calls
@@ -790,7 +791,7 @@ native XY column with complete z physics. Omitted selected columns make the
 scan partial. The emission YAML's `slab_nx` and `max_slabs` control emission
 processing, not this range scan.
 
-For several jobs, `python -m quokka2s.check_job_table_input_ranges` reads
+For several jobs, `uv run --no-sync python -m quokka2s.check_job_table_input_ranges` reads
 `configs/table_input_survey.yaml`. `source_root` contains the configured job
 directories, and each job contains `plt` plus digits snapshot directories.
 Follow its actions in this order:

@@ -4,10 +4,9 @@ The repository has one current emission workflow. Process reads the snapshot
 and fixed lookup tables; plot reads the saved numerical products. Table-building
 tools and additional paper figures have their own commands.
 
-`pyproject.toml` is the single maintained list of direct dependencies.
-The generated `requirements.txt` locks the complete processing environment,
-including the tested yt source commit. uv installs those third-party packages;
-the checkout runs directly through `PYTHONPATH=src`, without installing
+`pyproject.toml` declares dependencies; `uv.lock` records the resolved versions
+and source identities. uv creates `.venv` with `uv sync` and selects it for
+`uv run`. The checkout imports through `PYTHONPATH=src`, without installing
 `quokka2s` itself. Optional `process` and `tables` dependencies keep snapshot
 reading and table solving separate from plotting saved products.
 
