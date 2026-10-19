@@ -6,20 +6,48 @@ the environment, process a snapshot, and plot on Setonix or locally.
 ## 1. Clone
 
 ```bash
-git clone https://github.com/bcTiann/quokka_postprocess_3D.git
+git clone --branch codex/cloudy-emission-backup https://github.com/bcTiann/quokka_postprocess_3D.git
 cd quokka_postprocess_3D
 ```
 
 ## 2. Configure the environment
 
-Create a Conda environment with Python 3.11, the version used to validate this pipeline:
+Install [uv](https://docs.astral.sh/uv/getting-started/installation/) if it is
+not available. The tested uv version is 0.11.31:
 
 ```bash
-conda create -n quokka2s python=3.11 pip
-conda activate quokka2s
-python -m pip install -r requirements.txt
-python -m pip install -e .
+curl -LsSf https://astral.sh/uv/0.11.31/install.sh | sh
+export PATH="$HOME/.local/bin:$PATH"
 ```
+
+On Setonix, use the [software-directory installation](docs/setonix.md#2-configure-the-environment)
+instead. From the repository root, create a Python 3.11 environment:
+
+```bash
+uv venv --python 3.11
+source .venv/bin/activate
+uv pip install -r requirements.txt
+uv pip check
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
+```
+
+`pyproject.toml` is the maintained list of direct dependencies;
+`requirements.txt` is its generated processing lock, including the tested yt
+source commit and transitive dependencies. The project itself is not installed:
+Python loads the checkout's `src/` through `PYTHONPATH`. The first yt source
+build needs Git and C/C++ build tools; uv can reuse its cached build afterward.
+
+For later terminal sessions, return to the repository root and run only:
+
+```bash
+source .venv/bin/activate
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
+```
+
+Repeat `uv pip install -r requirements.txt` when the dependency lock changes.
+Source-code changes are used directly on the next run. For a smaller environment
+that only plots saved products, and for lock regeneration, see
+[dependency setup and maintenance](docs/usage.md#source-environment-and-dependencies).
 
 ## 3. Set the inputs
 
@@ -29,7 +57,8 @@ root. The snapshot and outputs can also be stored outside the repository.
 | Input | Default path | Provided by |
 |---|---|---|
 | Simulation snapshot | `inputs/snapshots/plt0655228/` | The user |
-| DESPOTIC table | `inputs/tables/despotic/interpolated.npz` | Included in Git |
+| Expanded DESPOTIC table | `inputs/tables/despotic/interpolated.npz` | Included in Git; current default |
+| Previous DESPOTIC table | `inputs/tables/despotic/interpolated_old.npz` | Included in Git; optional comparison |
 | Cloudy table | `inputs/tables/cloudy/emission.npz` | Included in Git |
 
 Edit the first three settings in [configs/emission.yaml](configs/emission.yaml):
@@ -58,7 +87,19 @@ store the snapshot and processed results under `$MYSCRATCH`. Use the
 [Setonix input settings](docs/setonix.md#3-set-the-inputs)
 to set these paths in `configs/emission.yaml`.
 
-The bundled tables are for the `plt0655228` reference snapshot.
+The YAML explicitly selects the bundled DESPOTIC, Cloudy and dust files. The
+default DESPOTIC table is the validated expanded **55 × 60 × 64** interpolated
+grid, also used for the completed `sigma13/plt0008703` process. Its file is
+about 62 MiB. The previous 35 × 35 × 53 table is preserved byte-for-byte as
+`interpolated_old.npz`; select it explicitly only to reproduce an older run.
+Cloudy and the dust table are unchanged. Neither table needs rebuilding.
+
+The expanded table retains **184 unavailable nodes** outside interpolation
+support; it does not extrapolate or impose a DESPOTIC-temperature cutoff.
+Coverage and per-line missingness still need checking for a new snapshot.
+In particular, the sigma13 `plt0000000` region test exceeded the existing
+Cloudy density axis; the DESPOTIC expansion does not fix that limitation.
+
 Snapshot grid dimensions are read from the data; processing supports
 three-dimensional uniform level-0 grids at other resolutions too. A full
 `512 × 512 × 4096` grid produces native `512 × 512` luminosity images.
@@ -70,10 +111,18 @@ before processing; grid support does not imply that the bundled axes cover it.
 Run from the repository root:
 
 ```bash
-python -m quokka2s.process_snapshot
+python src/quokka2s/process_snapshot.py
 ```
 
+On Setonix, run this on an allocated CPU compute node through Slurm; the
+[Setonix guide](docs/setonix.md#4-process) includes a batch example. Start with
+`x_index_range: [64, 66]` and `y_index_range: [64, 66]` on a suitable snapshot
+to check the setup. Set both to `null` for a subsequent full-box run. The test
+keeps the full z column and produces a 2 × 2 image; it does not certify full-box
+table coverage.
+
 Both commands read [configs/emission.yaml](configs/emission.yaml).
+Use `--config /path/to/emission.yaml` with either command to select another file.
 Default numerical results: `output/sigma13.v2/plt0655228/processed/`.
 For another snapshot, change `dataset`; for another simulation setup, also
 change `jobname`. Processing does not overwrite an existing result directory.
@@ -81,7 +130,7 @@ change `jobname`. Processing does not overwrite an existing result directory.
 ## 5. Plot
 
 ```bash
-python -m quokka2s.plot_emission_results
+python src/quokka2s/plot_emission_results.py
 ```
 
 Plot selects the saved snapshot using `results_dir`, `jobname`, and the
@@ -118,7 +167,9 @@ output/
 ## Example outputs
 
 Hα luminosity images for the complete `plt0655228` snapshot, viewed along
-the z axis. Both images use the same colour scale.
+the z axis. Both images use the same colour scale. These existing reference
+figures were saved with the previous table; adopting the expanded default
+does not regenerate them or other saved products.
 
 | Intrinsic | Dust attenuated |
 |---|---|

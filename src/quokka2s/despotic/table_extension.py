@@ -8,6 +8,12 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from quokka2s.despotic.solver_settings import (
+    CHECKED_CHEMISTRY_SOURCE_SHA256,
+    GOW_REFRESH_SOURCE_SHA256,
+    REFERENCE_CHEMISTRY_SOURCE_SHA256,
+)
+
 from quokka2s.despotic.table_data import DespoticTable, ExplicitGrid
 from quokka2s.despotic.table_files import load_table
 
@@ -216,11 +222,14 @@ def validate_reuse_settings(
     current_metadata: Mapping[str, object],
     species_specs: Sequence[SpeciesSpec] | None = None,
 ) -> None:
-    """Require the old point solutions to use the current solver and species.
+    """Require the same physical/numerical model before copying raw successes.
 
     current_metadata is returned by validated_solver_metadata(); species_specs
     is the builder's SpeciesSpec sequence. Snapshot bounds, sampling and reuse
     records may differ because they do not change one point's physical solve.
+    The reviewed native/prepared fixed-T integrations are equivalent models.
+    Their real source identities remain in metadata; checkpoints still require
+    exact execution-source identities. Unknown source pairs are not accepted.
     Raises ValueError on a missing/different solver setting; returns None.
     """
     expected_modes = (
@@ -235,10 +244,22 @@ def validate_reuse_settings(
     source_metadata = source_table.build_metadata
     if source_metadata is None:
         raise ValueError("Raw table has no solver settings to verify before reuse")
+    source_execution = source_metadata.get("execution_implementation")
+    if source_execution is None:
+        reference_source = source_metadata.get("despotic", {}).get("chemistry_source_sha256")
+        if reference_source != REFERENCE_CHEMISTRY_SOURCE_SHA256:
+            raise ValueError("Raw table is missing its fixed-temperature implementation identity")
+    elif source_execution != current_metadata.get("execution_implementation"):
+        raise ValueError("Raw table uses a different fixed-temperature implementation")
     for name in SOLVER_METADATA_FIELDS:
         if name not in source_metadata or name not in current_metadata:
             raise ValueError(f"Missing DESPOTIC reuse setting: {name}")
-        if source_metadata[name] != current_metadata[name]:
+        source_settings = source_metadata[name]
+        current_settings = current_metadata[name]
+        if name == "despotic":
+            source_settings = reusable_despotic_model_settings(source_settings)
+            current_settings = reusable_despotic_model_settings(current_settings)
+        if source_settings != current_settings:
             raise ValueError(f"DESPOTIC reuse settings differ: {name}")
 
     if species_specs is not None:
@@ -251,3 +272,24 @@ def validate_reuse_settings(
         ]
         if actual_species != expected_species:
             raise ValueError("DESPOTIC reuse species or emitter roles differ")
+
+
+def reusable_despotic_model_settings(settings):
+    """Select model settings after checking the two reviewed integration sources.
+
+    settings is the recorded 'despotic' metadata mapping. Only the known native
+    checked loop and its fixed-T preparation hook may share old raw solutions.
+    No general source-hash mismatch is ignored; numerical settings are checked
+    separately by validate_reuse_settings().
+    """
+    approved_chemistry_sources = (
+        REFERENCE_CHEMISTRY_SOURCE_SHA256,
+        CHECKED_CHEMISTRY_SOURCE_SHA256,
+    )
+    if settings.get("gow_source_sha256") != GOW_REFRESH_SOURCE_SHA256:
+        raise ValueError("Unreviewed GOW source cannot reuse raw table solutions")
+    if settings.get("chemistry_source_sha256") not in approved_chemistry_sources:
+        raise ValueError("Unreviewed chemistry source cannot reuse raw table solutions")
+    model_settings = dict(settings)
+    del model_settings["chemistry_source_sha256"]
+    return model_settings

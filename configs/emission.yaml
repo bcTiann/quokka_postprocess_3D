@@ -23,8 +23,9 @@ image_downsample_factor: 1
 # To select factor 2, first prepare it without rereading the simulation:
 # python -m quokka2s.prepare_emission_results --image-downsample-factor 2
 
-# Bundled DESPOTIC, Cloudy and dust tables are selected automatically.
-# Optional overrides, relative to this YAML file:
-# despotic_table: ../inputs/tables/despotic/interpolated.npz
-# cloudy_table: ../inputs/tables/cloudy/emission.npz
-# dust_opacity_table: ../vendor/draine/kext_albedo_WD_MW_3.1_60_D03.all
+# Explicit bundled inputs, relative to this YAML file.
+# DESPOTIC is the validated expanded 55 x 60 x 64 interpolated table.
+# The previous table is kept as interpolated_old.npz for reproducibility.
+despotic_table: ../inputs/tables/despotic/interpolated.npz
+cloudy_table: ../inputs/tables/cloudy/emission.npz
+dust_opacity_table: ../vendor/draine/kext_albedo_WD_MW_3.1_60_D03.all

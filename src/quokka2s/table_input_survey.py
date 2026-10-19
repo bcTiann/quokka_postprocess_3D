@@ -12,9 +12,10 @@ from quokka2s.table_input_statistics import SnapshotInputSettings, scan_snapshot
 class SnapshotInputSurvey:
     """Own one snapshot's source metadata and guarded result-file locations.
 
-    config names a snapshot and its tile/batch sizes. No cell data or emission
-    tables are loaded at construction. Completed statistics can be checked in
-    the coordinator before a separate worker opens the snapshot.
+    config names a snapshot, batch size and optional native-column limit.
+    No cell data or emission tables are loaded at construction. Completed
+    statistics can be checked in the coordinator before a separate worker
+    opens the snapshot.
     """
 
     def __init__(
@@ -51,8 +52,9 @@ class SnapshotInputSurvey:
     def measure_input_ranges(self) -> dict:
         """Read this snapshot, calculate scalar ranges, and save its own JSON.
 
-        Cell arrays exist only for the current full-z tile. The reader opens source
-        files read-only; source sizes/mtimes are checked again before saving.
+        Cell arrays exist only for the current native z layer; small boundary
+        carries retain the complete-column sums. The reader opens source files
+        read-only; source sizes/mtimes are checked again before saving.
         No table comparison, CSV or shared summary is written here.
         """
         from yt.config import ytcfg
@@ -67,9 +69,8 @@ class SnapshotInputSurvey:
         started = time.monotonic()
         statistics = scan_snapshot_input_ranges(
             snapshot=snapshot,
-            tile_ny=self.config.tile_ny,
             query_chunk=self.config.query_chunk,
-            max_tiles=self.config.max_tiles,
+            max_columns=self.config.max_columns,
             progress_label=f"{self.config.jobname}/{self.config.snapshot_name}",
         )
         if snapshot_file_state(dataset=self.config.dataset) != self.source_state:

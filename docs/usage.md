@@ -3,6 +3,49 @@
 Use the [README](../README.md) for cloning, environment setup, inputs, and the
 two main commands. Run the commands below from the repository root.
 
+## Source environment and dependencies
+
+uv creates the `.venv` environment and installs third-party packages. The
+`quokka2s` project itself is not installed; Python imports the source checkout
+through `PYTHONPATH`. After following the initial setup in the README, each
+new terminal session needs:
+
+```bash
+source .venv/bin/activate
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
+```
+
+`pyproject.toml` is the single maintained list of direct dependencies. Its base
+list supports saved-products plotting; the `process` extra adds the pinned yt
+snapshot reader, and `tables` adds the DESPOTIC solver and build tools.
+`requirements.txt` is generated from the base plus `process` dependencies and
+locks their transitive dependencies too. Do not maintain its package list by
+hand.
+
+For a new environment used only to plot saved products, replace the full
+processing installation with:
+
+```bash
+uv pip install -r pyproject.toml -c requirements.txt
+```
+
+This installs the base dependencies at the locked versions without the
+`process` or `tables` extra. Keep the same activation and `PYTHONPATH` settings.
+The table-building section below supplies the separate installation command
+when those tools are needed.
+
+After intentionally changing the direct dependency list, regenerate the lock:
+
+```bash
+uv pip compile pyproject.toml --extra process --python-version 3.11 --universal -o requirements.txt
+```
+
+Keep the existing lock when regenerating so compatible versions stay pinned.
+Upgrade dependencies deliberately, then review the lock diff and validate the
+new environment. For normal process and plot setup, install from the saved
+lock rather than regenerating it for each run. The numerical versions and yt commit remain the
+validated choices unless an upgrade is explicitly being tested.
+
 ## Shared configuration
 
 Process and plot both read [configs/emission.yaml](../configs/emission.yaml).
@@ -47,9 +90,20 @@ output/
 
 The two bundled tables are selected automatically:
 `inputs/tables/despotic/interpolated.npz` and
-`inputs/tables/cloudy/emission.npz`. These defaults refer to the installed
-repository, even when the YAML file is elsewhere. Advanced configurations
-may set `despotic_table`, `cloudy_table`, or `dust_opacity_table` explicitly.
+`inputs/tables/cloudy/emission.npz`. DESPOTIC now supplies the validated expanded
+55 × 60 × 64 interpolated table; the previous table is retained unchanged at
+`inputs/tables/despotic/interpolated_old.npz`. Cloudy and the dust table are
+unchanged. The expanded DESPOTIC table still has 184 unavailable nodes outside
+the finite-support hull. Coordinate coverage alone does not guarantee a usable
+interpolation stencil or physical accuracy.
+
+The supplied YAML explicitly names `despotic_table`, `cloudy_table`, and
+`dust_opacity_table` using paths relative to `configs/`. If you copy that YAML
+elsewhere, update these paths, use absolute paths, or remove those three entries
+to use the source checkout's bundled defaults. Omitted table settings stay
+anchored to the checkout even when the YAML is elsewhere. To reproduce an old
+run, explicitly select `interpolated_old.npz` and use a new results root; changing
+the table does not update existing saved products.
 
 The supplied YAML uses repository-local input and output paths. To store data
 elsewhere, set `dataset` and `results_dir` to the desired locations. The
@@ -76,7 +130,7 @@ the region folder and set the same x/y ranges in the shared YAML.
 |---|---|
 | Inside a YAML configuration | Directory containing that YAML file |
 | Command-line options, including `--config` | Current terminal working directory |
-| Bundled reference data | Repository containing the installed editable package |
+| Bundled reference data | Source checkout containing `src/quokka2s/` |
 
 Paths used by each command are resolved to absolute `Path` objects at the entry
 point; calculations receive those resolved paths. The YAML file retains its
@@ -101,6 +155,14 @@ Omitted settings use the same defaults shown in the shared YAML:
 | `query_chunk` | Maximum cells in one table-query batch | 1,000,000 |
 | `chunk_workers` | Concurrent query batches within the loaded slab | 2 |
 | `spectral_workers` | Spectral-integration threads per query batch | 3 |
+
+Emission processing internally shares native fields across up to four adjacent
+selected slabs. This leaves `slab_nx`, batch order and numerical products
+unchanged. The shared converted fields retain at most 3 GiB of value arrays;
+this is separate from total process RSS, address-space limits and any
+cache-inclusive user memory quota. Smaller groups or a direct single-slab read
+are used when the selected geometry would exceed that value limit. Only actual
+selected windows are grouped, including a diagnostic `max_slabs` selection.
 
 The worker counts multiply: this configuration permits up to 2 × 3 spectral
 threads. Reading slabs remains sequential. More workers do not necessarily
@@ -136,8 +198,8 @@ complete original z column.
 Run both commands with the same YAML:
 
 ```bash
-python -m quokka2s.process_snapshot
-python -m quokka2s.plot_emission_results
+python src/quokka2s/process_snapshot.py
+python src/quokka2s/plot_emission_results.py
 ```
 
 This example saves under
@@ -183,6 +245,18 @@ thermal Gaussian, including emission outside those channels.
 `line_sigma_window_kms` uses the saved channels only. Both are saved with their
 centroids; figure legends use the full-profile sigma. Luminosity outside the
 window is recorded separately.
+
+`emission_report.json` also saves `cold_gas_luminosity_by_despotic_temperature`
+for Halpha (`halpha`), HI (`hi21`) and CII (`cii`). Each threshold selects cells
+with `T_QUOKKA < 3000 K` and finite `T_DESPOTIC >= threshold`, using thresholds
+of 10,000, 40,000, 100,000 and 1,000,000 K. These selections overlap. For each
+line and dust state (`intrinsic`, `attenuated`), it saves the selected luminosity,
+the total luminosity and their ratio, as a fraction from 0 to 1. The denominator
+includes both cold and hot branches and all velocities in the processed region;
+it is not restricted to the saved spectral window. Each line skips only its own
+missing emission. A zero total luminosity gives a `null` fraction. This diagnostic
+does not exclude high-temperature cells or change their emission. Older results
+do not contain this section; plotting does not require it.
 
 Processing reads one x slab at a time, queries table batches within it, and
 adds their luminosities to the image and spectrum arrays. It discards the
@@ -252,7 +326,7 @@ DESPOTIC dependency, apply the checked patches, measure the snapshot's table
 coordinates, then build and interpolate:
 
 ```bash
-python -m pip install -e ".[tables]"
+uv pip install -r pyproject.toml --extra process --extra tables -c requirements.txt
 python tools/despotic/patch_gow_composition.py
 python tools/despotic/install_checked_gow_integration.py
 python tools/despotic/measure_snapshot_domain.py
@@ -262,6 +336,15 @@ python -m quokka2s.despotic.build_table \
   --workers 1
 python -m quokka2s.despotic.interpolate_failed
 ```
+
+Run the integration installer again after updating an existing table-building
+environment. It upgrades the reviewed checked loop to prepare one reaction
+callable per fixed-temperature integration attempt, including retries.
+The callable prepares fixed temperature, density and radiation terms once,
+reuses private abundance mappings and evaluates the current composition and
+shielding on every call. The initial state, solver tolerances and convergence
+checks stay unchanged.
+Prebuilt-table processing does not import this optional chemistry code.
 
 `--snapshot-domain` is required: all three axis endpoints come from the
 snapshot measurement. The current builder uses 35 × 35 × 53 logarithmic
@@ -302,6 +385,9 @@ option. It copies complete directly solved raw states, including temperature,
 abundances, line fields and diagnostics. It does not accept an interpolated
 source, retry old failed coordinates, or treat missing values as zero.
 Source and current solver settings/species must match.
+The reviewed native and prepared fixed-temperature implementations may reuse
+the same raw successes. Actual implementation hashes remain recorded; unknown
+implementations and changes to physical or numerical settings are rejected.
 
 The new checkpoint directory saves newly calculated points, including failed
 attempts. Repeating the same command resumes them without solving them again.
@@ -309,6 +395,8 @@ The old source table and old checkpoint directory are not modified. Different
 axes, source-table contents or solver settings require a new checkpoint
 directory. The original measured snapshot domain remains historical metadata;
 the chosen extended endpoints are saved separately as `table_domain`.
+Changing the reaction implementation also requires a new checkpoint directory:
+checkpoint reuse checks the actual source identity, not only the physical model.
 
 After building, apply the normal convex-hull filling to the new raw table:
 
@@ -343,13 +431,18 @@ Select a job/snapshot in the same `configs/emission.yaml`, then run:
 python -m quokka2s.check_table_input_ranges
 ```
 
-The command uses `Snapshot.read_column_tile()` to read y strips across the
-selected x range, always retaining complete z columns and periodic x/y
-neighbours. `--tile-ny 8` (the default) selects eight y layers per tile. This
-follows the file's x-fastest storage order. The `nH` conversion, column and
-velocity-gradient definitions are the same as process. Emission processing
-retains its x-slab order; its YAML settings `slab_nx` and `max_slabs` do not
-control the range scan. The range scan records DESPOTIC inputs for all cells
+The command uses `NativeBlockRangeReader`. An ascending density pass records
+exact cumulative columns at each selected XY column's z-block faces. The
+second pass visits z from top to bottom, processing all selected XY columns
+at each z. Native fields are read once per z layer and reused for neighbouring
+columns, then released. Each layer's inputs use the original column carries
+and periodic velocity neighbours. Every sightline retains complete z-column
+physics without a full-snapshot field array. The `nH` conversion, column and
+velocity-gradient definitions match process, including the order of cumulative
+additions. Emission
+processing retains its six slab fields and x-slab accumulation order; its YAML
+settings `slab_nx` and `max_slabs` do not control the range scan.
+The range scan records DESPOTIC inputs for all cells
 (including hot CO) and Cloudy inputs for
 `T_QUOKKA >= 3000 K`. It does not calculate emission products or query table
 values. Inputs outside the current table are reported rather than rejected.
@@ -375,14 +468,16 @@ field definitions require a new directory, selected with `--output-dir PATH`.
 An interrupted snapshot is scanned again; no full-snapshot field cache is saved.
 
 Optional x/y ranges restrict the survey just as they restrict process; such a
-report describes that region only. `--max-tiles 1` produces an explicitly partial
-diagnostic and cannot certify complete range coverage. For example:
+report describes that region only. `--max-columns 1` limits a diagnostic to one
+native XY block column, still using its complete z depth. If other selected
+columns remain, the result is explicitly partial and cannot certify complete
+range coverage. For example:
 
 ```bash
-python -m quokka2s.check_table_input_ranges --tile-ny 8 --max-tiles 1
+python -m quokka2s.check_table_input_ranges --max-columns 1
 ```
 
-Omit x/y restrictions and `--max-tiles` for a full-snapshot survey.
+Omit x/y restrictions and `--max-columns` for a full-snapshot survey.
 Every output is checked against the resolved source directories, including
 symlink destinations. Snapshot files are only read.
 
@@ -397,7 +492,6 @@ jobs:
   reference: .
 output_dir: ../output/table_input_ranges
 snapshot_workers: 1
-tile_ny: 8
 query_chunk: 1000000
 ```
 
@@ -414,7 +508,7 @@ configuration.
 python -m quokka2s.check_job_table_input_ranges
 ```
 
-The command scans full snapshots using the same complete-z tile reader and
+The command scans full snapshots using the same shared-z native-block reader and
 statistics as the single-snapshot command. By default, one snapshot is scanned
 at a time.
 Set `snapshot_workers: 2` to scan two independent snapshots concurrently;
@@ -422,10 +516,9 @@ each worker uses one calculation thread and saves its own statistics. The
 coordinator reuses completed scans, compares ranges with the tables, and writes
 the shared summaries in inventory order. It does not calculate emission.
 The bundled tables are defaults; optional `despotic_table` and `cloudy_table`
-settings select other tables. `tile_ny: 8` sets y layers per reading tile, and
-`query_chunk` sets cells per in-memory statistics batch. Each tile retains the
-complete selected x range and z depth; the command does not reread files for
-each batch.
+settings select other tables. `query_chunk` sets cells per in-memory statistics
+batch. Batches are views of the current native layer; the command does not
+reread files for each batch.
 
 To scan a small batch with a soft time limit, add:
 
@@ -462,7 +555,8 @@ protected from output writes, and resolved output targets must remain inside
 `output_dir`, including when directories contain symlinks.
 
 Rerunning reuses completed snapshot statistics and compares them with the
-current tables. An interrupted snapshot starts again from its first tile.
+current tables. An interrupted snapshot restarts its density prepass and scans all selected
+z layers again.
 Changed source files or physical definitions are rejected for reuse; choose a
 new output directory rather than mixing old and new statistics.
 Snapshot read failures are recorded and skipped; broken snapshot links, unsafe
@@ -478,9 +572,9 @@ This selects the first snapshot in the inventory, even if its statistics have
 already been saved. To scan the next unfinished snapshot instead, use
 `--max-new-snapshots 1`. Unscanned snapshots remain visible in the summary,
 leaving the survey incomplete. Rerun with the same configuration to continue;
-completed statistics are reused. `max_tiles: 1` instead creates a partial
-diagnostic for each selected snapshot; its extrema cannot certify
-full-snapshot coverage.
+completed statistics are reused. `max_columns: 1` instead limits each selected
+snapshot to one native XY block column. A scan that omits other columns is
+partial; its extrema cannot certify full-snapshot coverage.
 
 ## Header ranges across multiple snapshots
 
@@ -558,3 +652,45 @@ dVdr slices, `--fields tg_final species:CO:lumPerH` to select fields, or
 retain the original display policy of hiding solver-failure nodes, including
 nodes subsequently filled by interpolation. This display mask does not change
 the numerical table used for emission processing.
+
+
+## Cold-gas nH–NH distributions across snapshot jobs
+
+Edit `configs/cold_gas_phase.yaml`: `source_root` names the common simulation
+root, and `jobs` maps readable output names to run directories below that root.
+For example, `sigma13: job41101509-sigma13/run1` selects that run's direct
+`plt` followed by digits directories, in numeric order. `output_dir` belongs
+outside the simulation tree. Paths are relative to the YAML file.
+
+```bash
+python -m quokka2s.prepare_cold_gas_phase
+python -m quokka2s.plot_cold_gas_phase --products output/cold_gas_phases
+```
+
+The preparation command accepts `--config PATH` and `--extension-config PATH`.
+The latter defaults to `configs/despotic_extension.yaml`; its bounds extend the
+original DESPOTIC coordinates at their existing spacing. These two-dimensional
+outlines describe original and expanded table coordinate coverage, including
+an expanded grid that is still being built. They do not claim that every node
+converges or that every simulation cell has reliable emission.
+
+Each worker reads only density and QUOKKA temperature, preserving the exact
+complete positive/negative z columns and their harmonic mean. It selects
+`T_QUOKKA < 3000 K`, saves count/mass histograms and all figure arrays, and never
+queries an emission table. `snapshot_workers` controls independent snapshot
+readers; numerical libraries use one thread per reader. Choose this count from
+actual CPU/memory limits rather than the machine's total CPU count.
+
+Fresh text headers can prove that a snapshot has zero cold cells. Such results
+explicitly report zero payload cells scanned, and leave the unread total gas
+mass and payload validity unknown. Other snapshots retain the full z depth.
+Input opens are read-only, source writes are rejected, and all original file
+sizes/mtimes are checked before/after. Complete caches require the same source,
+physics and bin edges; changing table outlines only rebuilds figure arrays.
+
+Numerical results are saved in `snapshots/JOB/PLT/`, with a separate
+`jobs/JOB/` histogram that sums snapshot populations once each without time
+weighting. Plotting reads these saved arrays and writes English figures in
+`figures/png/` and `figures/pdf/` beneath each result. Each figure shows the cold
+distribution at useful scale and a second view containing both table outlines.
+Use `--weight mass` to draw the saved cold-gas mass fractions instead of counts.

@@ -13,6 +13,13 @@ From the repository root, both read the default `configs/emission.yaml`.
 Use `--config PATH` to select another file. Each runs directly;
 there is no shared dispatcher.
 
+First activate the uv environment and put the checkout on the import path:
+`source .venv/bin/activate` and
+`export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"`.
+No installation of `quokka2s` itself is needed. The direct-file forms
+`python src/quokka2s/process_snapshot.py` and
+`python src/quokka2s/plot_emission_results.py` use the same entry points.
+
 The first three settings select one snapshot and its results:
 
 ```yaml
@@ -74,9 +81,11 @@ The objects group related variables; they are not extra copies of the snapshot:
   bounds. `shape`, cell widths/volume, `cell_count`, and `projected_area_cm2`
   describe the original box. `processing_shape`, `processing_cell_count`,
   `processing_area_cm2`, and `processing_xy_origin` describe the selected region.
-  `snapshot.native_reader` caches file locations and units from yt metadata;
-  it retains no numerical payloads or open maps. `snapshot.read_slab()` copies
-  selected cell fields and derives the six slab arrays.
+  `snapshot.native_reader` caches file locations and units from yt metadata.
+  During processing, its scoped field cache shares converted native fields
+  across up to four adjacent selected slabs. Outside that context it retains
+  no numerical payloads or open maps. `snapshot.read_slab()` still copies the
+  current core fields and derives the same six slab arrays.
 - `emission_calculator` is a `CellEmissionCalculator`. It holds the DESPOTIC
   and Cloudy readers, ten line names, and named dust cross-sections. Each reader
   holds its fixed lookup table. These objects are created once and shared across
@@ -172,17 +181,30 @@ for x_start, x_stop in slab_windows(
 For a selected region, pass its global x bounds instead. The last window may be
 shorter than `slab_nx`; neighbour selection still belongs to `read_slab()`.
 
+Process opens `native_reader.reuse_slab_fields()` around the actual selected
+slab windows, after applying `max_slabs`.
+[slab_field_cache.py](../src/quokka2s/slab_field_cache.py) groups up to four
+adjacent windows and reads their combined x range once, including the original
+periodic x/y neighbours and full z. Each slab receives a read-only view into
+five converted density, temperature and velocity arrays; batches receive only
+the usual six copied core arrays. The cache belongs to the reading thread.
+Its 3 GiB limit counts retained field values, not total process memory.
+Groups shrink when needed; an unshared single window uses the direct reader.
+The context releases retained values on completion or an exception.
+
 Read `read_slab()` from top to bottom as these steps:
 
-1. `snapshot.native_reader.read_slab_fields()` copies selected x/y cells plus
-   one wrapped neighbour on each side, keeping full z.
+1. `snapshot.native_reader.read_slab_fields()` returns selected x/y cells plus
+   one wrapped neighbour on each side, keeping full z. Within a shared group,
+   these are read-only views; direct reads return owned field copies.
 2. `select_core_simulation_fields()` copies core density, QUOKKA temperature
    and vz, removing the x/y neighbours.
 3. `calculate_dust_foreground_column()` calculates the column to the observer.
 4. `calculate_shielding_column()` calculates the +z/-z harmonic-mean column.
 5. `calculate_core_velocity_gradient()` calculates dV/dr using neighbours.
-6. Release the loaded fields and neighbours. Flatten the six copied core
-   arrays into read-only `SlabArrays`.
+6. Release this slab's halo views. The scoped cache can retain their group
+   until its last read. Flatten the six copied core arrays into read-only
+   `SlabArrays`.
 
 All six numerical field arrays retain their three-dimensional core-slab shape
 until the final flattening in `read_slab()`.
@@ -194,16 +216,19 @@ cell-payload read-ahead while locating each block's data start.
 It copies selected density, temperature and three
 momenta into compact arrays. The selected block geometry determines how it reads:
 
-- Full block y/z coverage: read a contiguous temporary buffer for each field.
+- Full block y/z coverage, including a narrow x selection: read a contiguous
+  temporary buffer for each field. Such a slice touches rows throughout the
+  field, so adjacent slab reuse avoids reading the same buffer repeatedly.
 - Full block x coverage with partial y/z coverage: read only the required
   contiguous y bands in each z plane, sharing one read-only file handle across
-  the block's five fields. This is the usual range-scan y-strip case.
-- Other selections, including the emission workflow's narrow x slabs: copy
-  selected values from read-only NumPy memory maps.
+  the block's five fields.
+- Other partial selections: copy selected values from read-only NumPy memory
+  maps.
 
 Every path fills the same compact arrays in the same order. Maps, file handles
-and temporary buffers are released after copying; cached metadata retains no
-cell payloads or open maps. Momentum is divided by
+and temporary read buffers are released after copying. The scoped slab cache
+retains only converted field arrays until their selected group has been read;
+metadata alone retains no cell payloads or open maps. Momentum is divided by
 native density, then velocities and density are normalized to yt's declared
 gas units. Cell widths also come from yt. The code derives the
 shielding column and velocity gradient using
@@ -437,6 +462,16 @@ independent luminosity sums, mass totals, and counts for checking the products.
 gas-phase statistics. `missing_emissivity_cells` and
 `missing_emissivity_mass_g` record separate totals for every line.
 
+`record_batch()` also passes the calculated batch to
+[`ColdGasLuminosityByDespoticTemperature`](../src/quokka2s/products/cold_despotic_luminosity.py).
+It selects `T_QUOKKA < 3000 K` cells whose finite DESPOTIC temperature reaches
+10,000, 40,000, 100,000 or 1,000,000 K, then sums Halpha, HI and CII light
+separately before and after dust. Only the small luminosity sums survive the
+batch. Parallel batches merge these sums in the existing input order. Report
+construction divides by the existing cold-plus-hot total for each line and
+dust state, including light outside the saved velocity channels. No extra
+snapshot reads or emission-table queries are needed.
+
 | Product | File and function | Calculation |
 |---|---|---|
 | Image | [products/line_luminosity_images.py](../src/quokka2s/products/line_luminosity_images.py), `LineLuminosityImageAccumulator.add_batch()` | Find each cell's native `(x,y)` pixel and add `epsilon * volume`; all z cells on that sightline add to the same pixel |
@@ -585,6 +620,7 @@ form:
 | `physical_settings` | `X_H`, column mean, and column directions |
 | `execution` | Slab size, query-batch size, and worker counts |
 | Counts, masses, and conservation checks | Per-line missing emissivities, unavailable gas temperatures, luminosity sums, and spectral-window losses |
+| `cold_gas_luminosity_by_despotic_temperature` | Cold-branch Halpha/HI/CII light above four TD thresholds, corresponding total light, and intrinsic/attenuated fractions |
 | `elapsed_seconds` | Time to build the report, before saving; final `status.json` includes file-writing time |
 
 `write_emission_results()` receives only the output directory, finished payloads
@@ -662,14 +698,50 @@ figure's phase footer uses the saved definitions.
 
 ## Shared physical helpers and additional figures
 
+### Follow one DESPOTIC table point
+
+`despotic/cell_solver.py` creates a fresh cloud at the adopted initial state,
+adds its emitters and calls native chemical/thermal equilibrium with `TableGOW`.
+That class inherits GOW's initialization, abundances and ordinary `dxdt()`.
+
+The checked `chemEvol` fixed-temperature loop calls
+`network.prepare_fixed_temperature_rhs()` before each integration attempt.
+It returns a `FixedTemperatureChemistry` object from
+`despotic/fixed_temperature_chemistry.py`. The object holds that segment's
+temperature, effective density, column, radiation and dust values. Its
+`__call__(trial_abundances, time_s)` returns twelve abundance derivatives in
+`s^-1`. Three small objects make its work explicit:
+
+- `AbundanceWorkspace` recomputes all eighteen species from each trial state,
+  reusing the name/index mappings and a private scratch array.
+- `PreparedTwoBodyRates` prepares temperature-only coefficients once; it
+  recomputes all composition-dependent coefficients for every trial.
+- `PreparedReactionTerms` prepares fixed density/radiation factors; shielding,
+  gas reactions and grain reactions still use the current trial abundances.
+
+These helpers live in `abundance_workspace.py`, `two_body_rates.py` and
+`reaction_terms.py`. Returned derivatives are fresh arrays; later scratch
+updates cannot overwrite a previously returned derivative.
+
+The clumping factor uses the saved network composition, as in native GOW.
+The thermal velocity, shielding and composition-dependent rates use the current
+trial composition. Each new segment or local-time retry constructs a new
+callable. No cache survives a temperature/state update, and the native
+initial guesses, solver precision and acceptance checks are retained.
+
+Table metadata records the actual reaction implementation source. Raw-table
+reuse accepts only reviewed equivalent model settings; checkpoint reuse also
+requires the exact implementation identity.
+
 ### Reusable table-input survey
 
 `python -m quokka2s.check_table_input_ranges` reads the same emission YAML.
 Follow its two distinct actions:
 
 1. `table_input_survey.load_or_measure_input_ranges()` reuses completed statistics or calls
-   `scan_snapshot_input_ranges()`. `Snapshot.read_column_tile()` reads an explicit
-   x/y rectangle with complete z columns and periodic x/y neighbours;
+   `scan_snapshot_input_ranges()`. `NativeBlockRangeReader` reads complete native
+   fields and shares them between XY columns at the same z, keeping complete
+   z-column physics;
    `TableInputStatistics.record_batch()` records physical nH/NH/dVdr for all
    cells and nH/NH/T_QUOKKA for hot cells. Only extrema/counts survive each batch.
 2. `build_table_range_report()` compares those stored extrema with the current
@@ -682,19 +754,41 @@ guard reuse; tables are not a dependency of raw coordinate statistics.
 Region/partial scans retain explicit completeness information. This survey
 checks ranges only, so it does not claim interpolation holes have been checked.
 
-The range scan divides the selected y range into strips of `tile_ny` cells
-(default 8), retaining the complete selected x range and every z cell. For a
-full `(512, 512, 4096)` snapshot, the first core tile is `(512, 8, 4096)`.
-AMReX stores x cells contiguously, so this layout follows the file's x-fastest
-order instead of requesting narrow x slices across every block y/z row.
-The same derived-field functions calculate the two columns and velocity
-gradient. Each tile then yields in-memory batches; workers do not reread each
-batch from disk. Emission processing still uses `read_slab()` and x slabs,
-preserving its existing cell-accumulation order.
+The range reader in [table_input_reader.py](../src/quokka2s/table_input_reader.py)
+validates a Cartesian native-block layout and selects XY columns intersecting
+the requested region. For a `(512, 512, 4096)` snapshot with
+`(256, 256, 128)` native blocks, a full scan visits four XY columns, each with
+32 z layers. A float64 native field occupies 64 MiB per block. Region selection
+crops the retained core; gradient neighbours still come from the original box,
+wrapping across its x/y faces.
 
-For the single-snapshot command, `--tile-ny 8` sets the strip width and
-`--max-tiles 1` requests a labelled partial diagnostic. The emission YAML's
-`slab_nx` and `max_slabs` control emission processing, not this range scan.
+`prepare_column_states(columns=...)` first reads each selected column's density
+in ascending z order and saves its cumulative column at every block face.
+Each `NativeColumnState` holds these lower-boundary values and its own upper
+column and velocity-face carries.
+
+`iter_layers(columns=...)` then visits z layers from top to bottom. At each z,
+it processes all selected XY columns before moving down. `NativeZLayerFields`
+reads each needed native field once at that z; another core or periodic
+neighbour reuses the same read-only array. The cache is cleared before the next
+z layer, on an error, or when the iterator is closed. Unit conversion and
+lower-z plane reads still use the original native reader directly.
+
+`calculate_layer(state=..., z_index=...)` returns four owned `TableInputLayer`
+arrays: density, QUOKKA temperature, shielding NH and velocity gradient.
+Incoming column carries precede the new cells in each cumulative sum,
+preserving the original addition order rather than adding block totals.
+Velocity neighbours preserve central differences at internal block faces and
+one-sided differences only at physical z boundaries. Only the current z
+layer's native fields, returned arrays and small column carries are retained.
+
+Each layer's `iter_batches()` yields views for `TableInputStatistics`; batches
+do not trigger disk reads. Emission processing still uses `read_slab()` and
+its six fields in x-slab order, preserving its existing accumulation order.
+For the single-snapshot command, `--max-columns 1` limits a diagnostic to one
+native XY column with complete z physics. Omitted selected columns make the
+scan partial. The emission YAML's `slab_nx` and `max_slabs` control emission
+processing, not this range scan.
 
 For several jobs, `python -m quokka2s.check_job_table_input_ranges` reads
 `configs/table_input_survey.yaml`. `source_root` contains the configured job
@@ -703,7 +797,7 @@ Follow its actions in this order:
 
 1. `read_job_survey_config()` reads the job locations, scan sizes and invocation
    limits (`snapshot_workers`, `max_new_snapshots`, `max_runtime_minutes`),
-   plus the scan's `tile_ny`, `query_chunk` and optional `max_tiles`.
+   plus the scan's `query_chunk` and optional `max_columns`.
 2. `discover_job_snapshots()` lists direct snapshot directories in numeric order;
    `check_batch_output_paths()` protects the entire source root from output writes.
 3. `scan_job_snapshots()` reuses completed statistics and dispatches unfinished
@@ -719,8 +813,9 @@ emission, plotting and dust settings are not required.
 
 `snapshot_workers` defaults to one; setting it to two scans two snapshots at
 once. Each worker uses one calculation thread and owns its snapshot reader and
-tile arrays. A tile retains its copied cell arrays until its batches are reduced;
-afterward only scalar extrema and counts remain.
+layer arrays. A layer retains its four copied cell arrays until its batches are
+reduced; column carries survive until that column finishes. Afterward only
+scalar extrema and counts remain.
 There are no image/spectrum accumulators and no emission-table interpolation.
 Completed snapshots survive interruption. With multiple workers, Ctrl-C stops
 new dispatch and lets active snapshots finish and save. In single-worker mode,
@@ -732,8 +827,8 @@ reused. Failed, partial and not-selected snapshots remain visible in summaries.
 dispatches after the budget, while active workers finish and save their results.
 Neither limit truncates an active snapshot. `--max-snapshots 1` instead selects
 the first inventory entry, including an already completed entry. Unscanned
-snapshots keep the survey incomplete. `max_tiles` limits each scan and cannot
-establish full input ranges.
+snapshots keep the survey incomplete. `max_columns` limits each scan; a partial
+scan cannot establish full input ranges.
 
 [physics/settings.py](../src/quokka2s/physics/settings.py) defines X_H, the
 QUOKKA temperature branch boundary, the measured velocity-gradient floor, and

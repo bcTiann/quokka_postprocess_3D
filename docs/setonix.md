@@ -5,9 +5,16 @@ laptop. The emission tables and dust table are included in Git; no table
 rebuilding is needed. Run Setonix commands from the repository root after
 setup.
 
-The bundled emission tables target the `plt0655228` reference snapshot.
-Before using another snapshot, check that its physical settings and table-query
-coordinates are compatible with these tables. See the [usage guide](usage.md).
+The current DESPOTIC default is the validated expanded 55 × 60 × 64
+`interpolated.npz`, used in the completed full `sigma13/plt0008703` run.
+The previous table is kept unchanged as `interpolated_old.npz`. Cloudy and
+the dust table are unchanged. A normal clone includes all of these files;
+DESPOTIC itself is not needed to process snapshots using the prebuilt table.
+
+Before another snapshot, check physical settings and table-query coverage.
+DESPOTIC still has 184 unavailable nodes, and the initial sigma13 `plt0000000`
+region fails the existing Cloudy density limit. Neither is repaired by changing
+the Python environment. See the [usage guide](usage.md).
 
 ## 1. Clone
 
@@ -15,44 +22,98 @@ On Setonix:
 
 ```bash
 cd "$MYSOFTWARE"
-git clone https://github.com/bcTiann/quokka_postprocess_3D.git
+git clone --branch codex/cloudy-emission-backup https://github.com/bcTiann/quokka_postprocess_3D.git
 cd quokka_postprocess_3D
 ```
 
 Keep the repository and Python environment under `$MYSOFTWARE`. Store the
 snapshot and numerical results under `$MYSCRATCH`, following
 [Pawsey's filesystem guidance](https://pawsey.atlassian.net/wiki/spaces/US/pages/51925876).
-If this clone already exists, update it with `git pull --ff-only origin main`.
+These instructions follow the `codex/cloudy-emission-backup` branch. For an
+existing clone, select that branch before updating:
+
+```bash
+git switch codex/cloudy-emission-backup
+git pull --ff-only
+```
 
 ## 2. Configure the environment
 
-From the repository root on Setonix, create the Python environment under
-`$MYSOFTWARE`:
+If uv is not on `PATH`, install the tested standalone version under your own
+`$MYSOFTWARE`. This does not need pip or administrator access and leaves shell
+profiles unchanged. The installation path and flags follow the
+[uv installer documentation](https://docs.astral.sh/uv/reference/installer/):
+
+```bash
+curl -LsSf https://astral.sh/uv/0.11.31/install.sh | \
+  env UV_INSTALL_DIR="$MYSOFTWARE/uv/bin" UV_NO_MODIFY_PATH=1 sh
+export PATH="$MYSOFTWARE/uv/bin:$PATH"
+uv --version
+```
+
+Create the environment from the repository root, using the module's Python
+3.11 interpreter. This setup has been checked with Python 3.11.6:
 
 ```bash
 module avail python
 module load python/3.11.6
-python -m venv .venv
-source .venv/bin/activate
 
-mkdir -p "$MYSCRATCH/quokka2s_installation_temp"
+mkdir -p "$MYSCRATCH/quokka2s_uv_cache" "$MYSCRATCH/quokka2s_installation_temp"
+export UV_CACHE_DIR="$MYSCRATCH/quokka2s_uv_cache"
 export TMPDIR="$MYSCRATCH/quokka2s_installation_temp"
 
-python -m pip install --no-cache-dir -r requirements.txt
-python -m pip install --no-cache-dir -e .
+uv venv --python "$(command -v python)"
+source .venv/bin/activate
+uv pip install -r requirements.txt
+uv pip check
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
+python -c 'import quokka2s, yt; print(quokka2s.__file__); print(yt.__version__)'
 ```
 
-`quokka2s_installation_temp/` holds temporary installation files on scratch.
-[`--no-cache-dir`](https://pip.pypa.io/en/stable/topics/caching/#disabling-caching)
-disables pip's persistent download/build cache. These settings concern package
-installation, not simulation inputs or processed results.
+`UV_CACHE_DIR` keeps reusable downloads and builds on scratch; `TMPDIR` holds
+installation working files. These settings concern package installation, not
+simulation inputs or processed results. The locked yt dependency is built from
+a Git commit, so its first source build needs Git and C/C++ build tools in the
+module environment. Cached builds can be reused.
+
+The project itself is not installed: commands read the current `src/` through
+`PYTHONPATH`. In each later terminal session or batch-job shell, return to the
+repository root and activate that same environment:
+
+```bash
+module load python/3.11.6
+source .venv/bin/activate
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
+```
+
+The printed `quokka2s` path must point into this checkout's `src/`; do not
+install an editable copy or mix in an old conda environment. Installation needs
+internet access for the pinned yt source and dependencies. Complete it before
+submitting a compute job; the job does not need to install anything.
+
+Repeat the scratch-cache exports and `uv pip install -r requirements.txt` only
+when installing an updated dependency lock. Source changes are used directly
+on the next run. `pyproject.toml` maintains the direct dependencies; the lock
+also includes their transitive dependencies. See
+[dependency setup and maintenance](usage.md#source-environment-and-dependencies)
+for saved-products-only installation and intentional lock updates.
 
 ## 3. Set the inputs
 
 Edit the first three settings in
 [`configs/emission.yaml`](../configs/emission.yaml). Use `jobname` for the
 simulation setup, `dataset` for one snapshot, and `results_dir` for the root
-containing saved jobs and snapshots. The bundled tables are used by default.
+containing saved jobs and snapshots. Keep the supplied table entries:
+
+```yaml
+despotic_table: ../inputs/tables/despotic/interpolated.npz
+cloudy_table: ../inputs/tables/cloudy/emission.npz
+dust_opacity_table: ../vendor/draine/kext_albedo_WD_MW_3.1_60_D03.all
+```
+
+These paths start at `configs/emission.yaml`. If you copy the YAML elsewhere,
+make these paths absolute or remove the three entries to use the bundled
+defaults. Selecting `interpolated_old.npz` reproduces the previous table choice.
 
 | Setting | Meaning |
 |---|---|
@@ -76,9 +137,9 @@ spectral_workers: 3
 
 Place the snapshot at the path set by `dataset`, or point it to the snapshot's
 existing location on scratch. The directory must contain `Header`,
-`metadata.yaml`, and all data subdirectories. The two emission tables are
-already in the clone and need no YAML entries. Advanced configurations can
-override their paths with `despotic_table` and `cloudy_table`.
+`metadata.yaml`, and all data subdirectories. The emission tables are
+already in the clone. Process reads
+the original snapshot; put results in your own writable output directory.
 
 Example directory layout:
 
@@ -88,7 +149,8 @@ $MYSOFTWARE/quokka_postprocess_3D/
 ├── configs/
 │   └── emission.yaml
 └── inputs/tables/
-    ├── despotic/interpolated.npz
+    ├── despotic/interpolated.npz       # Expanded default
+    ├── despotic/interpolated_old.npz   # Previous table
     └── cloudy/emission.npz
 
 $MYSCRATCH/simulations/sigma13.v2/plt0655228/
@@ -115,14 +177,82 @@ as an x–y region, see [region settings](usage.md#select-an-x-y-region). Settin
 `x_index_range: [64, 66]` and `y_index_range: [64, 66]` adds
 `region_x64-66_y64-66/` under the snapshot folder automatically. Keep
 `results_dir` unchanged. An omitted or `null` axis uses `all` in that folder name;
-with both axes omitted or `null`, outputs stay directly under the snapshot.
+with both axes omitted or `null`, outputs stay directly under the snapshot's
+result directory.
+
+For a first setup check, use `plt0008703` or another snapshot with known
+coverage, select both `[64, 66]` ranges and choose a fresh results root. Keep
+the original simulation path read-only and put all results in your own scratch
+directory. After process and plot succeed, change both ranges to `null` for
+full-box processing. A successful 2 × 2 region is not a full-box coverage test.
+YAML paths do not expand `$MYSCRATCH`, `$MYSOFTWARE` or other shell variables;
+write actual absolute paths where needed.
 
 ## 4. Process
 
-With the Setonix Python environment activated:
+Run computational work on a CPU compute node allocated through Slurm, following
+[Pawsey's job scheduling guidance](https://pawsey.atlassian.net/wiki/spaces/US/pages/51926920).
+Login nodes are for setup and job submission. This workflow does not need a GPU
+or MPI: one Python process owns the reading and batch/spectral threads.
+
+Save this example as `run_process.sbatch` in the repository root. Replace
+`YOUR_PROJECT` with your allocation account. It runs process then plot using
+the same YAML; `set -e` prevents plotting if process fails. Keep that YAML
+unchanged until the job finishes.
 
 ```bash
-python -m quokka2s.process_snapshot
+#!/bin/bash --login
+#SBATCH --account=YOUR_PROJECT
+#SBATCH --partition=work
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=32G
+#SBATCH --time=06:00:00
+#SBATCH --job-name=quokka-process
+
+set -e
+module load python/3.11.6
+cd "$MYSOFTWARE/quokka_postprocess_3D"
+source .venv/bin/activate
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
+
+# The YAML owns batch/spectral concurrency; keep numerical libraries at one.
+export OMP_NUM_THREADS=1
+export OPENBLAS_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+export VECLIB_MAXIMUM_THREADS=1
+export NUMEXPR_NUM_THREADS=1
+export BLIS_NUM_THREADS=1
+export PYTHONUNBUFFERED=1
+export MPLBACKEND=Agg
+export MPLCONFIGDIR="$MYSCRATCH/quokka2s_matplotlib"
+mkdir -p "$MPLCONFIGDIR"
+
+srun --ntasks=1 --cpus-per-task=8 python src/quokka2s/process_snapshot.py
+srun --ntasks=1 --cpus-per-task=8 python src/quokka2s/plot_emission_results.py
+```
+
+The eight requested CPU cores allow the configured two concurrent batches,
+up to three spectral threads each, and reading/orchestration. This is a starting
+resource request, not evidence that more workers are faster. The six-hour
+wall limit is a scheduler limit, not a runtime prediction; adjust it and the
+memory request for your snapshot. The program's 3 GiB field-cache cap is not
+a limit on total process memory.
+
+Submit from the repository root, putting the log on scratch. Copy the job ID
+printed by `sbatch` to inspect that job with `squeue -j JOB_ID`:
+
+```bash
+mkdir -p "$MYSCRATCH/quokka2s_logs"
+sbatch --output="$MYSCRATCH/quokka2s_logs/%x-%j.log" run_process.sbatch
+```
+
+If you already have a suitable interactive CPU allocation with the same
+environment and thread settings, the direct command remains:
+
+```bash
+python src/quokka2s/process_snapshot.py
 ```
 
 The snapshot name is taken from the supplied `dataset` path. Process saves to
@@ -135,7 +265,15 @@ cat /scratch/YOUR_PROJECT/YOUR_USERNAME/quokka_postprocess_3D/output/sigma13.v2/
 ```
 
 A completed full-box run has `status: completed`, `processing_complete: true`,
-and `full_snapshot: true`.
+and `full_snapshot: true`. A completed requested region instead has
+`full_snapshot: false`; it is not an unfinished process. Process refuses an
+existing `processed/` directory; choose another `results_dir` to keep a separate
+run. An interrupted process is not resumed by rerunning into that directory.
+
+Changing the table does not refresh old saved products. Use a fresh results
+root for new-table comparisons. After completion, review `input_tables`,
+`missing_emissivity_cells`, `missing_emissivity_mass_g`, clipping and conservation
+in `emission_report.json`; a zero exit status alone is not a coverage assessment.
 
 ## 5. Plot
 
@@ -146,7 +284,7 @@ Choose either location below.
 Keep the same shared YAML and run:
 
 ```bash
-python -m quokka2s.plot_emission_results
+python src/quokka2s/plot_emission_results.py
 ```
 
 Use the same activated environment as process. Plot reads this job and
@@ -192,8 +330,9 @@ settings alone; it does not read the snapshot.
 Then run:
 
 ```bash
-conda activate quokka2s
-python -m quokka2s.plot_emission_results
+source .venv/bin/activate
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
+python src/quokka2s/plot_emission_results.py
 ```
 
 Wait for the download to finish successfully before plotting. If you used a

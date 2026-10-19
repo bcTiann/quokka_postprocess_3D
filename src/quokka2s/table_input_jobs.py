@@ -36,9 +36,9 @@ class JobInputSurveySettings:
     """Resolved batch paths and the shared sizes used by each snapshot scan.
 
     jobs maps output job names to absolute run directories inside source_root.
-    output_dir is a separate user-owned root. All snapshots retain full x/y/z;
-    tile_ny sets y-strip width with full selected x and z. max_tiles is only
-    a per-snapshot diagnostic limit, never an accepted scan.
+    output_dir is a separate user-owned root. Each native XY block column is
+    processed through its complete z depth in two passes. max_columns is a
+    per-snapshot diagnostic limit; incomplete scans cannot enter job extrema.
     snapshot_workers limits concurrent readers; max_new_snapshots excludes
     completed caches. max_runtime_minutes stops new dispatch, not active reads.
     """
@@ -48,9 +48,8 @@ class JobInputSurveySettings:
     output_dir: Path
     despotic_table: Path = DEFAULT_DESPOTIC_TABLE
     cloudy_table: Path = DEFAULT_CLOUDY_TABLE
-    tile_ny: int = 8
     query_chunk: int = 1_000_000
-    max_tiles: int | None = None
+    max_columns: int | None = None
     snapshot_workers: int = 1
     max_new_snapshots: int | None = None
     max_runtime_minutes: float | None = None
@@ -68,7 +67,7 @@ def read_job_survey_config(*, path: Path) -> JobInputSurveySettings:
         supplied = yaml.safe_load(source)
     required = {"source_root", "jobs", "output_dir"}
     optional = {
-        "despotic_table", "cloudy_table", "tile_ny", "query_chunk", "max_tiles",
+        "despotic_table", "cloudy_table", "query_chunk", "max_columns",
         "snapshot_workers", "max_new_snapshots", "max_runtime_minutes",
     }
     if not isinstance(supplied, dict) or not required.issubset(supplied):
@@ -102,15 +101,14 @@ def read_job_survey_config(*, path: Path) -> JobInputSurveySettings:
         jobs[jobname] = run_directory
 
     sizes = {
-        "tile_ny": 8,
         "query_chunk": 1_000_000,
-        "max_tiles": None,
+        "max_columns": None,
         "snapshot_workers": 1,
         "max_new_snapshots": None,
     }
     for name, default in sizes.items():
         sizes[name] = supplied.get(name, default)
-        if name in ("max_tiles", "max_new_snapshots") and sizes[name] is None:
+        if name in ("max_columns", "max_new_snapshots") and sizes[name] is None:
             continue
         if type(sizes[name]) is not int or sizes[name] <= 0:
             raise ValueError(f"{name} must be a positive integer")
@@ -159,14 +157,15 @@ def discover_job_snapshots(*, settings: JobInputSurveySettings) -> dict[str, lis
             resolved = path.resolve()
             if not resolved.is_relative_to(settings.source_root):
                 raise ValueError(f"Snapshot symlink leaves source_root: {path}")
-            snapshots.append(SnapshotInputSettings(
-                dataset=resolved,
-                jobname=jobname,
-                snapshot_name=path.name,
-                tile_ny=settings.tile_ny,
-                query_chunk=settings.query_chunk,
-                max_tiles=settings.max_tiles,
-            ))
+            snapshots.append(
+                SnapshotInputSettings(
+                    dataset=resolved,
+                    jobname=jobname,
+                    snapshot_name=path.name,
+                    query_chunk=settings.query_chunk,
+                    max_columns=settings.max_columns,
+                )
+            )
         jobs[jobname] = snapshots
     return jobs
 
@@ -208,8 +207,9 @@ class SnapshotSurveyCoordinator:
     """Arrange snapshot scans and own all table reports and shared summaries.
 
     Only small records and Paths belong to this object. Spawned workers own
-    their yt datasets and slab arrays. records remains in inventory order even
-    when workers finish in another order, preserving the summary merge order.
+    their yt datasets and native-layer arrays. records remains in inventory
+    order even when workers finish in another order, preserving the summary
+    merge order.
     """
 
     def __init__(
