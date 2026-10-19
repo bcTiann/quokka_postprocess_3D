@@ -6,20 +6,40 @@ the environment, process a snapshot, and plot on Setonix or locally.
 ## 1. Clone
 
 ```bash
-git clone https://github.com/bcTiann/quokka_postprocess_3D.git
+git clone --branch codex/cloudy-emission-backup https://github.com/bcTiann/quokka_postprocess_3D.git
 cd quokka_postprocess_3D
 ```
 
 ## 2. Configure the environment
 
-Create a Conda environment with Python 3.11, the version used to validate this pipeline:
+With [uv](https://docs.astral.sh/uv/getting-started/installation/) installed,
+create a Python 3.11 environment from the repository root. This is the Python
+version used to validate the pipeline:
 
 ```bash
-conda create -n quokka2s python=3.11 pip
-conda activate quokka2s
-python -m pip install -r requirements.txt
-python -m pip install -e .
+uv venv --python 3.11
+source .venv/bin/activate
+uv pip install -r requirements.txt
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
 ```
+
+`pyproject.toml` is the maintained list of direct dependencies;
+`requirements.txt` is its generated processing lock, including the tested yt
+source commit and transitive dependencies. The project itself is not installed:
+Python loads the checkout's `src/` through `PYTHONPATH`. The first yt source
+build needs Git and C/C++ build tools; uv can reuse its cached build afterward.
+
+For later terminal sessions, return to the repository root and run only:
+
+```bash
+source .venv/bin/activate
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
+```
+
+Repeat `uv pip install -r requirements.txt` when the dependency lock changes.
+Source-code changes are used directly on the next run. For a smaller environment
+that only plots saved products, and for lock regeneration, see
+[dependency setup and maintenance](docs/usage.md#source-environment-and-dependencies).
 
 ## 3. Set the inputs
 
@@ -70,10 +90,11 @@ before processing; grid support does not imply that the bundled axes cover it.
 Run from the repository root:
 
 ```bash
-python -m quokka2s.process_snapshot
+python src/quokka2s/process_snapshot.py
 ```
 
 Both commands read [configs/emission.yaml](configs/emission.yaml).
+Use `--config /path/to/emission.yaml` with either command to select another file.
 Default numerical results: `output/sigma13.v2/plt0655228/processed/`.
 For another snapshot, change `dataset`; for another simulation setup, also
 change `jobname`. Processing does not overwrite an existing result directory.
@@ -81,7 +102,7 @@ change `jobname`. Processing does not overwrite an existing result directory.
 ## 5. Plot
 
 ```bash
-python -m quokka2s.plot_emission_results
+python src/quokka2s/plot_emission_results.py
 ```
 
 Plot selects the saved snapshot using `results_dir`, `jobname`, and the

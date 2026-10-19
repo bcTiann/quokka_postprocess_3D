@@ -13,6 +13,13 @@ From the repository root, both read the default `configs/emission.yaml`.
 Use `--config PATH` to select another file. Each runs directly;
 there is no shared dispatcher.
 
+First activate the uv environment and put the checkout on the import path:
+`source .venv/bin/activate` and
+`export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"`.
+No installation of `quokka2s` itself is needed. The direct-file forms
+`python src/quokka2s/process_snapshot.py` and
+`python src/quokka2s/plot_emission_results.py` use the same entry points.
+
 The first three settings select one snapshot and its results:
 
 ```yaml

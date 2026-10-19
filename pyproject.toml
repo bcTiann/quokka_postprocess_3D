@@ -1,50 +1,40 @@
-[build-system]
-requires = ["setuptools>=64", "wheel"]
-build-backend = "setuptools.build_meta"
-
 [project]
 name = "quokka2s"
 version = "0.1.0"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 
-# Runtime dependencies for the analysis pipeline (reading a prebuilt DESPOTIC
-# table + the simulation snapshot and producing the plots).
-#
-# yt is intentionally not listed here: plotting saved products does not need it.
-# For snapshot processing, requirements.txt pins the tested yt source commit
-# together with the numerical dependencies. Install that file before this package.
-#
+# Maintain direct dependencies here. Generate the complete processing lock with:
+# uv pip compile pyproject.toml --extra process --python-version 3.11 --universal -o requirements.txt
+# These are the numerical versions used by the validated process and plot runs.
+# Plotting saved products does not require yt or the optional table solver.
 dependencies = [
-    "numpy>=2,<2.3",
-    "scipy>=1.10",
-    "astropy>=6",
-    "h5py>=3",
-    "matplotlib>=3.7",
-    "unyt>=3",
-    "joblib>=1.5",            # streaming unordered point results in table builds
-    "tqdm>=4.6",
-    "tqdm-joblib>=0.0.4",
-    "pyyaml>=6",              # yt's QuokkaDataset parses metadata.yaml
+    "numpy==2.2.6",
+    "scipy==1.16.3",
+    "astropy==7.1.1",
+    "matplotlib==3.10.6",
+    "unyt==3.0.4",
+    "PyYAML==6.0.3",
 ]
 
-[project.scripts]
-quokka2s-process = "quokka2s.process_snapshot:main"
-quokka2s-plot = "quokka2s.plot_emission_results:main"
-
 [project.optional-dependencies]
-# Only needed to (re)build the DESPOTIC tables — NOT for running the pipeline,
-# which reads inputs/tables/despotic/interpolated.npz.
-# Install with: python -m pip install -e ".[tables]"
+# The fixed source commit supplies the validated QUOKKA snapshot frontend.
+process = [
+    "yt @ git+https://github.com/yt-project/yt@fd4cf99963cdebcd0c578dc2e5ab8dea77be6437",
+]
+
+# Install third-party table-building dependencies without installing this project:
+# uv pip install -r pyproject.toml --extra process --extra tables -c requirements.txt
+# Prebuilt-table processing does not import the chemistry solver or joblib.
 # DESPOTIC reports version 2.2 on its official Bitbucket master, but 2.2 was
 # never published to PyPI (whose latest release is 2.1 and predates the GOW
 # chemistry network used by this project).  Pin the tested upstream source
 # commit so this extra is both installable and reproducible.
 tables = [
     "despotic @ git+https://bitbucket.org/krumholz/despotic.git@ed18e5669adb7306f795a3d30d8919995793bc61",
+    "joblib==1.5.2",
+    "tqdm==4.67.1",
 ]
 
-[tool.setuptools]
-package-dir = {"" = "src"}
-
-[tool.setuptools.packages.find]
-where = ["src"]
+[tool.uv]
+# Run the checkout through PYTHONPATH=src; install only third-party dependencies.
+package = false

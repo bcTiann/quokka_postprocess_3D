@@ -15,37 +15,65 @@ On Setonix:
 
 ```bash
 cd "$MYSOFTWARE"
-git clone https://github.com/bcTiann/quokka_postprocess_3D.git
+git clone --branch codex/cloudy-emission-backup https://github.com/bcTiann/quokka_postprocess_3D.git
 cd quokka_postprocess_3D
 ```
 
 Keep the repository and Python environment under `$MYSOFTWARE`. Store the
 snapshot and numerical results under `$MYSCRATCH`, following
 [Pawsey's filesystem guidance](https://pawsey.atlassian.net/wiki/spaces/US/pages/51925876).
-If this clone already exists, update it with `git pull --ff-only origin main`.
+These instructions follow the `codex/cloudy-emission-backup` branch. For an
+existing clone, select that branch before updating:
+
+```bash
+git switch codex/cloudy-emission-backup
+git pull --ff-only
+```
 
 ## 2. Configure the environment
 
-From the repository root on Setonix, create the Python environment under
-`$MYSOFTWARE`:
+With [uv](https://docs.astral.sh/uv/getting-started/installation/) available
+on `PATH`, create the environment under `$MYSOFTWARE` from the repository root.
+Use the module's Python 3.11 interpreter. This environment setup has been
+checked on Setonix with Python 3.11.6. Each snapshot must also satisfy the
+emission tables' coordinate limits:
 
 ```bash
 module avail python
 module load python/3.11.6
-python -m venv .venv
-source .venv/bin/activate
 
-mkdir -p "$MYSCRATCH/quokka2s_installation_temp"
+mkdir -p "$MYSCRATCH/quokka2s_uv_cache" "$MYSCRATCH/quokka2s_installation_temp"
+export UV_CACHE_DIR="$MYSCRATCH/quokka2s_uv_cache"
 export TMPDIR="$MYSCRATCH/quokka2s_installation_temp"
 
-python -m pip install --no-cache-dir -r requirements.txt
-python -m pip install --no-cache-dir -e .
+uv venv --python "$(command -v python)"
+source .venv/bin/activate
+uv pip install -r requirements.txt
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
 ```
 
-`quokka2s_installation_temp/` holds temporary installation files on scratch.
-[`--no-cache-dir`](https://pip.pypa.io/en/stable/topics/caching/#disabling-caching)
-disables pip's persistent download/build cache. These settings concern package
-installation, not simulation inputs or processed results.
+`UV_CACHE_DIR` keeps reusable downloads and builds on scratch; `TMPDIR` holds
+installation working files. These settings concern package installation, not
+simulation inputs or processed results. The locked yt dependency is built from
+a Git commit, so its first source build needs Git and C/C++ build tools in the
+module environment. Cached builds can be reused.
+
+The project itself is not installed: commands read the current `src/` through
+`PYTHONPATH`. In each later terminal session or batch-job shell, return to the
+repository root and activate that same environment:
+
+```bash
+module load python/3.11.6
+source .venv/bin/activate
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
+```
+
+Repeat the scratch-cache exports and `uv pip install -r requirements.txt` only
+when installing an updated dependency lock. Source changes are used directly
+on the next run. `pyproject.toml` maintains the direct dependencies; the lock
+also includes their transitive dependencies. See
+[dependency setup and maintenance](usage.md#source-environment-and-dependencies)
+for saved-products-only installation and intentional lock updates.
 
 ## 3. Set the inputs
 
@@ -78,7 +106,8 @@ Place the snapshot at the path set by `dataset`, or point it to the snapshot's
 existing location on scratch. The directory must contain `Header`,
 `metadata.yaml`, and all data subdirectories. The two emission tables are
 already in the clone and need no YAML entries. Advanced configurations can
-override their paths with `despotic_table` and `cloudy_table`.
+override their paths with `despotic_table` and `cloudy_table`. Process reads
+the original snapshot; put results in your own writable output directory.
 
 Example directory layout:
 
@@ -115,14 +144,15 @@ as an x–y region, see [region settings](usage.md#select-an-x-y-region). Settin
 `x_index_range: [64, 66]` and `y_index_range: [64, 66]` adds
 `region_x64-66_y64-66/` under the snapshot folder automatically. Keep
 `results_dir` unchanged. An omitted or `null` axis uses `all` in that folder name;
-with both axes omitted or `null`, outputs stay directly under the snapshot.
+with both axes omitted or `null`, outputs stay directly under the snapshot's
+result directory.
 
 ## 4. Process
 
 With the Setonix Python environment activated:
 
 ```bash
-python -m quokka2s.process_snapshot
+python src/quokka2s/process_snapshot.py
 ```
 
 The snapshot name is taken from the supplied `dataset` path. Process saves to
@@ -135,7 +165,8 @@ cat /scratch/YOUR_PROJECT/YOUR_USERNAME/quokka_postprocess_3D/output/sigma13.v2/
 ```
 
 A completed full-box run has `status: completed`, `processing_complete: true`,
-and `full_snapshot: true`.
+and `full_snapshot: true`. Process refuses an existing `processed/` directory;
+choose another `results_dir` to keep a separate run.
 
 ## 5. Plot
 
@@ -146,7 +177,7 @@ Choose either location below.
 Keep the same shared YAML and run:
 
 ```bash
-python -m quokka2s.plot_emission_results
+python src/quokka2s/plot_emission_results.py
 ```
 
 Use the same activated environment as process. Plot reads this job and
@@ -192,8 +223,9 @@ settings alone; it does not read the snapshot.
 Then run:
 
 ```bash
-conda activate quokka2s
-python -m quokka2s.plot_emission_results
+source .venv/bin/activate
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
+python src/quokka2s/plot_emission_results.py
 ```
 
 Wait for the download to finish successfully before plotting. If you used a

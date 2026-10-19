@@ -3,6 +3,49 @@
 Use the [README](../README.md) for cloning, environment setup, inputs, and the
 two main commands. Run the commands below from the repository root.
 
+## Source environment and dependencies
+
+uv creates the `.venv` environment and installs third-party packages. The
+`quokka2s` project itself is not installed; Python imports the source checkout
+through `PYTHONPATH`. After following the initial setup in the README, each
+new terminal session needs:
+
+```bash
+source .venv/bin/activate
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
+```
+
+`pyproject.toml` is the single maintained list of direct dependencies. Its base
+list supports saved-products plotting; the `process` extra adds the pinned yt
+snapshot reader, and `tables` adds the DESPOTIC solver and build tools.
+`requirements.txt` is generated from the base plus `process` dependencies and
+locks their transitive dependencies too. Do not maintain its package list by
+hand.
+
+For a new environment used only to plot saved products, replace the full
+processing installation with:
+
+```bash
+uv pip install -r pyproject.toml -c requirements.txt
+```
+
+This installs the base dependencies at the locked versions without the
+`process` or `tables` extra. Keep the same activation and `PYTHONPATH` settings.
+The table-building section below supplies the separate installation command
+when those tools are needed.
+
+After intentionally changing the direct dependency list, regenerate the lock:
+
+```bash
+uv pip compile pyproject.toml --extra process --python-version 3.11 --universal -o requirements.txt
+```
+
+Keep the existing lock when regenerating so compatible versions stay pinned.
+Upgrade dependencies deliberately, then review the lock diff and validate the
+new environment. For normal process and plot setup, install from the saved
+lock rather than regenerating it for each run. The numerical versions and yt commit remain the
+validated choices unless an upgrade is explicitly being tested.
+
 ## Shared configuration
 
 Process and plot both read [configs/emission.yaml](../configs/emission.yaml).
@@ -47,9 +90,10 @@ output/
 
 The two bundled tables are selected automatically:
 `inputs/tables/despotic/interpolated.npz` and
-`inputs/tables/cloudy/emission.npz`. These defaults refer to the installed
-repository, even when the YAML file is elsewhere. Advanced configurations
-may set `despotic_table`, `cloudy_table`, or `dust_opacity_table` explicitly.
+`inputs/tables/cloudy/emission.npz`. These defaults refer to the source
+checkout supplying `quokka2s`, even when the YAML file is elsewhere. Advanced
+configurations may set `despotic_table`, `cloudy_table`, or
+`dust_opacity_table` explicitly.
 
 The supplied YAML uses repository-local input and output paths. To store data
 elsewhere, set `dataset` and `results_dir` to the desired locations. The
@@ -76,7 +120,7 @@ the region folder and set the same x/y ranges in the shared YAML.
 |---|---|
 | Inside a YAML configuration | Directory containing that YAML file |
 | Command-line options, including `--config` | Current terminal working directory |
-| Bundled reference data | Repository containing the installed editable package |
+| Bundled reference data | Source checkout containing `src/quokka2s/` |
 
 Paths used by each command are resolved to absolute `Path` objects at the entry
 point; calculations receive those resolved paths. The YAML file retains its
@@ -136,8 +180,8 @@ complete original z column.
 Run both commands with the same YAML:
 
 ```bash
-python -m quokka2s.process_snapshot
-python -m quokka2s.plot_emission_results
+python src/quokka2s/process_snapshot.py
+python src/quokka2s/plot_emission_results.py
 ```
 
 This example saves under
@@ -252,7 +296,7 @@ DESPOTIC dependency, apply the checked patches, measure the snapshot's table
 coordinates, then build and interpolate:
 
 ```bash
-python -m pip install -e ".[tables]"
+uv pip install -r pyproject.toml --extra process --extra tables -c requirements.txt
 python tools/despotic/patch_gow_composition.py
 python tools/despotic/install_checked_gow_integration.py
 python tools/despotic/measure_snapshot_domain.py
