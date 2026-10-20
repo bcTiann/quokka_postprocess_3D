@@ -17,31 +17,44 @@ from quokka2s.processing_inputs import load_processing_inputs
 from quokka2s.result_files import write_emission_results, write_status
 from quokka2s.result_metadata import ResultMetadata
 from quokka2s.processing_report import build_processing_report
+from quokka2s.process_progress import SlabProgress
 from quokka2s.products.emission_products import EmissionProducts
 from quokka2s.snapshot_reader import slab_windows
 
 
-def accumulate_batch(cells, emission_calculator: CellEmissionCalculator, products):
+def accumulate_batch(cells, emission_calculator: CellEmissionCalculator, products,
+                     progress=None):
     """Calculate a batch once, then add its emission to every product.
 
     cells is a CellBatch of six (N,) arrays plus grid positions/volume.
     emission_calculator holds the shared table readers and dust cross-sections.
     products receives image, spectrum, phase, and diagnostic sums in place.
+    progress optionally records a stage label before each existing calculation.
     Only the sums survive this call; no product retains cells or line arrays."""
     products.failure_context = {
         "first_cell_id": cells.first_cell_id,
         "last_cell_id": cells.last_cell_id,
     }
+    if progress is not None:
+        progress('DESPOTIC/Cloudy lookup, line emissivity and dust attenuation')
     emission = emission_calculator.calculate(cells=cells)
+    if progress is not None:
+        progress('accumulating luminosity images')
     products.images.add_batch(cells=cells, emission=emission)
+    if progress is not None:
+        progress('integrating Gaussian line spectra')
     products.spectra.add_batch(cells=cells, emission=emission)
+    if progress is not None:
+        progress('accumulating gas-phase velocity statistics')
     products.phases.add_batch(cells=cells, emission=emission)
+    if progress is not None:
+        progress('recording missingness, luminosity and cell accounting')
     products.record_batch(cells=cells, emission=emission)
     # Only accumulated results survive this call; no product retains cells/emission.
 
 
 def process_parallel_batches(
-    config, snapshot, emission_calculator, products, slab, executor,
+    config, snapshot, emission_calculator, products, slab, executor, progress=None,
 ):
     """Process a slab with at most config.chunk_workers batches in flight.
 
@@ -50,9 +63,14 @@ def process_parallel_batches(
     executor is reused across slabs. A successful return leaves no pending sums."""
     batches = slab.iter_batches(batch_size=config.query_chunk)
     pending = deque()
+    submitted_batches = 0
 
-    def compute(cells):
+    def compute(cells, batch_number):
         """Calculate one batch into independent product sums."""
+        stage_progress = None
+        if progress is not None:
+            progress.start_batch(batch_number)
+            stage_progress = lambda stage: progress.set_stage(batch_number, stage)
         partial = EmissionProducts(
             snapshot=snapshot,
             line_keys=emission_calculator.line_keys,
@@ -62,31 +80,41 @@ def process_parallel_batches(
             cells=cells,
             emission_calculator=emission_calculator,
             products=partial,
+            progress=stage_progress,
         )
+        if progress is not None:
+            progress.batch_ready(batch_number)
         return partial
 
     def submit_next():
         """Keep the pending queue bounded by submitting one remaining batch."""
+        nonlocal submitted_batches
         cells = next(batches, None)
         if cells is not None:
-            future = executor.submit(compute, cells)
-            pending.append((future, cells.first_cell_id, cells.last_cell_id))
+            submitted_batches += 1
+            future = executor.submit(compute, cells, submitted_batches)
+            pending.append((future, cells.first_cell_id, cells.last_cell_id,
+                            submitted_batches, cells.cell_count))
 
     for _ in range(config.chunk_workers):
         submit_next()
     try:
         while pending:
-            future, first_cell_id, last_cell_id = pending.popleft()
+            future, first_cell_id, last_cell_id, batch_number, cell_count = pending.popleft()
             products.failure_context = {
                 "first_cell_id": first_cell_id,
                 "last_cell_id": last_cell_id,
             }
             partial = future.result()
+            if progress is not None:
+                progress.set_stage(batch_number, 'merging products in original batch order')
             products.merge(partial)
+            if progress is not None:
+                progress.batch_merged(batch_number, cell_count)
             del partial, future
             submit_next()
     except BaseException:
-        for future, _, _ in pending:
+        for future, *_ in pending:
             future.cancel()
         raise
 
@@ -131,22 +159,29 @@ def count_cells_in_slabs(snapshot, selected_slabs):
     return total_cells
 
 
-def process_serial_batches(config, emission_calculator, products, slab):
+def process_serial_batches(config, emission_calculator, products, slab, progress=None):
     """Accumulate consecutive batches from one already loaded slab.
 
     config.query_chunk limits each batch's cell count. Batch arrays are views;
     release the final view before process_one_slab() releases the parent slab."""
-    for cells in slab.iter_batches(batch_size=config.query_chunk):
+    for batch_number, cells in enumerate(slab.iter_batches(batch_size=config.query_chunk), start=1):
+        stage_progress = None
+        if progress is not None:
+            progress.start_batch(batch_number)
+            stage_progress = lambda stage: progress.set_stage(batch_number, stage)
         accumulate_batch(
             cells=cells,
             emission_calculator=emission_calculator,
             products=products,
+            progress=stage_progress,
         )
+        if progress is not None:
+            progress.batch_merged(batch_number, cells.cell_count)
         del cells  # Drop the batch views; the parent slab remains until finished.
 
 
 def process_one_slab(
-    config, snapshot, emission_calculator, products, window, executor,
+    config, snapshot, emission_calculator, products, window, executor, progress=None,
 ):
     """Read one core x window and finish its batches before returning.
 
@@ -162,6 +197,8 @@ def process_one_slab(
         x_start=x_start,
         x_stop=x_stop,
     )
+    if progress is not None:
+        progress.reading_complete()
     print(
         f'Calculating slab: x=[{x_start}, {x_stop}); y=[{y_start}, {y_stop}); '
         f'z=[0, {z_stop}); {slab.cell_count:,} cells; '
@@ -175,6 +212,7 @@ def process_one_slab(
             emission_calculator=emission_calculator,
             products=products,
             slab=slab,
+            progress=progress,
         )
     else:
         process_parallel_batches(
@@ -184,6 +222,7 @@ def process_one_slab(
             products=products,
             slab=slab,
             executor=executor,
+            progress=progress,
         )
     del slab  # All batch results are merged before the next slab is read.
 
@@ -250,14 +289,23 @@ def process_snapshot(config, snapshot, emission_calculator, products, began):
                     'reading cell fields and deriving columns and velocity gradients...',
                     flush=True,
                 )
-                process_one_slab(
-                    config=config,
-                    snapshot=snapshot,
-                    emission_calculator=emission_calculator,
-                    products=products,
-                    window=window,
-                    executor=executor,
-                )
+                slab_cell_count = (x_stop - x_start) * (y_stop - y_start) * z_stop
+                with SlabProgress(
+                    slab_number=slab_number,
+                    total_slabs=total_slabs,
+                    cell_count=slab_cell_count,
+                    batch_size=config.query_chunk,
+                    workers=config.chunk_workers,
+                ) as progress:
+                    process_one_slab(
+                        config=config,
+                        snapshot=snapshot,
+                        emission_calculator=emission_calculator,
+                        products=products,
+                        window=window,
+                        executor=executor,
+                        progress=progress,
+                    )
 
                 # 4. Report a finished slab (1/32, 2/32, ...) before reading the next.
                 report_snapshot_progress(

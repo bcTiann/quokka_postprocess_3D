@@ -210,6 +210,17 @@ conservation checks, and saving also print their stages and the final output
 directory. Messages are flushed immediately, including when output is redirected
 to a log file.
 
+Within a slab, timestamped messages report completed batches and core-cell
+counts. About every ten seconds, a status thread also reports ongoing reads or
+each active batch's actual stage: table/emissivity/dust calculations, images,
+Gaussian spectra, gas phases or accounting. A computed parallel batch waiting
+for an earlier batch is labelled separately; completion advances only after its
+ordered merge. Serial batches advance after direct accumulation. The first
+read can include grouped field-cache prefetch, so its read/derive duration is
+not a pure disk-I/O measurement. Per-slab compute/merge durations are wall time;
+concurrent worker stage durations must not be added as wall-time fractions.
+This display uses Python's standard logging library and needs no extra install.
+
 ## Select an x-y region
 
 Set native cell-index ranges in the [shared YAML](../configs/emission.yaml),

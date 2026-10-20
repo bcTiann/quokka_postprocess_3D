@@ -121,6 +121,9 @@ paths must be absolute after expanding `~`; YAML relative paths still start at
 the YAML file. Plot uses the dataset folder name without accessing the original
 snapshot. `jobname` is only a manually chosen output group. Process writes its
 `processed/` subdirectory; plot reads that subdirectory and writes figures.
+`process_progress.py` owns the timestamped slab/batch console display and its
+ten-second heartbeat. It stores stage labels and counters, without cell arrays
+or changes to numerical scheduling and merge order.
 Explicit x/y ranges add a shared region subdirectory, for example
 `region_x64-66_y64-66/`; an omitted or `null` axis is named `all`. Both axes
 omitted or `null` keep the full-box result directory.

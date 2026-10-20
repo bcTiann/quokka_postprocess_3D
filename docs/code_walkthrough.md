@@ -94,6 +94,11 @@ The package has five purpose-specific folders:
 | Save | `result_files.write_emission_results()` then `write_status()` | Three NPZ files, the JSON report, then completion status |
 
 The orchestration stays in [process_snapshot.py](../src/quokka2s/process_snapshot.py).
+Its console observer, [process_progress.py](../src/quokka2s/process_progress.py),
+records batch numbers, stage labels and timestamps only. A heartbeat thread
+reports long reads/calculations about every ten seconds; workers update their
+own batch stage and completion advances after the original ordered merge.
+The observer never reads or retains cell arrays and does not schedule work.
 Input loading belongs to [processing_inputs.py](../src/quokka2s/processing_inputs.py), and output writing
 belongs to [result_files.py](../src/quokka2s/result_files.py);
 [result_metadata.py](../src/quokka2s/result_metadata.py) describes saved geometry

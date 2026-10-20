@@ -77,8 +77,10 @@ This uses the YAML settings. For a small setup test, run
 columns. Ranges include the start and exclude the stop. Each supplied CLI axis
 overrides its YAML range; omitted axes keep their YAML settings.
 
-Process prints each slab's x/y/z bounds, reads the snapshot and tables without
-modifying them, and saves under
+Process prints each slab's x/y/z bounds and completed batches. During long
+reads or calculations, timestamped status messages appear about every ten
+seconds, including each active batch's current stage and elapsed time.
+It reads the snapshot and tables without modifying them, and saves under
 `results_dir/jobname/snapshot_name/processed/`. Explicit x/y ranges add, for
 example, `region_x64-66_y64-66/` before `processed/`. A full box has no region
 folder. Process refuses an existing `processed/` directory; use a fresh results

@@ -93,7 +93,10 @@ uv run process --x 64 66 --y 64 66
 This setup test selects x/y indices 64 and 65, with complete z columns. Ranges
 include the start and exclude the stop. CLI axes override only the corresponding
 YAML ranges. For the full box, set both YAML ranges to `null` and omit these options.
-Each slab prints x/y/z bounds. Results are saved under
+Each slab prints x/y/z bounds and completed batches. Long reads and calculations
+report their current stage about every ten seconds; active batches show whether
+they are looking up emission or integrating spectra. No extra option is needed.
+Results are saved under
 `output/jobname/plt0008703/region_x64-66_y64-66/processed/`. A full box has no region
 folder. Existing `processed/` directories are not overwritten; choose a fresh
 results root for a separate run.
