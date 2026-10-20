@@ -33,5 +33,7 @@ image_downsample_factor: 1
 # DESPOTIC is the validated expanded 55 x 60 x 64 interpolated table.
 # The previous table is kept as interpolated_old.npz for reproducibility.
 despotic_table: ../inputs/tables/despotic/interpolated.npz
+# Cloudy includes two extra low-density planes; NH and temperature are unchanged.
+# The original table and every original node are preserved in emission_old.npz.
 cloudy_table: ../inputs/tables/cloudy/emission.npz
 dust_opacity_table: ../vendor/draine/kext_albedo_WD_MW_3.1_60_D03.all

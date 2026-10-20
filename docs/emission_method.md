@@ -21,12 +21,15 @@ The density conversion does not redefine either table's elemental abundances.
 The Jeans estimate uses actual mass density, fixed `mu=1`, and the inherited
 approximately 100 pc cap. This fixed mu belongs only to the length estimate.
 
-The current three-dimensional Cloudy table was built with the older
-`X_H=0.76` Jeans density conversion. The hot-cell adapter permits its reuse
-only where each queried cell and every contributing table node remain capped
-under the checked conversions. It does not assume equivalence below the cap.
-The current eight-line builder explicitly supplies the corrected `X_H`.
-Historical table metadata are not rewritten to claim a new build.
+The original ten Cloudy density planes retain their historical `X_H=0.76`
+Jeans density conversion, node values and metadata. Two additional lower-density
+planes use the corrected `X_H=0.7157683773530885` explicitly. At every added
+temperature, both conversions give an uncapped Jeans length above 100 pc, so
+the applied model depth is identical. The new density minimum is
+`8.030857221391619e-8 cm^-3`; the seven attenuation columns and 21 temperatures
+are unchanged. Extension provenance describes only the new planes; historical
+metadata are not rewritten to claim a new build. The previous table is kept
+as `inputs/tables/cloudy/emission_old.npz`.
 
 ## Line emissivities
 

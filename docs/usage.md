@@ -89,8 +89,11 @@ The two bundled tables are selected automatically:
 `inputs/tables/despotic/interpolated.npz` and
 `inputs/tables/cloudy/emission.npz`. DESPOTIC now supplies the validated expanded
 55 × 60 × 64 interpolated table; the previous table is retained unchanged at
-`inputs/tables/despotic/interpolated_old.npz`. Cloudy and the dust table are
-unchanged. The expanded DESPOTIC table still has 184 unavailable nodes outside
+`inputs/tables/despotic/interpolated_old.npz`. Cloudy supplies 7 × 12 × 21 states,
+including two added low-density planes; its original 7 × 10 × 21 table is kept
+at `inputs/tables/cloudy/emission_old.npz`. Its NH and temperature axes and all
+original nodes are unchanged. The dust table is unchanged.
+The expanded DESPOTIC table still has 184 unavailable nodes outside
 the finite-support hull. Coordinate coverage alone does not guarantee a usable
 interpolation stencil or physical accuracy.
 
@@ -454,6 +457,32 @@ Runtime inputs/logs go to `runtime/cloudy_eightline/`; the final table is
 `inputs/tables/cloudy/emission.npz`. Both table builders require `--force` to replace
 existing final tables. The [physics reference](emission_method.md)
 summarizes the table-query rules used during emission processing.
+
+The bundled Cloudy table includes two lower-density planes; its previous
+version is kept as `inputs/tables/cloudy/emission_old.npz`. To reproduce this
+extension, use the incremental tool. It continues the source table's first
+density interval, keeps its NH and temperature axes, and calculates only the
+294 new states. Supply the parameter file recorded by the source table and
+its existing incident-spectrum directory:
+
+```bash
+uv run python tools/cloudy/extend_cloudy_density.py plan \
+  --source-table inputs/tables/cloudy/emission_old.npz \
+  --output-table output/tables/cloudy_extended.npz \
+  --recipe-parameter /path/to/original_7x10x21.par \
+  --cloudy-exe /absolute/path/to/cloudy.exe \
+  --radiation-directory /path/to/HM12_ATTENUATION_ISM_NH21 \
+  --runtime-dir runtime/cloudy_density_extension --workers 4
+```
+
+Repeat the same arguments with `smoke`, then `build`, then `merge` in place of
+`plan`. The smoke covers both new densities and every NH value at the source
+temperature endpoints and 100,000 K. The build requires that smoke to pass for
+the same input hashes; merge requires complete, successful production states.
+Raw Cloudy outputs, exit statuses and warnings remain in the runtime directory.
+The output path must be new. Existing node arrays, masks and metadata are
+copied with exact dtype and byte checks; extension provenance describes only
+the new planes. The original table is never overwritten by this tool.
 
 ## Check table-input ranges
 

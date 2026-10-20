@@ -34,7 +34,7 @@ products. Plot reads saved arrays without importing this processing extension.
 | `docs/` | Usage instructions, physical methods and code walkthrough | Yes |
 | `vendor/` | Pinned external source, dust table, molecular data and their notes | Yes |
 | `inputs/snapshots/` | User-provided QUOKKA snapshots | No |
-| `inputs/tables/` | Cloudy `emission.npz`, expanded DESPOTIC `interpolated.npz`, and previous `interpolated_old.npz` | Yes; raw tables and other build files stay local |
+| `inputs/tables/` | Cloudy `emission.npz`, DESPOTIC `interpolated.npz`, and their previous `emission_old.npz` / `interpolated_old.npz` | Yes; raw tables and other build files stay local |
 | `output/` | Processed numerical products and figures | No |
 | `runtime/` | Cloudy build parameters, `.inc` exports, raw outputs and logs | No |
 

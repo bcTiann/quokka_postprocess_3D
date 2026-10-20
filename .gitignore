@@ -14,7 +14,7 @@
 .claude/
 
 # Snapshots and build intermediates stay local. Track the fixed process tables
-# and the previous DESPOTIC table; exact exceptions follow the *.npz rule.
+# and their previous versions; exact exceptions follow the *.npz rule.
 /inputs/*
 !/inputs/tables/
 /inputs/tables/*
@@ -50,6 +50,7 @@
 
 # Fixed prebuilt emission tables are supplied with a normal Git clone.
 !/inputs/tables/cloudy/emission.npz
+!/inputs/tables/cloudy/emission_old.npz
 !/inputs/tables/despotic/interpolated.npz
 !/inputs/tables/despotic/interpolated_old.npz
 
