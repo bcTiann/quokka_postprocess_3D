@@ -1,6 +1,10 @@
 [build-system]
-requires = ["uv_build==0.11.31"]
-build-backend = "uv_build"
+requires = [
+    "setuptools==84.0.0",
+    "Cython==3.2.4",
+    "scipy==1.16.3",
+]
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "quokka2s"
@@ -24,6 +28,23 @@ dependencies = [
 [project.scripts]
 process = "quokka2s.process_snapshot:main"
 plot = "quokka2s.plot_emission_results:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[[tool.setuptools.ext-modules]]
+name = "quokka2s.products._gaussian_fractions"
+sources = ["src/quokka2s/products/_gaussian_fractions.pyx"]
+# Preserve the separate float64 operations used by NumPy and the SciPy erf API.
+extra-compile-args = ["-O3", "-fno-fast-math", "-ffp-contract=off"]
+
+[tool.uv]
+# Editing the native source must rebuild the editable extension on uv sync/run.
+cache-keys = [
+    { file = "pyproject.toml" },
+    { file = "MANIFEST.in" },
+    { file = "src/quokka2s/products/_gaussian_fractions.pyx" },
+]
 
 [project.optional-dependencies]
 # Optional solver environment: uv sync --extra tables

@@ -25,6 +25,11 @@ automatically installs the checkout in editable mode and registers commands
 from `[project.scripts]` in `pyproject.toml`. Process and plot call the existing
 `process_snapshot.main()` and `plot_emission_results.main()` functions directly.
 No activation, import-path export, or manual editable installation is needed.
+Sync also builds the Cython spectrum kernel with the pinned build dependencies
+and the local C compiler. After editing
+[products/_gaussian_fractions.pyx](../src/quokka2s/products/_gaussian_fractions.pyx),
+run `uv sync` to rebuild it; uv also tracks this source when checking the build
+cache for `uv run`. Generated C and native binaries are local build products.
 Plot reports the saved-results directory, each line being drawn, output paths,
 and the final file count and elapsed time; these messages do not alter products.
 The equivalent `uv run python -m quokka2s.process_snapshot` and
@@ -507,9 +512,23 @@ Spectrum accumulation uses each line's available cells directly; it does not
 go through a rebinned image.
 Intrinsic and attenuated spectra share the same thermal integration for a
 cell. They differ only in the luminosity being distributed over channels.
-Each integration thread owns its temporary channel-by-cell arrays. It reuses
-their storage for division and half scaling; the Gaussian arithmetic and
-input-order summation remain unchanged. These arrays are released after the task.
+`accumulate_velocity_spectra()` keeps the default 8192-cell chunks and processes
+64 channels at a time. Each worker owns a reusable `(channel, cell)` fraction
+buffer and one previous boundary-CDF value per cell. The compiled
+[products/_gaussian_fractions.pyx](../src/quokka2s/products/_gaussian_fractions.pyx)
+combines edge subtraction, division by the NumPy-prepared thermal denominator,
+SciPy's real-double `erf`, and adjacent-CDF differences in one GIL-free loop.
+It writes the dense fractions in their original cell positions without retaining
+a full boundary-CDF matrix. For dimensionless arguments at or beyond `+/-8`,
+the pinned SciPy float64 `erf` already returns exactly `+/-1`; the loop writes
+those same rounded values directly.
+
+The build disables fast-math and fused multiply-add contraction. Luminosity
+weighting still uses `np.einsum(..., optimize=False)`, and chunk partials are
+merged in input order. Each task returns its own partial spectrum, while worker
+scratch is released when the integration call finishes. Unaligned channel-edge
+arrays and nondefault NumPy or SciPy special-function error policies retain the
+NumPy/SciPy coefficient path.
 The same luminosities, velocities and thermal widths also enter
 [products/line_velocity_moments.py](../src/quokka2s/products/line_velocity_moments.py).
 `LineVelocityMoments.from_cells()` calculates the batch's total light, mean

@@ -1,0 +1,3 @@
+# Local validation and generated products are not distribution sources.
+prune tests
+prune output

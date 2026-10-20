@@ -28,10 +28,16 @@ uv sync
 
 uv creates `.venv` and installs this checkout in editable mode. No activation,
 `PYTHONPATH` or manual `pip install` is needed. The locked environment uses
-Python 3.11; the first yt build needs Git and C/C++ build tools. Both process
-and plot dependencies are installed by default. `uv run` checks the environment
+Python 3.11. Building yt and the Cython spectrum kernel needs Git and C/C++
+build tools. uv installs the pinned build dependencies automatically; no manual
+Cython installation or compilation command is needed. Both process and plot
+dependencies are installed by default. `uv run` checks the environment
 automatically and reuses the locked versions; it does not reinstall everything
 on each run.
+
+After changing `src/quokka2s/products/_gaussian_fractions.pyx`, run `uv sync`
+to rebuild the compiled spectrum kernel. The build cache also tracks this source
+when `uv run` checks the environment. Generated C and compiled binaries stay local.
 
 On Setonix, follow its [environment setup](docs/setonix.md#2-configure-the-environment)
 instead: uv and its caches belong under `$MYSOFTWARE` to avoid the home quota.

@@ -14,6 +14,13 @@ standalone wheel with embedded input data. The default dependencies support
 both process and plot; the `tables` extra adds the optional chemistry solver
 and table-building tools.
 
+The package builds with setuptools and a pinned Cython/SciPy build environment.
+`uv sync` compiles [products/_gaussian_fractions.pyx](../src/quokka2s/products/_gaussian_fractions.pyx)
+for spectrum processing; no manual Cython installation is needed. The build
+cache tracks that file and `pyproject.toml`, so editing the native source causes
+the next sync to rebuild it. Generated C and native binaries are local build
+products. Plot reads saved arrays without importing this processing extension.
+
 ## Where each kind of file belongs
 
 | Directory | Contents | In Git? |
@@ -58,6 +65,10 @@ and table-building tools.
    line's emissivity and temperature, then apply foreground dust.
 5. [emission_products.py](../src/quokka2s/products/emission_products.py): send the
    same calculated batch to image, spectrum and gas-phase accumulators.
+   [integrated_spectra.py](../src/quokka2s/products/integrated_spectra.py)
+   selects available cells and thermal groups; its compiled
+   [_gaussian_fractions.pyx](../src/quokka2s/products/_gaussian_fractions.pyx)
+   fills channel probabilities before the existing NumPy luminosity reduction.
 6. [plot_emission_results.py](../src/quokka2s/plot_emission_results.py): draw the
    saved products selected by the same [configuration](../configs/emission.yaml).
 

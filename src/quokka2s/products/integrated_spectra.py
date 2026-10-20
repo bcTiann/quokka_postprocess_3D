@@ -7,13 +7,16 @@ select a chemistry model, interpolate tables, or apply transfer.
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+import threading
 
 import numpy as np
 from scipy.special import erf as scipy_erf
+from scipy.special import geterr as scipy_geterr
 
 from quokka2s.constants import ATOMIC_MASS_UNIT_G, BOLTZMANN_ERG_K, SPEED_OF_LIGHT_KMS
 from quokka2s.line_definitions import LINE_DEFINITIONS
 from quokka2s.products import DUST_STATES, REGIME_KEYS
+from quokka2s.products._gaussian_fractions import fill_channel_fractions
 from quokka2s.products.line_velocity_moments import (
     LineVelocityMoments,
     MINIMUM_GAUSSIAN_WIDTH_KMS,
@@ -79,29 +82,67 @@ def accumulate_velocity_spectra(
     luminosity = luminosity[emitting]
     output_shape = (velocity_edges_kms.size - 1, luminosity.shape[1])
     delta_v = float(velocity_edges_kms[1] - velocity_edges_kms[0])
-    channel_chunk = 150
+    channel_chunk = 64
+    scratch = threading.local()
 
     def accumulate_chunk(cell0: int) -> np.ndarray:
         """Return this cell chunk's (channel, profile) dL/dv [erg/s/(km/s)]."""
         cell1 = min(cell0 + cell_chunk, velocity.size)
-        centers = velocity[cell0:cell1][None, :]
+        cell_count = cell1 - cell0
+        centers = velocity[cell0:cell1]
         values = luminosity[cell0:cell1]
         sigma = np.maximum(
             thermal[cell0:cell1],
             MINIMUM_GAUSSIAN_WIDTH_KMS,
-        )[None, :]
+        )
         denominator = np.sqrt(2.0) * sigma
+        if getattr(scratch, "cell_count", None) != cell_count:
+            # Exact cell counts keep the short final chunk C-contiguous too.
+            scratch.previous = np.empty(shape=(cell_count,), dtype=float)
+            scratch.fractions = np.empty(
+                shape=(channel_chunk, cell_count),
+                dtype=float,
+            )
+            scratch.cell_count = cell_count
+        error_policies = scipy_geterr()
+        numpy_error_policies = np.geterr()
+        use_fused_kernel = (
+            velocity_edges_kms.flags.aligned
+            and numpy_error_policies == {
+                "divide": "warn",
+                "over": "warn",
+                "under": "ignore",
+                "invalid": "warn",
+            }
+            and all(
+                policy == "ignore"
+                for category, policy in error_policies.items()
+                if category != "memory"
+            )
+        )
+        # Returned partials must be independent of worker scratch: a later task
+        # can start before executor.map consumes this task's result.
         partial = np.zeros(output_shape, dtype=float)
         for channel0 in range(0, output_shape[0], channel_chunk):
             channel1 = min(channel0 + channel_chunk, output_shape[0])
-            edges = velocity_edges_kms[channel0:channel1 + 1, None]
-            # These two arrays belong only to this task. Reuse their storage
-            # while preserving the subtraction, division and multiplication order.
-            erf_edges = edges - centers
-            erf_edges /= denominator
-            scipy_erf(erf_edges, out=erf_edges)
-            fractions = erf_edges[1:] - erf_edges[:-1]
-            fractions *= 0.5
+            edges = velocity_edges_kms[channel0:channel1 + 1]
+            fractions = scratch.fractions[:channel1 - channel0]
+            if use_fused_kernel:
+                fill_channel_fractions(
+                    edges=edges,
+                    centers=centers,
+                    denominator=denominator,
+                    previous=scratch.previous,
+                    fractions=fractions,
+                )
+            else:
+                # Retain NumPy/SciPy reporting for nondefault error policies
+                # and NumPy's handling of unaligned channel-edge arrays.
+                erf_edges = edges[:, None] - centers[None, :]
+                erf_edges /= denominator[None, :]
+                scipy_erf(erf_edges, out=erf_edges)
+                np.subtract(erf_edges[1:], erf_edges[:-1], out=fractions)
+                fractions *= 0.5
             partial[channel0:channel1] = np.einsum(
                 "kc,cm->km", fractions, values, optimize=False,
             ) / delta_v

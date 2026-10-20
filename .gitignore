@@ -4,6 +4,10 @@
 *.egg-info/
 /build/
 /dist/
+# Local Cython build products; the readable .pyx source is tracked.
+/src/quokka2s/products/_gaussian_fractions.c
+/src/quokka2s/products/_gaussian_fractions*.so
+/src/quokka2s/products/_gaussian_fractions*.pyd
 .ipynb_checkpoints/
 .DS_Store
 .vscode/

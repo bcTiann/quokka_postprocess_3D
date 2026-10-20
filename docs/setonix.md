@@ -48,11 +48,14 @@ uv sync --python "$(command -v python)"
 ```
 
 uv creates `.venv` and installs the checkout in editable mode. No activation,
-`PYTHONPATH` or manual `pip install` is needed. The first yt build needs Git and
-C/C++ build tools. After setup, later logins only need `cd` to this repository
+`PYTHONPATH` or manual `pip install` is needed. Building yt and the Cython
+spectrum kernel needs Git and C/C++ build tools. uv installs the pinned Cython
+and SciPy build dependencies automatically. Keep a GCC/Clang-compatible C
+compiler available when rebuilding the spectrum extension after a source update;
+`uv sync` tracks `src/quokka2s/products/_gaussian_fractions.pyx` for rebuilds.
+After setup, later logins only need `cd` to this repository
 and the `uv run` commands below. They reuse the existing environment and check
-its dependencies automatically; no activation, repeated exports or Python
-module loading is needed for this validated environment.
+its dependencies automatically, without activation or repeated exports.
 
 Only the small shell-startup and installer-configuration files remain in home;
 home must still allow those small writes. The binaries, environment and caches
