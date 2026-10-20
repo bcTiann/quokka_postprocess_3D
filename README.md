@@ -38,18 +38,18 @@ instead: uv and its caches belong under `$MYSOFTWARE` to avoid the home quota.
 
 ## 3. Set the inputs
 
-In [configs/emission.yaml](configs/emission.yaml), set the common snapshot root
-and your writable output root once:
+Edit [configs/emission.yaml](configs/emission.yaml):
 
 ```yaml
-source_root: /path/to/simulations
+jobname: sigma13.v2
+dataset: ../inputs/snapshots/plt0655228
 results_dir: ../output
 ```
 
-Choose an individual snapshot with its complete `JOB/RUN/PLT` path below that
-root, for example `job41101509-sigma13/run1/plt0008703`. Job numbers and run names
-remain explicit; there is no sigma-to-job alias. Relative YAML paths start at
-the YAML file. Shell variables such as `$MYSCRATCH` are not expanded there.
+`dataset` is the complete snapshot directory. `jobname` names its output group;
+change it yourself when switching jobs, since no job identity is inferred from
+the input path. `results_dir` is your writable output root. Relative YAML paths
+start at the YAML file. Shell variables such as `$MYSCRATCH` are not expanded there.
 
 The YAML selects the bundled expanded DESPOTIC, Cloudy and dust tables; no
 table building is required. Coverage is snapshot-dependent; see
@@ -60,16 +60,18 @@ table building is required. Coverage is snapshot-dependent; see
 From the repository root:
 
 ```bash
-uv run process job41101509-sigma13/run1/plt0008703 --x 64 66 --y 64 66
+uv run process
 ```
 
-This small region selects x/y indices 64 and 65, with complete z columns.
-Ranges include the start and exclude the stop. Omit `--x` and `--y` to select
-the full box when supplying `JOB/RUN/PLT`.
+This uses the YAML settings. For a small setup test, run
+`uv run process --x 64 66 --y 64 66`: x/y indices 64 and 65, with complete z
+columns. Ranges include the start and exclude the stop. Each supplied CLI axis
+overrides its YAML range; omitted axes keep their YAML settings.
 
 Process prints each slab's x/y/z bounds, reads the snapshot and tables without
 modifying them, and saves under
-`results_dir/JOB/RUN/PLT/region_x64-66_y64-66/processed/`. A full box has no region
+`results_dir/jobname/snapshot_name/processed/`. Explicit x/y ranges add, for
+example, `region_x64-66_y64-66/` before `processed/`. A full box has no region
 folder. Process refuses an existing `processed/` directory; use a fresh results
 root for a separate run.
 
@@ -78,19 +80,29 @@ root for a separate run.
 After process finishes, use the same selection:
 
 ```bash
-uv run plot job41101509-sigma13/run1/plt0008703 --x 64 66 --y 64 66
+uv run plot
 ```
 
+For the small region above, use `uv run plot --x 64 66 --y 64 66` instead.
 Plot prints its progress and reads only saved numerical products, without
 opening the snapshot or emission tables. It saves `figures/` and
 `figures_titled/` beside `processed/`, each with `png/` and `pdf/` directories.
 Set `titled_figures: false` to save only the manuscript version.
 
-Both commands accept `--config /path/to/emission.yaml`. The original YAML-only
-commands, `uv run process` and `uv run plot`, still use `dataset`, `jobname` and
-the YAML x/y ranges. With `JOB/RUN/PLT`, the command selects the snapshot and
-region instead; tables, workers and output root still come from YAML. Process
-records the effective settings in `emission_report.json`.
+Both commands accept `--config /path/to/emission.yaml`. To select another
+snapshot without editing `dataset`, supply its absolute path and the same
+region to both commands:
+
+```bash
+uv run process --dataset /path/to/simulations/plt0008703 --x 64 66 --y 64 66
+uv run plot --dataset /path/to/simulations/plt0008703 --x 64 66 --y 64 66
+```
+
+CLI `--dataset` accepts an absolute path (including `~/...`); YAML keeps its
+existing relative-path support. `jobname`, tables, workers and output root still
+come from YAML. Plot uses only the dataset folder name to locate saved products;
+the original simulation is not needed. Process records its effective settings
+in `emission_report.json`.
 
 [Detailed usage](docs/usage.md) · [Methods](docs/emission_method.md) ·
 [Code guide](docs/code_walkthrough.md) · [Repository layout](docs/repository_layout.md)

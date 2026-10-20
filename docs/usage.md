@@ -46,14 +46,13 @@ Do not manually edit `uv.lock`.
 ## Shared configuration
 
 Process and plot both read [configs/emission.yaml](../configs/emission.yaml).
-Choose one snapshot either in the YAML or with an exact `JOB/RUN/PLT` argument.
-Tables, worker settings and plotting choices continue to come from the YAML.
+Choose one snapshot in the YAML, or override its dataset and x/y ranges with
+explicit command-line options. Other settings continue to come from the YAML.
 
 | Setting | Meaning |
 |---|---|
-| `jobname` | Simulation setup, for example `sigma13.v2` or `sigma50` |
+| `jobname` | Output group name, for example `sigma13.v2`; change it manually when switching jobs |
 | `dataset` | Complete QUOKKA snapshot directory |
-| `source_root` | Common snapshot root for command-line `JOB/RUN/PLT` selection; defaults to `../inputs/snapshots` in the shipped YAML |
 | `results_dir` | Root containing all jobs and snapshots |
 
 ```yaml
@@ -104,8 +103,7 @@ run, explicitly select `interpolated_old.npz` and use a new results root; changi
 the table does not update existing saved products.
 
 The supplied YAML uses repository-local input and output paths. To store data
-elsewhere, set `dataset` (or CLI `source_root`) and `results_dir` to the desired
-locations. The
+elsewhere, set `dataset` and `results_dir` to the desired locations. The
 [Setonix guide](setonix.md) keeps the repository and bundled tables under
 `$MYSOFTWARE`, and snapshots and results under `$MYSCRATCH`.
 
@@ -129,7 +127,7 @@ the region folder and set the same x/y ranges in the shared YAML.
 |---|---|
 | Inside a YAML configuration | Directory containing that YAML file |
 | Command-line `--config` | Current terminal working directory |
-| Positional `JOB/RUN/PLT` | YAML `source_root` for process input; YAML `results_dir` for saved results |
+| Command-line `--dataset` | Must be absolute after expanding `~`; no relative-path base |
 | Bundled reference data | Source checkout containing `src/quokka2s/` |
 
 Paths used by each command are resolved to absolute `Path` objects at the entry
@@ -144,46 +142,32 @@ Absolute paths and `~/...` are supported in the supplied configurations too.
 Use absolute paths for snapshot and result locations outside the clone.
 YAML does not expand `$VARIABLE` expressions.
 
-### Select a job/run/snapshot on the command line
-
-Set `source_root` once to the directory containing your job folders. Then run:
+### Override the dataset or region on the command line
 
 ```bash
-uv run process job41101509-sigma13/run1/plt0008703 --x 64 128 --y 32 64
-uv run plot job41101509-sigma13/run1/plt0008703 --x 64 128 --y 32 64
+uv run process --dataset /path/to/simulations/plt0008703 --x 64 128 --y 32 64
+uv run plot --dataset /path/to/simulations/plt0008703 --x 64 128 --y 32 64
 ```
 
-The positional path must have exactly three literal components: job, run and
-snapshot, with the snapshot named `plt` followed by digits. It is relative to
-`source_root`, not the terminal directory. Absolute paths and `.`/`..` components
-are rejected; there is no alias or wildcard expansion. Both commands retain
-the complete identity in the result path:
+Both commands accept `--dataset ABS_PATH`, `--x START STOP`, `--y START STOP`
+and `--config PATH`. CLI `--dataset` must be an absolute path after expanding
+`~`; a relative CLI dataset is rejected. Relative datasets inside YAML continue
+to resolve from the YAML directory. Each supplied option overrides only its
+corresponding YAML setting; omitted dataset or axes keep their YAML values.
+Native ranges are half-open, and z always spans complete original columns.
 
-```text
-results_dir/job41101509-sigma13/run1/plt0008703/region_x64-128_y32-64/
-```
+`jobname` still comes from YAML and only names the output group. Change it
+manually when switching jobs; no job number or run name is inferred from the
+dataset. Both commands select the same result directory, for example
+`results_dir/jobname/plt0008703/region_x64-128_y32-64/`.
+Process reads the selected snapshot and refuses existing process outputs.
+Plot uses only the dataset folder name to select saved products, without
+checking the original snapshot or opening tables. Use the same effective
+dataset, jobname and region for process and plot.
 
-With this positional path, YAML `dataset` and `jobname` are not used. An omitted
-`--x` or `--y` selects that entire axis, regardless of the YAML region. Supplying
-neither axis selects the full snapshot, with no region folder. `--config PATH`
-can still select another YAML, and only one exact snapshot is processed.
-Process reads `source_root/JOB/RUN/PLT`; plot only selects the saved result
-directory. Plot never checks that the original root or snapshot still exists
-and never opens a table. Keep results outside the protected source root.
-
-Without a positional path, the original YAML selection is unchanged. Optional
-`--x START STOP` and `--y START STOP` override only the corresponding YAML ranges;
-an axis not supplied on the command line keeps its YAML value. Use the same
-effective selection for process and plot. For example:
-
-```bash
-uv run process --config configs/emission.yaml --x 64 66 --y 64 66
-uv run plot --config configs/emission.yaml --x 64 66 --y 64 66
-```
-
-`emission_report.json` saves the effective `run_configuration`, including the
-selected source/result paths, ranges, tables and execution settings. This is
-the configuration used for that process run, rather than a later edited YAML.
+`emission_report.json` saves the effective `run_configuration`, including
+dataset/result paths, ranges, tables and execution settings. CLI overrides do
+not edit YAML; a later command or diagnostic does not inherit them.
 
 ## Processing settings
 
@@ -348,8 +332,8 @@ each 2 × 2 group rather than averaging. It retains `images.npz` at native
 resolution and does not read the snapshot. Set `image_downsample_factor: 2`
 in the shared YAML to select it. For another product directory, use
 `--products PATH` when preparing it.
-This preparation tool does not accept `JOB/RUN/PLT` or CLI x/y selections.
-For results selected with the new process command, pass their complete
+This preparation tool does not accept `--dataset` or CLI x/y selections.
+For results selected with process overrides, pass their complete
 `processed/` directory with `--products`; otherwise it uses the YAML selection.
 
 Intrinsic and attenuated images of one line share a colour range from
@@ -474,7 +458,7 @@ summarizes the table-query rules used during emission processing.
 ## Check table-input ranges
 
 This diagnostic still selects `dataset`, `jobname` and x/y ranges from YAML;
-it does not inherit the last process command's `JOB/RUN/PLT` or CLI region.
+it does not inherit the last process command's dataset or CLI region.
 Set the intended target in `configs/emission.yaml` (or a separate YAML passed
 with `--config PATH`), then run:
 

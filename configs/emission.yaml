@@ -1,14 +1,14 @@
-# YAML-only selection. Relative paths start at this YAML file.
+# Shared selection. Relative YAML paths start at this file.
 jobname: sigma13.v2
 dataset: ../inputs/snapshots/plt0655228
 results_dir: ../output
 # Results: ../output/sigma13.v2/plt0655228/{processed,figures,figures_titled}/
 
-# Root for optional CLI selection JOB/RUN/PLT. Ignored by YAML-only selection.
-# On Setonix, set this once to the directory containing the job directories.
-source_root: ../inputs/snapshots
-# uv run process job41101509-sigma13/run1/plt0008703 --x 64 128 --y 32 64
-# CLI results preserve JOB/RUN/PLT beneath results_dir.
+# jobname only names the output group; change it manually when switching jobs.
+# Optional overrides on both commands; CLI dataset paths must be absolute:
+# uv run process --dataset /absolute/path/plt0008703 --x 64 128 --y 32 64
+# uv run plot --dataset /absolute/path/plt0008703 --x 64 128 --y 32 64
+# Omitted CLI values keep the YAML dataset or corresponding x/y range.
 
 # Optional native x-y region; null selects the full axis. z stays complete.
 # For example, x_index_range: [64, 128] selects x indices 64 through 127.

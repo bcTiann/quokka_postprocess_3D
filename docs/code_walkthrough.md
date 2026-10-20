@@ -12,17 +12,17 @@ uv run plot
 From the repository root, both read the default `configs/emission.yaml`.
 Use `--config PATH` to select another file. Each runs directly;
 there is no shared dispatcher.
-Both also accept an exact `JOB/RUN/PLT` selection and `--x START STOP` /
-`--y START STOP`, for example:
+Both also accept an absolute `--dataset` path and `--x START STOP` /
+`--y START STOP` overrides, for example:
 
 ```bash
-uv run process job41101509-sigma13/run1/plt0008703 --x 64 128 --y 32 64
-uv run plot job41101509-sigma13/run1/plt0008703 --x 64 128 --y 32 64
+uv run process --dataset /path/to/simulations/plt0008703 --x 64 128 --y 32 64
+uv run plot --dataset /path/to/simulations/plt0008703 --x 64 128 --y 32 64
 ```
 
 First prepare the environment with `uv sync`. uv
-automatically installs the checkout in editable mode and registers the two
-commands from `[project.scripts]` in `pyproject.toml`. They call the existing
+automatically installs the checkout in editable mode and registers commands
+from `[project.scripts]` in `pyproject.toml`. Process and plot call the existing
 `process_snapshot.main()` and `plot_emission_results.main()` functions directly.
 No activation, import-path export, or manual editable installation is needed.
 Plot reports the saved-results directory, each line being drawn, output paths,
@@ -31,7 +31,7 @@ The equivalent `uv run python -m quokka2s.process_snapshot` and
 `uv run python -m quokka2s.plot_emission_results` commands remain useful
 for Python debugging.
 
-For the original YAML-only commands, these settings select one snapshot and its results:
+These YAML settings select one snapshot and its results:
 
 ```yaml
 jobname: sigma13.v2
@@ -51,16 +51,16 @@ uses `all` in the name; both omitted or `null` keep the full-box directory.
 These names require only configuration values, so plot can select a region
 without the original snapshot.
 
-With a positional `JOB/RUN/PLT`, the shared selection logic instead uses
-`source_root/JOB/RUN/PLT` for process and `results_dir/JOB/RUN/PLT` for both
-commands' outputs. `source_root` is a YAML path; job/run/snapshot are three
-literal relative components, with no aliases or wildcard search. This selection
-ignores YAML `dataset`, `jobname` and region ranges: omitted CLI axes are full.
-Without a positional selection, explicit CLI axes override only matching YAML
-axes. Both modes use half-open native indices and complete z columns. Plot
-receives only saved-product/output paths, with no source or table access.
+The shared selection logic applies only explicitly supplied CLI overrides:
+`--dataset` replaces YAML `dataset`, while `--x` and `--y` each replace their
+corresponding YAML range. Omitted options retain YAML values. CLI dataset paths
+must be absolute after expanding `~`; YAML relative paths remain relative to
+the YAML file. `jobname` stays a manually chosen output group and is never
+inferred from the input path. Half-open native indices and complete z columns
+are unchanged. Plot receives only saved-product/output paths, using the dataset
+folder name without source or table access.
 
-The two main commands are in the [root README](../README.md). Detailed
+The main commands are in the [root README](../README.md). Detailed
 settings and table-building commands are in the [usage guide](usage.md).
 The scientific choices are in the [physics reference](emission_method.md).
 

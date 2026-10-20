@@ -95,8 +95,8 @@ def main(argv=None) -> None:
 
     argv is a sequence of command arguments, or None for sys.argv[1:].
     From the repository root, the default is configs/emission.yaml;
-    --config PATH selects another YAML file. Optional JOB/RUN/PLT and --x/--y
-    locate saved products without accessing original snapshot or table paths.
+    --config PATH selects another YAML file. --dataset and --x/--y override the
+    YAML selection, locating saved products without accessing snapshots or tables.
     """
     parser = argparse.ArgumentParser(
         prog='plot',
@@ -110,7 +110,7 @@ def main(argv=None) -> None:
     try:
         config = load_plot_config(
             path=config_path,
-            relative_snapshot=args.snapshot,
+            dataset=args.dataset,
             x_index_range=args.x_index_range,
             y_index_range=args.y_index_range,
         )

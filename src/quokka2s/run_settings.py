@@ -1,4 +1,4 @@
-"""Read shared YAML defaults and optional snapshot/region command arguments.
+"""Read shared YAML defaults and optional dataset/region command arguments.
 
 Only the paths and optional execution settings listed below are accepted. A
 relative path in the YAML file is relative to that file, not to the shell's
@@ -34,7 +34,6 @@ class RunSelection:
     the snapshot or following its symlink. Index ranges are parsed [start, stop)
     tuples, or None for a full axis. directory is an absolute Path: the snapshot
     directory for a full box, or its named region subdirectory for explicit ranges.
-    run_name is the literal RUN directory in JOB/RUN/PLT mode, otherwise None.
     Example: x=(64, 66), y=None selects plt0916720/region_x64-66_yall/.
     """
 
@@ -43,7 +42,6 @@ class RunSelection:
     x_index_range: tuple[int, int] | None
     y_index_range: tuple[int, int] | None
     directory: Path
-    run_name: str | None = None
 
 
 @dataclass(frozen=True)
@@ -71,7 +69,6 @@ class ProcessSettings:
     max_slabs: int | None = None
     x_index_range: tuple[int, int] | None = None
     y_index_range: tuple[int, int] | None = None
-    run_name: str | None = None
 
 
 @dataclass(frozen=True)
@@ -98,7 +95,7 @@ _PROCESS_DEFAULTS = {
     field.name: field.default
     for field in fields(ProcessSettings)
     if field.default is not MISSING
-    and field.name not in (*_REGION_INDEX_RANGES, "run_name")
+    and field.name not in _REGION_INDEX_RANGES
 }
 for name in _PROCESS_TABLE_PATHS:
     # Bundled defaults stay anchored to this repository, even for external YAML.
@@ -113,21 +110,21 @@ _ALLOWED_SETTINGS = (
     | set(_PROCESS_DEFAULTS)
     | set(_REGION_INDEX_RANGES)
     | set(_PLOT_DEFAULTS)
-    | {"titled_figures", "source_root"}
+    | {"titled_figures"}
 )
 
 
 def add_run_selection_arguments(parser: argparse.ArgumentParser) -> None:
-    """Add the shared YAML, optional JOB/RUN/PLT, and native x/y selection.
+    """Add shared YAML defaults and explicit dataset/native x/y overrides.
 
-    Example: job41101509-sigma13/run1/plt0008703 --x 64 128 --y 32 64.
-    The two bounds of each axis are separate integers; stop is excluded.
+    Example: --dataset /simulations/plt0008703 --x 64 128 --y 32 64.
+    Omitted options retain YAML values; index stops are excluded.
     """
     parser.add_argument(
-        "snapshot",
-        nargs="?",
-        metavar="JOB/RUN/PLT",
-        help="Snapshot path relative to source_root; preserves job/run in outputs",
+        "--dataset",
+        type=Path,
+        metavar="PATH",
+        help="Absolute snapshot path overriding YAML dataset; plot uses only its folder name",
     )
     parser.add_argument(
         "--config",
@@ -142,14 +139,13 @@ def add_run_selection_arguments(parser: argparse.ArgumentParser) -> None:
             type=int,
             nargs=2,
             metavar=("START", "STOP"),
-            help=f"Native {axis} indices [START, STOP), stop exclusive; z remains complete",
+            help=f"Override YAML {axis} indices [START, STOP); z remains complete",
         )
 
 
 def _read_mapping(path: str | Path) -> tuple[Path, dict]:
     """Read a YAML mapping and reject unknown setting names.
 
-    Required settings depend on whether JOB/RUN/PLT was supplied on the CLI.
     Return the absolute config path and values, without opening any input data.
     """
     config_path = resolve_path(path)
@@ -162,6 +158,8 @@ def _read_mapping(path: str | Path) -> tuple[Path, dict]:
         raise ValueError(f"{config_path} must contain a YAML mapping")
     if any(type(key) is not str for key in values):
         raise ValueError(f"{config_path} must use string setting names")
+    if "source_root" in values:
+        raise ValueError("Remove source_root from the emission YAML; set dataset to the snapshot path instead")
     unknown = set(values) - _ALLOWED_SETTINGS
     if unknown:
         raise ValueError(f"Unknown setting(s) in {config_path}: {', '.join(sorted(unknown))}")
@@ -193,53 +191,32 @@ def read_run_selection(
     supplied: dict,
     config_directory: Path,
     *,
-    relative_snapshot: str | None = None,
+    dataset: str | Path | None = None,
     x_index_range: list[int] | None = None,
     y_index_range: list[int] | None = None,
 ) -> RunSelection:
     """Select one saved-result directory without accessing original inputs.
 
-    A relative_snapshot is exactly JOB/RUN/PLT. Its omitted CLI axes are full;
-    YAML dataset/jobname/ranges do not select this mode's inputs or outputs.
-    Without it, preserve the YAML selection and override only supplied axes.
-    Paths in YAML start at config_directory. Legacy dataset naming uses only
-    the spelled folder name, so plot works without the original snapshot.
+    Explicit CLI options replace only their corresponding YAML values. jobname
+    always labels the output group; dataset supplies the spelled snapshot folder
+    name without resolving or inspecting the source. Plot therefore works when
+    the original snapshot and emission tables are unavailable.
     """
-    required = _RUN_REQUIRED_SETTINGS if relative_snapshot is None else {"results_dir"}
+    required = _RUN_REQUIRED_SETTINGS if dataset is None else {"jobname", "results_dir"}
     missing = required - set(supplied)
     if missing:
         raise ValueError(f"Missing setting(s): {', '.join(sorted(missing))}")
-    run_name = None
-    if relative_snapshot is None:
-        dataset = supplied["dataset"]
-        if type(dataset) is not str or not dataset.strip():
-            raise ValueError("dataset must be a nonempty path string")
-        snapshot_name = _folder_name("dataset folder name", Path(dataset).name)
-        jobname = _folder_name("jobname", supplied["jobname"])
-        if x_index_range is None:
-            x_index_range = supplied.get("x_index_range")
-        if y_index_range is None:
-            y_index_range = supplied.get("y_index_range")
-        output_parts = (jobname, snapshot_name)
-    else:
-        if type(relative_snapshot) is not str or "\\" in relative_snapshot:
-            raise ValueError("snapshot must be a relative JOB/RUN/PLT path")
-        parts = relative_snapshot.split("/")
-        if len(parts) != 3:
-            raise ValueError("snapshot must be a relative JOB/RUN/PLT path")
-        jobname = _folder_name("job directory", parts[0])
-        run_name = _folder_name("run directory", parts[1])
-        snapshot_name = _folder_name("snapshot directory", parts[2])
-        snapshot_digits = snapshot_name[3:]
-        if (not snapshot_name.startswith("plt")
-                or not snapshot_digits.isascii()
-                or not snapshot_digits.isdigit()):
-            raise ValueError("snapshot directory must be plt followed by digits")
-        output_parts = (jobname, run_name, snapshot_name)
+    dataset_name = _selected_dataset(supplied, dataset)
+    snapshot_name = _folder_name("dataset folder name", Path(dataset_name).name)
+    jobname = _folder_name("jobname", supplied["jobname"])
+    if x_index_range is None:
+        x_index_range = supplied.get("x_index_range")
+    if y_index_range is None:
+        y_index_range = supplied.get("y_index_range")
     results_dir = _path_value("results_dir", supplied["results_dir"], config_directory)
     x_index_range = _index_range("x_index_range", x_index_range)
     y_index_range = _index_range("y_index_range", y_index_range)
-    directory = results_dir.joinpath(*output_parts)
+    directory = results_dir / jobname / snapshot_name
     region_name = region_directory_name(
         x_index_range=x_index_range,
         y_index_range=y_index_range,
@@ -252,8 +229,27 @@ def read_run_selection(
         x_index_range=x_index_range,
         y_index_range=y_index_range,
         directory=directory,
-        run_name=run_name,
     )
+
+
+def _selected_dataset(supplied: dict, dataset: str | Path | None) -> str:
+    """Validate a spelled dataset path without accessing the original source.
+
+    YAML may use paths relative to its own directory. CLI overrides must be
+    absolute after expanding ~; preserving the spelled basename keeps plot
+    independent of source availability and symlink targets.
+    """
+    if dataset is not None:
+        if not isinstance(dataset, (str, Path)) or not str(dataset).strip():
+            raise ValueError("--dataset must be a nonempty absolute snapshot path")
+        expanded = Path(dataset).expanduser()
+        if not expanded.is_absolute():
+            raise ValueError("--dataset must be an absolute snapshot path")
+        return str(expanded)
+    value = supplied.get("dataset")
+    if type(value) is not str or not value.strip():
+        raise ValueError("dataset must be a nonempty path string")
+    return value
 
 
 def _positive_int(name: str, value: object, *, nullable: bool = False) -> int | None:
@@ -308,7 +304,7 @@ def region_directory_name(
 def load_process_config(
     path: str | Path,
     *,
-    relative_snapshot: str | None = None,
+    dataset: str | Path | None = None,
     x_index_range: list[int] | None = None,
     y_index_range: list[int] | None = None,
 ) -> ProcessSettings:
@@ -318,27 +314,20 @@ def load_process_config(
     worker settings count threads. x/y_index_range selects native cell indices;
     omitted axes use the full extent. The z axis always remains complete.
     Plot options in the shared file are accepted but not used by process.
-    relative_snapshot selects JOB/RUN/PLT under source_root and keeps that
-    hierarchy in outputs. Without it, retain the original YAML dataset/jobname.
+    Explicit dataset/x/y overrides replace only those YAML settings. The CLI
+    dataset must be absolute; jobname still identifies the output group.
     """
     config_path, supplied = _read_mapping(path)
     run = read_run_selection(
         supplied=supplied,
         config_directory=config_path.parent,
-        relative_snapshot=relative_snapshot,
+        dataset=dataset,
         x_index_range=x_index_range,
         y_index_range=y_index_range,
     )
-    if relative_snapshot is None:
-        dataset = _path_value("dataset", supplied["dataset"], config_path.parent)
-    else:
-        if "source_root" not in supplied:
-            raise ValueError("source_root is required for a relative snapshot selection")
-        source_root = _path_value("source_root", supplied["source_root"], config_path.parent)
-        dataset = (source_root / run.jobname / run.run_name / run.snapshot_name).resolve()
-        output_directory = run.directory.resolve()
-        if output_directory.is_relative_to(source_root) or output_directory.is_relative_to(dataset):
-            raise ValueError("results_dir must be outside source_root and the snapshot")
+    dataset = _path_value("dataset", _selected_dataset(supplied, dataset), config_path.parent)
+    if run.directory.resolve().is_relative_to(dataset):
+        raise ValueError("results_dir must be outside the snapshot")
     values = {
         name: supplied.get(name, default)
         for name, default in _PROCESS_DEFAULTS.items()
@@ -356,7 +345,6 @@ def load_process_config(
         snapshot_name=run.snapshot_name,
         x_index_range=run.x_index_range,
         y_index_range=run.y_index_range,
-        run_name=run.run_name,
         **values,
     )
 
@@ -364,7 +352,7 @@ def load_process_config(
 def load_plot_config(
     path: str | Path,
     *,
-    relative_snapshot: str | None = None,
+    dataset: str | Path | None = None,
     x_index_range: list[int] | None = None,
     y_index_range: list[int] | None = None,
 ) -> PlotSettings:
@@ -378,7 +366,7 @@ def load_plot_config(
     run = read_run_selection(
         supplied=supplied,
         config_directory=config_path.parent,
-        relative_snapshot=relative_snapshot,
+        dataset=dataset,
         x_index_range=x_index_range,
         y_index_range=y_index_range,
     )

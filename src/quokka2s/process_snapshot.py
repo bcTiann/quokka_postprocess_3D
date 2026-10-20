@@ -278,10 +278,7 @@ def print_run_settings(config, config_path: Path) -> None:
     Example: sigma13.v2/plt0916720 saves under that job/snapshot's processed/.
     """
     print(f'Configuration: {config_path}', flush=True)
-    run_parts = [config.jobname, config.snapshot_name]
-    if config.run_name is not None:
-        run_parts.insert(1, config.run_name)
-    print(f'Processing run: {"/".join(run_parts)}', flush=True)
+    print(f'Processing run: {config.jobname}/{config.snapshot_name}', flush=True)
     print(f'Simulation: {config.dataset}', flush=True)
     print(f'Numerical output: {config.output_dir}', flush=True)
     print(
@@ -296,8 +293,8 @@ def main(argv=None):
 
     argv is a sequence of command arguments, or None for sys.argv[1:].
     From the repository root, the default is configs/emission.yaml;
-    --config PATH selects another YAML file. Optional JOB/RUN/PLT and --x/--y
-    select one snapshot under source_root and its native index ranges.
+    --config PATH selects another YAML file. --dataset supplies an absolute
+    snapshot path; --x/--y override native ranges. Omitted options retain YAML.
     """
     parser = argparse.ArgumentParser(
         prog='process',
@@ -309,7 +306,7 @@ def main(argv=None):
     try:
         config = load_process_config(
             path=config_path,
-            relative_snapshot=args.snapshot,
+            dataset=args.dataset,
             x_index_range=args.x_index_range,
             y_index_range=args.y_index_range,
         )
