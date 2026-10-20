@@ -40,7 +40,8 @@ to rebuild the compiled spectrum kernel. The build cache also tracks this source
 when `uv run` checks the environment. Generated C and compiled binaries stay local.
 
 On Setonix, follow its [environment setup](docs/setonix.md#2-configure-the-environment)
-instead: uv and its caches belong under `$MYSOFTWARE` to avoid the home quota.
+instead: keep the repository, environment, caches and generated results under
+`$MYSOFTWARE` to avoid the home quota.
 
 ## 3. Set the inputs
 
@@ -54,8 +55,10 @@ results_dir: ../output
 
 `dataset` is the complete snapshot directory. `jobname` names its output group;
 change it yourself when switching jobs, since no job identity is inferred from
-the input path. `results_dir` is your writable output root. Relative YAML paths
-start at the YAML file. Shell variables such as `$MYSCRATCH` are not expanded there.
+the input path. Keep `results_dir: ../output` to save results in the repository's
+`output/` directory. On Setonix this is `$MYSOFTWARE/quokka_postprocess_3D/output/`;
+no separate scratch output directory or link is needed. Relative YAML paths
+start at the YAML file. Shell variables are not expanded there.
 
 The YAML selects the bundled expanded DESPOTIC, Cloudy and dust tables; no
 table building is required. Coverage is snapshot-dependent; see

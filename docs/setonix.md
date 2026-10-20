@@ -1,5 +1,6 @@
 # Setonix: process and plot with uv
 
+Keep the repository, environment and generated results under `$MYSOFTWARE`.
 Run from the repository root. Bundled tables need no separate DESPOTIC installation.
 
 ## 1. Clone
@@ -63,19 +64,24 @@ are stored outside home.
 
 ## 3. Set the inputs
 
-Edit [`configs/emission.yaml`](../configs/emission.yaml), using your actual
-snapshot and your own writable output root:
+Edit `jobname` and `dataset` in
+[`configs/emission.yaml`](../configs/emission.yaml). Keep `results_dir: ../output`:
 
 ```yaml
 jobname: job41101509-sigma13-run1
 dataset: /scratch/pawsey0807/chongchong/Projects-data/2026-quokka-outflow/hpc/run2.v2/job41101509-sigma13/run1/plt0008703
-results_dir: /scratch/YOUR_PROJECT/YOUR_USERNAME/quokka_results
+results_dir: ../output
 ```
+
+`../output` is relative to the YAML's `configs/` directory, so results and figures
+are saved in `$MYSOFTWARE/quokka_postprocess_3D/output/`. No separate scratch
+output directory or symbolic link is needed. The original simulation stays at
+its existing path and is read-only.
 
 Keep the supplied table paths. `jobname` only names the output group: change it
 manually when switching to another job. `dataset` selects one complete snapshot.
-Original data stays read-only. YAML does not expand `$MYSCRATCH` or other shell
-variables; relative paths start at the YAML file. Coverage is snapshot-dependent; see
+YAML does not expand shell variables; relative paths start at the YAML file.
+Coverage is snapshot-dependent; see
 [table-input checks](usage.md#check-table-input-ranges).
 
 ## 4. Process
@@ -87,8 +93,8 @@ uv run process --x 64 66 --y 64 66
 This setup test selects x/y indices 64 and 65, with complete z columns. Ranges
 include the start and exclude the stop. CLI axes override only the corresponding
 YAML ranges. For the full box, set both YAML ranges to `null` and omit these options.
-Each slab prints x/y/z bounds. Results retain the complete identity:
-`results_dir/jobname/plt0008703/region_x64-66_y64-66/processed/`. A full box has no region
+Each slab prints x/y/z bounds. Results are saved under
+`output/jobname/plt0008703/region_x64-66_y64-66/processed/`. A full box has no region
 folder. Existing `processed/` directories are not overwritten; choose a fresh
 results root for a separate run.
 

@@ -107,8 +107,10 @@ the table does not update existing saved products.
 
 The supplied YAML uses repository-local input and output paths. To store data
 elsewhere, set `dataset` and `results_dir` to the desired locations. The
-[Setonix guide](setonix.md) keeps the repository and bundled tables under
-`$MYSOFTWARE`, and snapshots and results under `$MYSCRATCH`.
+[Setonix guide](setonix.md) keeps the repository, bundled tables and generated
+results under `$MYSOFTWARE`. With `results_dir: ../output`, results stay in the
+repository's `output/` directory. Original snapshots remain at their supplied
+absolute paths and are read-only.
 
 Relative paths are resolved from the YAML file's directory, so `../inputs/` in
 `configs/emission.yaml` refers to this clone's `inputs/` directory.
