@@ -46,13 +46,14 @@ Do not manually edit `uv.lock`.
 ## Shared configuration
 
 Process and plot both read [configs/emission.yaml](../configs/emission.yaml).
-The first three settings select the simulation job, its snapshot, and the
-root directory for saved results:
+Choose one snapshot either in the YAML or with an exact `JOB/RUN/PLT` argument.
+Tables, worker settings and plotting choices continue to come from the YAML.
 
 | Setting | Meaning |
 |---|---|
 | `jobname` | Simulation setup, for example `sigma13.v2` or `sigma50` |
 | `dataset` | Complete QUOKKA snapshot directory |
+| `source_root` | Common snapshot root for command-line `JOB/RUN/PLT` selection; defaults to `../inputs/snapshots` in the shipped YAML |
 | `results_dir` | Root containing all jobs and snapshots |
 
 ```yaml
@@ -103,7 +104,8 @@ run, explicitly select `interpolated_old.npz` and use a new results root; changi
 the table does not update existing saved products.
 
 The supplied YAML uses repository-local input and output paths. To store data
-elsewhere, set `dataset` and `results_dir` to the desired locations. The
+elsewhere, set `dataset` (or CLI `source_root`) and `results_dir` to the desired
+locations. The
 [Setonix guide](setonix.md) keeps the repository and bundled tables under
 `$MYSOFTWARE`, and snapshots and results under `$MYSCRATCH`.
 
@@ -126,7 +128,8 @@ the region folder and set the same x/y ranges in the shared YAML.
 | Where a path is supplied | Base for a relative path |
 |---|---|
 | Inside a YAML configuration | Directory containing that YAML file |
-| Command-line options, including `--config` | Current terminal working directory |
+| Command-line `--config` | Current terminal working directory |
+| Positional `JOB/RUN/PLT` | YAML `source_root` for process input; YAML `results_dir` for saved results |
 | Bundled reference data | Source checkout containing `src/quokka2s/` |
 
 Paths used by each command are resolved to absolute `Path` objects at the entry
@@ -140,6 +143,47 @@ and output-overwrite rules remain in force.
 Absolute paths and `~/...` are supported in the supplied configurations too.
 Use absolute paths for snapshot and result locations outside the clone.
 YAML does not expand `$VARIABLE` expressions.
+
+### Select a job/run/snapshot on the command line
+
+Set `source_root` once to the directory containing your job folders. Then run:
+
+```bash
+uv run process job41101509-sigma13/run1/plt0008703 --x 64 128 --y 32 64
+uv run plot job41101509-sigma13/run1/plt0008703 --x 64 128 --y 32 64
+```
+
+The positional path must have exactly three literal components: job, run and
+snapshot, with the snapshot named `plt` followed by digits. It is relative to
+`source_root`, not the terminal directory. Absolute paths and `.`/`..` components
+are rejected; there is no alias or wildcard expansion. Both commands retain
+the complete identity in the result path:
+
+```text
+results_dir/job41101509-sigma13/run1/plt0008703/region_x64-128_y32-64/
+```
+
+With this positional path, YAML `dataset` and `jobname` are not used. An omitted
+`--x` or `--y` selects that entire axis, regardless of the YAML region. Supplying
+neither axis selects the full snapshot, with no region folder. `--config PATH`
+can still select another YAML, and only one exact snapshot is processed.
+Process reads `source_root/JOB/RUN/PLT`; plot only selects the saved result
+directory. Plot never checks that the original root or snapshot still exists
+and never opens a table. Keep results outside the protected source root.
+
+Without a positional path, the original YAML selection is unchanged. Optional
+`--x START STOP` and `--y START STOP` override only the corresponding YAML ranges;
+an axis not supplied on the command line keeps its YAML value. Use the same
+effective selection for process and plot. For example:
+
+```bash
+uv run process --config configs/emission.yaml --x 64 66 --y 64 66
+uv run plot --config configs/emission.yaml --x 64 66 --y 64 66
+```
+
+`emission_report.json` saves the effective `run_configuration`, including the
+selected source/result paths, ranges, tables and execution settings. This is
+the configuration used for that process run, rather than a later edited YAML.
 
 ## Processing settings
 
@@ -170,14 +214,17 @@ run for debugging. Omit it to finish the selected region or full snapshot.
 The terminal prints the selected job, snapshot path, output path, native grid,
 cell widths, and selected region before processing. It identifies each table
 as it loads. Each slab prints separate reading and emission-calculation
-messages, followed by percentage, elapsed time, and ETA. Result construction,
+messages with the slab's core x/y/z bounds, followed by percentage, elapsed time,
+and ETA. Bounds are native half-open index ranges and do not include gradient
+neighbours. Result construction,
 conservation checks, and saving also print their stages and the final output
 directory. Messages are flushed immediately, including when output is redirected
 to a log file.
 
 ## Select an x-y region
 
-Set native cell-index ranges in the [shared YAML](../configs/emission.yaml).
+Set native cell-index ranges in the [shared YAML](../configs/emission.yaml),
+or use `--x START STOP` and `--y START STOP` on both commands.
 Keep the same `results_dir`; process and plot automatically select a region folder:
 
 ```yaml
@@ -232,7 +279,8 @@ the spectral channels do not change with spatial resolution. Cell widths
 and volumes are obtained from the snapshot, not the reference grid.
 For a region, the last two image axes are its selected x/y cell counts.
 The report records the selected indices, shape, cell count and projected area;
-the original simulation geometry is also retained. The other array dimensions
+the original simulation geometry and effective `run_configuration` are also
+retained. The other array dimensions
 remain unchanged.
 
 The two dust states are intrinsic and attenuated; the two regimes are selected
@@ -300,6 +348,9 @@ each 2 × 2 group rather than averaging. It retains `images.npz` at native
 resolution and does not read the snapshot. Set `image_downsample_factor: 2`
 in the shared YAML to select it. For another product directory, use
 `--products PATH` when preparing it.
+This preparation tool does not accept `JOB/RUN/PLT` or CLI x/y selections.
+For results selected with the new process command, pass their complete
+`processed/` directory with `--products`; otherwise it uses the YAML selection.
 
 Intrinsic and attenuated images of one line share a colour range from
 `vmax/1e5` to `vmax`, saved for that resolution. Plot only selects saved fields
@@ -422,7 +473,10 @@ summarizes the table-query rules used during emission processing.
 
 ## Check table-input ranges
 
-Select a job/snapshot in the same `configs/emission.yaml`, then run:
+This diagnostic still selects `dataset`, `jobname` and x/y ranges from YAML;
+it does not inherit the last process command's `JOB/RUN/PLT` or CLI region.
+Set the intended target in `configs/emission.yaml` (or a separate YAML passed
+with `--config PATH`), then run:
 
 ```bash
 uv run python -m quokka2s.check_table_input_ranges

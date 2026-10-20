@@ -1,8 +1,14 @@
-# Usually change these three settings. Relative paths start at this YAML file.
+# YAML-only selection. Relative paths start at this YAML file.
 jobname: sigma13.v2
 dataset: ../inputs/snapshots/plt0655228
 results_dir: ../output
 # Results: ../output/sigma13.v2/plt0655228/{processed,figures,figures_titled}/
+
+# Root for optional CLI selection JOB/RUN/PLT. Ignored by YAML-only selection.
+# On Setonix, set this once to the directory containing the job directories.
+source_root: ../inputs/snapshots
+# uv run process job41101509-sigma13/run1/plt0008703 --x 64 128 --y 32 64
+# CLI results preserve JOB/RUN/PLT beneath results_dir.
 
 # Optional native x-y region; null selects the full axis. z stays complete.
 # For example, x_index_range: [64, 128] selects x indices 64 through 127.
@@ -21,7 +27,7 @@ spectral_workers: 3  # Up to 2 x 3 spectral-integration threads in total.
 titled_figures: true
 image_downsample_factor: 1
 # To select factor 2, first prepare it without rereading the simulation:
-# uv run --no-sync python -m quokka2s.prepare_emission_results --image-downsample-factor 2
+# uv run python -m quokka2s.prepare_emission_results --image-downsample-factor 2
 
 # Explicit bundled inputs, relative to this YAML file.
 # DESPOTIC is the validated expanded 55 x 60 x 64 interpolated table.

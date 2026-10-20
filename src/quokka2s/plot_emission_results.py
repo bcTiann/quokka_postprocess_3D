@@ -12,7 +12,7 @@ from quokka2s.figures.gas_phase_spectra import (
 )
 from quokka2s.figures.line_luminosity_images import plot_line_images
 from quokka2s.figures.line_spectra import plot_line_spectra
-from quokka2s.run_settings import DEFAULT_CONFIG, load_plot_config
+from quokka2s.run_settings import add_run_selection_arguments, load_plot_config
 
 
 def draw_emission_products(
@@ -95,22 +95,25 @@ def main(argv=None) -> None:
 
     argv is a sequence of command arguments, or None for sys.argv[1:].
     From the repository root, the default is configs/emission.yaml;
-    --config PATH selects another YAML file."""
+    --config PATH selects another YAML file. Optional JOB/RUN/PLT and --x/--y
+    locate saved products without accessing original snapshot or table paths.
+    """
     parser = argparse.ArgumentParser(
         prog='plot',
         description=__doc__,
     )
-    parser.add_argument(
-        '--config',
-        default=DEFAULT_CONFIG,
-        type=Path,
-        help='Shared emission YAML file (default: configs/emission.yaml)',
-    )
-    config_path = parser.parse_args(argv).config
+    add_run_selection_arguments(parser)
+    args = parser.parse_args(argv)
+    config_path = args.config
     started = time.perf_counter()
     print(f'Plot configuration: {config_path}', flush=True)
     try:
-        config = load_plot_config(config_path)
+        config = load_plot_config(
+            path=config_path,
+            relative_snapshot=args.snapshot,
+            x_index_range=args.x_index_range,
+            y_index_range=args.y_index_range,
+        )
     except (ValueError, OSError) as exc:
         parser.error(str(exc))
     print(f'Plot: reading saved numerical products from {config.products}', flush=True)

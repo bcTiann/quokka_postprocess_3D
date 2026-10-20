@@ -12,6 +12,13 @@ uv run plot
 From the repository root, both read the default `configs/emission.yaml`.
 Use `--config PATH` to select another file. Each runs directly;
 there is no shared dispatcher.
+Both also accept an exact `JOB/RUN/PLT` selection and `--x START STOP` /
+`--y START STOP`, for example:
+
+```bash
+uv run process job41101509-sigma13/run1/plt0008703 --x 64 128 --y 32 64
+uv run plot job41101509-sigma13/run1/plt0008703 --x 64 128 --y 32 64
+```
 
 First prepare the environment with `uv sync`. uv
 automatically installs the checkout in editable mode and registers the two
@@ -24,7 +31,7 @@ The equivalent `uv run python -m quokka2s.process_snapshot` and
 `uv run python -m quokka2s.plot_emission_results` commands remain useful
 for Python debugging.
 
-The first three settings select one snapshot and its results:
+For the original YAML-only commands, these settings select one snapshot and its results:
 
 ```yaml
 jobname: sigma13.v2
@@ -41,8 +48,17 @@ open the dataset path or emission tables.
 If x/y ranges are supplied, both commands add a region folder under the snapshot:
 `region_x64-66_y64-66/` for `[64, 66)` on both axes. An omitted or `null` axis
 uses `all` in the name; both omitted or `null` keep the full-box directory.
-These names come from the YAML alone, so plot can select a region without
-the original snapshot.
+These names require only configuration values, so plot can select a region
+without the original snapshot.
+
+With a positional `JOB/RUN/PLT`, the shared selection logic instead uses
+`source_root/JOB/RUN/PLT` for process and `results_dir/JOB/RUN/PLT` for both
+commands' outputs. `source_root` is a YAML path; job/run/snapshot are three
+literal relative components, with no aliases or wildcard search. This selection
+ignores YAML `dataset`, `jobname` and region ranges: omitted CLI axes are full.
+Without a positional selection, explicit CLI axes override only matching YAML
+axes. Both modes use half-open native indices and complete z columns. Plot
+receives only saved-product/output paths, with no source or table access.
 
 The two main commands are in the [root README](../README.md). Detailed
 settings and table-building commands are in the [usage guide](usage.md).
@@ -62,7 +78,7 @@ The package has five purpose-specific folders:
 
 | Stage | Function | What it produces |
 |---|---|---|
-| Read settings | `load_process_config()` | A `ProcessSettings` record with input/output paths and execution settings |
+| Read settings | `load_process_config()` | A `ProcessSettings` record with YAML settings, command-line selection and resolved input/output paths |
 | Open inputs | `processing_inputs.load_processing_inputs(config)` | `snapshot`, `emission_calculator` |
 | Create output arrays | `EmissionProducts(...)` | Initially empty image, spectrum, and gas-phase accumulators |
 | Process cells | `process_snapshot()` | The accumulated numerical results |
@@ -77,7 +93,7 @@ Input loading belongs to [processing_inputs.py](../src/quokka2s/processing_input
 belongs to [result_files.py](../src/quokka2s/result_files.py);
 [result_metadata.py](../src/quokka2s/result_metadata.py) describes saved geometry
 and dust values, and [processing_report.py](../src/quokka2s/processing_report.py)
-builds the human-readable summary.
+builds the human-readable summary, including the effective `run_configuration`.
 [products/emission_products.py](../src/quokka2s/products/emission_products.py) groups the accumulated products.
 The objects group related variables; they are not extra copies of the snapshot:
 
@@ -114,7 +130,7 @@ Inside `load_processing_inputs(config)`, follow three named steps:
 
 1. `check_input_paths()` checks the configured input and output locations.
 2. `open_snapshot()` opens yt, obtains the original grid geometry, and records
-   any x/y selection from the YAML.
+   the effective x/y selection from YAML and command-line arguments.
 3. `load_emission_calculator()` loads the tables, creates their cell readers,
    and prepares the per-line dust cross-sections. It derives line names once
    from Cloudy plus `co10` and `co21`, then constructs `CellEmissionCalculator`.
@@ -124,7 +140,10 @@ After yt opens the snapshot, `print_snapshot_summary()` displays its native grid
 physical cell widths and selected index ranges without reading cell fields.
 Stage messages precede table loading, each slab read/calculation, and final
 construction/check/saving. They are terminal messages only; the numerical
-products and the existing progress timing remain unchanged.
+products and the existing progress timing remain unchanged. Both slab stages
+print native core x/y/z bounds; x changes per slab, while y is the selected
+range and z remains the complete original column. Neighbour halo cells are
+excluded from those logged bounds.
 
 The function creates the output directory after loading succeeds and returns:
 

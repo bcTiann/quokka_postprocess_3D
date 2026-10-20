@@ -12,7 +12,7 @@ from pathlib import Path
 import time
 
 from quokka2s.physics.cell_emission import CellEmissionCalculator
-from quokka2s.run_settings import DEFAULT_CONFIG, load_process_config
+from quokka2s.run_settings import add_run_selection_arguments, load_process_config
 from quokka2s.processing_inputs import load_processing_inputs
 from quokka2s.result_files import write_emission_results, write_status
 from quokka2s.result_metadata import ResultMetadata
@@ -156,12 +156,15 @@ def process_one_slab(
     # read_slab() returns six flattened arrays, each normally shape (4194304,).
     # Neighbours are used for gradients and removed before these are returned.
     x_start, x_stop = window
+    y_start, y_stop = snapshot.xy_region['y']
+    z_stop = snapshot.shape[2]
     slab = snapshot.read_slab(
         x_start=x_start,
         x_stop=x_stop,
     )
     print(
-        f'Calculating slab: x=[{x_start}, {x_stop}); {slab.cell_count:,} cells; '
+        f'Calculating slab: x=[{x_start}, {x_stop}); y=[{y_start}, {y_stop}); '
+        f'z=[0, {z_stop}); {slab.cell_count:,} cells; '
         'line emission, images, spectra and gas phases...',
         flush=True,
     )
@@ -227,6 +230,8 @@ def process_snapshot(config, snapshot, emission_calculator, products, began):
     total_slabs = len(selected_slabs)  # Full run: 32 slabs for Nx=256, slab_nx=8.
     total_cells = count_cells_in_slabs(snapshot, selected_slabs)  # Full run: 134,217,728.
     print(f'Processing plan: {total_cells:,} cells; slab count: {total_slabs}.', flush=True)
+    y_start, y_stop = snapshot.xy_region['y']
+    z_stop = snapshot.shape[2]
 
     # 2. Create the batch worker pool once and reuse it for all selected slabs.
     # With chunk_workers=2, two batches can run together within the current slab.
@@ -241,6 +246,7 @@ def process_snapshot(config, snapshot, emission_calculator, products, began):
                 x_start, x_stop = window
                 print(
                     f'Reading slab: {slab_number}/{total_slabs}; x=[{x_start}, {x_stop}); '
+                    f'y=[{y_start}, {y_stop}); z=[0, {z_stop}); '
                     'reading cell fields and deriving columns and velocity gradients...',
                     flush=True,
                 )
@@ -272,7 +278,10 @@ def print_run_settings(config, config_path: Path) -> None:
     Example: sigma13.v2/plt0916720 saves under that job/snapshot's processed/.
     """
     print(f'Configuration: {config_path}', flush=True)
-    print(f'Processing run: {config.jobname}/{config.snapshot_name}', flush=True)
+    run_parts = [config.jobname, config.snapshot_name]
+    if config.run_name is not None:
+        run_parts.insert(1, config.run_name)
+    print(f'Processing run: {"/".join(run_parts)}', flush=True)
     print(f'Simulation: {config.dataset}', flush=True)
     print(f'Numerical output: {config.output_dir}', flush=True)
     print(
@@ -287,20 +296,23 @@ def main(argv=None):
 
     argv is a sequence of command arguments, or None for sys.argv[1:].
     From the repository root, the default is configs/emission.yaml;
-    --config PATH selects another YAML file."""
+    --config PATH selects another YAML file. Optional JOB/RUN/PLT and --x/--y
+    select one snapshot under source_root and its native index ranges.
+    """
     parser = argparse.ArgumentParser(
         prog='process',
         description=__doc__,
     )
-    parser.add_argument(
-        '--config',
-        default=DEFAULT_CONFIG,
-        type=Path,
-        help='Shared emission YAML file (default: configs/emission.yaml)',
-    )
-    config_path = parser.parse_args(argv).config
+    add_run_selection_arguments(parser)
+    args = parser.parse_args(argv)
+    config_path = args.config
     try:
-        config = load_process_config(config_path)
+        config = load_process_config(
+            path=config_path,
+            relative_snapshot=args.snapshot,
+            x_index_range=args.x_index_range,
+            y_index_range=args.y_index_range,
+        )
     except (ValueError, OSError) as exc:
         parser.error(str(exc))
 

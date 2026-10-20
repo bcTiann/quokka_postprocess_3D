@@ -34,7 +34,8 @@ and table-building tools.
 ## Start reading the current pipeline
 
 1. [shared configuration](../configs/emission.yaml): choose the simulation job,
-   snapshot and results root. The bundled emission tables are defaults.
+   snapshot and results root, or set `source_root` once and select exact
+   `JOB/RUN/PLT` paths on the command line. The bundled emission tables are defaults.
 2. [process_snapshot.py](../src/quokka2s/process_snapshot.py): read inputs, process
    slabs, build/check/save results.
 3. [snapshot_reader.py](../src/quokka2s/snapshot_reader.py): derive six copied
@@ -101,12 +102,18 @@ The root modules also separate the final processing steps:
 `result_metadata.py` extracts selected pixel geometry and ordered dust values;
 `processing_report.py` builds the readable summary; `result_files.py` writes
 already-built arrays and the report. `run_settings.py` returns `ProcessSettings`
-or `PlotSettings` from the same YAML. Both derive the selected snapshot's
-directory from `results_dir/jobname/snapshot_name`. Process writes its
+or `PlotSettings` from the same YAML and command-line selection. YAML-only runs
+derive the snapshot directory from `results_dir/jobname/snapshot_name`.
+A positional `JOB/RUN/PLT` preserves all three components under `results_dir`
+and selects process input below `source_root`; plot needs no source-root access.
+Process writes its
 `processed/` subdirectory; plot reads that subdirectory and writes figures.
 Explicit x/y ranges add a shared region subdirectory, for example
 `region_x64-66_y64-66/`; an omitted or `null` axis is named `all`. Both axes
 omitted or `null` keep the full-box result directory.
+With a positional snapshot, omitted CLI axes select full axes and YAML ranges
+are ignored. Without one, CLI axes override only the corresponding YAML ranges.
+The effective process settings are saved as `run_configuration` in the report.
 `input_paths.py` stores bundled input locations without importing calculations.
 `check_table_input_ranges.py` reuses the same configuration and physical field
 definitions to survey input coordinates. `table_input_reader.py` reads complete
@@ -184,7 +191,10 @@ output/sigma13.v2/plt0655228/
 
 Jobs such as `sigma13.v2` and `sigma50` have separate directories, so both can
 contain a snapshot named `plt0655228`. More snapshots of one job sit alongside
-each other under that job's directory.
+each other under that job's directory. Command-line selections additionally
+retain the run folder, for example
+`output/job41101509-sigma13/run1/plt0008703/region_x64-128_y32-64/`.
+There is no inferred correspondence between a sigma label and a job number.
 
 Processing writes a new directory per run. Plotting may redraw from the saved
 products many times. Each figure version keeps PNG and PDF files in its own

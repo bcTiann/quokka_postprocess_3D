@@ -6,6 +6,7 @@ It does not query tables, change product arrays, or perform validation.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from pathlib import Path
 import time
 
 import numpy as np
@@ -65,6 +66,10 @@ def build_processing_report(
         'status': 'completed' if outputs.processing_complete else 'partial diagnostic',
         'jobname': config.jobname,
         'snapshot_name': config.snapshot_name,
+        'run_configuration': {
+            name: str(value) if isinstance(value, Path) else value
+            for name, value in vars(config).items()
+        },
         'full_snapshot': full,
         'processing_complete': outputs.processing_complete,
         'processing_region': metadata.processing_region,

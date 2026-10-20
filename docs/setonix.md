@@ -60,43 +60,47 @@ are stored outside home.
 
 ## 3. Set the inputs
 
-Edit [`configs/emission.yaml`](../configs/emission.yaml), using your actual
-absolute paths:
+Edit [`configs/emission.yaml`](../configs/emission.yaml) once, using the common
+simulation root and your own writable output root:
 
 ```yaml
-jobname: sigma13.v2
-dataset: /scratch/YOUR_PROJECT/YOUR_USERNAME/simulations/sigma13.v2/plt0008703
+source_root: /scratch/pawsey0807/chongchong/Projects-data/2026-quokka-outflow/hpc/run2.v2
 results_dir: /scratch/YOUR_PROJECT/YOUR_USERNAME/quokka_results
-x_index_range: null
-y_index_range: null
 ```
 
-Keep the supplied table paths. `dataset` must point to the complete snapshot
-including `Header`, `metadata.yaml` and its data directories. The simulation
-is read-only; results go in your own writable directory. YAML does not expand
-`$MYSCRATCH` or other shell variables. Relative paths start at the YAML file.
+Keep the supplied table paths. These job/run directories live below that root:
 
-For a small setup test, set both x/y ranges to `[64, 66]`; z remains complete.
-Use `null` for the full box. Coverage is snapshot-dependent; see
+```text
+job41101509-sigma13/run1
+job41114622-sigma13-zmet0.2/run1
+job41114623-sigma50/run1
+job44195690-sigma2.5-2pc/run1
+```
+
+Select one exact `JOB/RUN/PLT` path per command; no job alias or wildcard is used.
+Original data stays read-only. YAML does not expand `$MYSCRATCH` or other shell
+variables; relative paths start at the YAML file. Coverage is snapshot-dependent; see
 [table-input checks](usage.md#check-table-input-ranges).
 
 ## 4. Process
 
 ```bash
-uv run process
+uv run process job41101509-sigma13/run1/plt0008703 --x 64 66 --y 64 66
 ```
 
-Process prints its progress and saves to
-`results_dir/jobname/snapshot_name/processed/`. Explicit x/y ranges add a region
-folder automatically. An existing `processed/` directory is not overwritten;
-choose a fresh results root for a separate run.
+This setup test selects x/y indices 64 and 65, with complete z columns. Ranges
+include the start and exclude the stop. Omit `--x` and `--y` for the full box.
+Each slab prints x/y/z bounds. Results retain the complete identity:
+`results_dir/JOB/RUN/PLT/region_x64-66_y64-66/processed/`. A full box has no region
+folder. Existing `processed/` directories are not overwritten; choose a fresh
+results root for a separate run.
 
 ## 5. Plot
 
-After process finishes, keep the same YAML and run:
+After process finishes, use the same selection:
 
 ```bash
-uv run plot
+uv run plot job41101509-sigma13/run1/plt0008703 --x 64 66 --y 64 66
 ```
 
 Plot prints its progress and reads only saved products, without opening the
@@ -104,7 +108,10 @@ simulation or querying tables. Figures are saved beside `processed/` under
 `figures/` and `figures_titled/`, each with `png/` and `pdf/` directories.
 Set `titled_figures: false` to save only the manuscript version.
 
-Both commands accept `--config /path/to/emission.yaml`. For local plotting,
-copy the complete job/snapshot/region results structure and set the local
+Both commands accept `--config /path/to/emission.yaml`. The original YAML-only
+`uv run process` and `uv run plot` still use `dataset`, `jobname` and the YAML
+x/y ranges. Supplying `JOB/RUN/PLT` replaces that selection; omitted CLI axes
+then mean full axes. Process saves the effective configuration in its report.
+For local plotting, copy the complete job/run/snapshot/region structure and set the local
 `results_dir`; the original snapshot is not needed. See the [README](../README.md)
 for local setup and [usage guide](usage.md) for additional options.
