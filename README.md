@@ -17,14 +17,21 @@ your local computer, then install the locked project environment:
 
 ```bash
 curl -LsSf https://astral.sh/uv/0.11.31/install.sh | sh
-export PATH="$HOME/.local/bin:$PATH"
-uv sync --locked --extra process
+```
+
+Open a new terminal after installation so the installer's PATH setup takes
+effect, return to the repository, then run:
+
+```bash
+uv sync
 ```
 
 uv creates `.venv` and installs this checkout in editable mode. No activation,
 `PYTHONPATH` or manual `pip install` is needed. The locked environment uses
-Python 3.11; the first yt build needs Git and C/C++ build tools. Repeat sync
-after an update changes `uv.lock` or the project metadata.
+Python 3.11; the first yt build needs Git and C/C++ build tools. Both process
+and plot dependencies are installed by default. `uv run` checks the environment
+automatically and reuses the locked versions; it does not reinstall everything
+on each run.
 
 On Setonix, follow its [environment setup](docs/setonix.md#2-configure-the-environment)
 instead: uv and its caches belong under `$MYSOFTWARE` to avoid the home quota.
@@ -63,7 +70,7 @@ automatically receive their own output folder.
 From the repository root:
 
 ```bash
-uv run --no-sync process
+uv run process
 ```
 
 Process prints its progress, reads the snapshot and tables without modifying
@@ -76,7 +83,7 @@ directory. Explicit x/y ranges add an automatically named region folder.
 After process finishes, keep the same YAML and run:
 
 ```bash
-uv run --no-sync plot
+uv run plot
 ```
 
 Plot prints its progress and reads only saved numerical products, without

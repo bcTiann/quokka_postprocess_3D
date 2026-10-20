@@ -11,27 +11,20 @@ uv manages `.venv` from `pyproject.toml` and the committed `uv.lock`. It install
 export, or manual `pip install -e .` is required. From the repository root:
 
 ```bash
-uv sync --locked --extra process
+uv sync
 ```
 
 `.python-version` selects Python 3.11. On Setonix, load the Python module and
 add `--python "$(command -v python)"` to sync, as shown in the Setonix guide.
-In later shells, return to the repository and use `uv run --no-sync process`
-or `uv run --no-sync plot`. These commands use the prepared environment without
-installing or updating dependencies during scientific work. The other Python
-tools below also work in this environment without an import-path export. Repeat
-sync after pulling changes to project metadata or the lockfile. For Setonix
+In later shells, return to the repository and use `uv run process`
+or `uv run plot`. uv checks and synchronizes the environment automatically,
+reusing the locked versions rather than reinstalling everything on each run.
+The other Python tools below also work without an import-path export. For Setonix
 environment commands, see the [Setonix guide](setonix.md).
 
-The base dependencies support saved-products plotting; `process` adds the
-pinned yt reader, and `tables` adds the optional DESPOTIC solver and build tools.
-For an environment that only plots saved products, install just the base:
-
-```bash
-uv sync --locked
-```
-
-For table building, use `uv sync --locked --extra process --extra tables`.
+The default dependencies support both process and plot, including the pinned
+yt reader. `tables` adds the optional DESPOTIC solver and build tools.
+For table building, use `uv sync --extra tables`.
 Sync installs exactly the selected dependencies and removes unselected extras;
 keep the extras you need when syncing that environment again. The table-building
 section below includes the required solver integration steps.
@@ -45,8 +38,10 @@ uv lock
 
 Review the lock diff and validate any changed versions. Existing locked versions
 are preferred unless constraints change or an upgrade is explicitly requested.
-Normal users use `--locked` instead of regenerating the lock. Do not manually
-edit `uv.lock`.
+Use `uv sync --locked` when an outdated lockfile should cause an error instead
+of being updated. `uv run --no-sync ...` skips environment synchronization and
+assumes it is already correct; ordinary process and plot runs do not need it.
+Do not manually edit `uv.lock`.
 
 ## Shared configuration
 
@@ -200,8 +195,8 @@ complete original z column.
 Run both commands with the same YAML:
 
 ```bash
-uv run --no-sync process
-uv run --no-sync plot
+uv run process
+uv run plot
 ```
 
 This example saves under
@@ -297,7 +292,7 @@ x/y ranges to select a downloaded region; omit them to select the full-box resul
 To use a factor of 2, prepare that resolution once from the saved native pixels:
 
 ```bash
-uv run --no-sync python -m quokka2s.prepare_emission_results --image-downsample-factor 2
+uv run python -m quokka2s.prepare_emission_results --image-downsample-factor 2
 ```
 
 This writes `images_factor_2.npz` in the configured products directory, summing
@@ -328,15 +323,15 @@ DESPOTIC dependency, apply the checked patches, measure the snapshot's table
 coordinates, then build and interpolate:
 
 ```bash
-uv sync --locked --extra process --extra tables
-uv run --no-sync python tools/despotic/patch_gow_composition.py
-uv run --no-sync python tools/despotic/install_checked_gow_integration.py
-uv run --no-sync python tools/despotic/measure_snapshot_domain.py
-uv run --no-sync python -m quokka2s.despotic.build_table \
+uv sync --extra tables
+uv run python tools/despotic/patch_gow_composition.py
+uv run python tools/despotic/install_checked_gow_integration.py
+uv run python tools/despotic/measure_snapshot_domain.py
+uv run python -m quokka2s.despotic.build_table \
   --snapshot-domain output/plt0655228/table_build/snapshot_domain.json \
   --checkpoint-dir output/plt0655228/table_build/checkpoints \
   --workers 1
-uv run --no-sync python -m quokka2s.despotic.interpolate_failed
+uv run python -m quokka2s.despotic.interpolate_failed
 ```
 
 Run the integration installer again after updating an existing table-building
@@ -371,7 +366,7 @@ local build data; only the interpolated process table is bundled in Git.
 Inspect the plan without solving nodes or creating output directories:
 
 ```bash
-uv run --no-sync python -m quokka2s.despotic.extend_table --dry-run
+uv run python -m quokka2s.despotic.extend_table --dry-run
 ```
 
 The plan lists the actual extended axes and counts of reused successes,
@@ -403,7 +398,7 @@ checkpoint reuse checks the actual source identity, not only the physical model.
 After building, apply the normal convex-hull filling to the new raw table:
 
 ```bash
-uv run --no-sync python -m quokka2s.despotic.interpolate_failed \
+uv run python -m quokka2s.despotic.interpolate_failed \
   --source output/tables/despotic_extended/raw.npz \
   --output output/tables/despotic_extended/interpolated.npz
 ```
@@ -415,7 +410,7 @@ grown. Keep the existing process tables until the new pair has been reviewed.
 Cloudy requires a separately installed Cloudy 17.02 executable:
 
 ```bash
-uv run --no-sync python tools/cloudy/build_cloudy_emission_table.py \
+uv run python tools/cloudy/build_cloudy_emission_table.py \
   --cloudy-exe /absolute/path/to/cloudy.exe --workers 1
 ```
 
@@ -430,7 +425,7 @@ summarizes the table-query rules used during emission processing.
 Select a job/snapshot in the same `configs/emission.yaml`, then run:
 
 ```bash
-uv run --no-sync python -m quokka2s.check_table_input_ranges
+uv run python -m quokka2s.check_table_input_ranges
 ```
 
 The command uses `NativeBlockRangeReader`. An ascending density pass records
@@ -476,7 +471,7 @@ columns remain, the result is explicitly partial and cannot certify complete
 range coverage. For example:
 
 ```bash
-uv run --no-sync python -m quokka2s.check_table_input_ranges --max-columns 1
+uv run python -m quokka2s.check_table_input_ranges --max-columns 1
 ```
 
 Omit x/y restrictions and `--max-columns` for a full-snapshot survey.
@@ -507,7 +502,7 @@ incomplete. Paths in this YAML follow the same rules as the emission
 configuration.
 
 ```bash
-uv run --no-sync python -m quokka2s.check_job_table_input_ranges
+uv run python -m quokka2s.check_job_table_input_ranges
 ```
 
 The command scans full snapshots using the same shared-z native-block reader and
@@ -567,7 +562,7 @@ outputs, stale checkpoints and output-write failures stop the survey.
 To measure one full snapshot first:
 
 ```bash
-uv run --no-sync python -m quokka2s.check_job_table_input_ranges --max-snapshots 1
+uv run python -m quokka2s.check_job_table_input_ranges --max-snapshots 1
 ```
 
 This selects the first snapshot in the inventory, even if its statistics have
@@ -583,7 +578,7 @@ partial; its extrema cannot certify full-snapshot coverage.
 To summarize stored extrema without reading cell payloads or querying tables:
 
 ```bash
-uv run --no-sync python tools/snapshots/measure_header_ranges.py \
+uv run python tools/snapshots/measure_header_ranges.py \
   --source-root /path/to/simulations \
   --runs jobA/run1 jobB/run1 \
   --output-dir output/header_ranges
@@ -606,9 +601,9 @@ snapshot reader. Slice and projection maps query DESPOTIC temperature only;
 emission phase histograms reuse the full cell-emission calculator:
 
 ```bash
-uv run --no-sync python tools/figures/build_table_input_slice.py --config configs/emission.yaml \
+uv run python tools/figures/build_table_input_slice.py --config configs/emission.yaml \
   --output-dir output/sigma13.v2/plt0655228/table_input_slice --slice-index 216 --no-plot
-uv run --no-sync python tools/figures/build_emission_phase_histograms.py --config configs/emission.yaml \
+uv run python tools/figures/build_emission_phase_histograms.py --config configs/emission.yaml \
   --output-dir output/sigma13.v2/plt0655228/emission_phase_histograms --no-plot
 ```
 
@@ -619,12 +614,12 @@ with the same config/output-dir/no-plot/plot-only pattern.
 Additional dust and radiation-field figures:
 
 ```bash
-uv run --no-sync python tools/figures/prepare_dust_extinction.py --output-dir output/dust_extinction
-uv run --no-sync python tools/figures/plot_dust_extinction.py --output-dir output/dust_extinction
-uv run --no-sync python tools/figures/prepare_radiation_fields.py --recipe components --components-only
-uv run --no-sync python tools/figures/plot_radiation_components.py --components-only
-uv run --no-sync python tools/figures/prepare_radiation_fields.py --recipe unattenuated
-uv run --no-sync python tools/figures/plot_unattenuated_radiation.py
+uv run python tools/figures/prepare_dust_extinction.py --output-dir output/dust_extinction
+uv run python tools/figures/plot_dust_extinction.py --output-dir output/dust_extinction
+uv run python tools/figures/prepare_radiation_fields.py --recipe components --components-only
+uv run python tools/figures/plot_radiation_components.py --components-only
+uv run python tools/figures/prepare_radiation_fields.py --recipe unattenuated
+uv run python tools/figures/plot_unattenuated_radiation.py
 ```
 
 The radiation preparation command reads Cloudy `.inc` exports from `runtime/cloudy_eightline/sed/`.
@@ -641,9 +636,9 @@ follow that saved recipe.
 DESPOTIC table diagnostics follow the same preparation/drawing split:
 
 ```bash
-uv run --no-sync python -m quokka2s.despotic.prepare_table_plots \
+uv run python -m quokka2s.despotic.prepare_table_plots \
   --table inputs/tables/despotic/interpolated.npz
-uv run --no-sync python -m quokka2s.despotic.plot_table
+uv run python -m quokka2s.despotic.plot_table
 ```
 
 Preparation saves selected fields, masks, edges and contour segments in
@@ -665,8 +660,8 @@ For example, `sigma13: job41101509-sigma13/run1` selects that run's direct
 outside the simulation tree. Paths are relative to the YAML file.
 
 ```bash
-uv run --no-sync python -m quokka2s.prepare_cold_gas_phase
-uv run --no-sync python -m quokka2s.plot_cold_gas_phase --products output/cold_gas_phases
+uv run python -m quokka2s.prepare_cold_gas_phase
+uv run python -m quokka2s.plot_cold_gas_phase --products output/cold_gas_phases
 ```
 
 The preparation command accepts `--config PATH` and `--extension-config PATH`.

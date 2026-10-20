@@ -10,9 +10,9 @@ and source identities. uv creates `.venv` with `uv sync` and selects it for
 and registers the `process` and `plot` commands. No `PYTHONPATH` export or manual
 package installation is needed. The repository remains the source of bundled
 tables and configuration; this workflow uses an editable checkout, not a
-standalone wheel with embedded input data. Optional `process` and `tables`
-dependencies keep snapshot reading and table solving separate from plotting
-saved products.
+standalone wheel with embedded input data. The default dependencies support
+both process and plot; the `tables` extra adds the optional chemistry solver
+and table-building tools.
 
 ## Where each kind of file belongs
 

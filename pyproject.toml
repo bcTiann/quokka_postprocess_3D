@@ -9,7 +9,7 @@ requires-python = ">=3.11"
 
 # Maintain direct dependencies here; uv.lock records resolved versions.
 # These are the numerical versions used by the validated process and plot runs.
-# Plotting saved products does not require yt or the optional table solver.
+# The default environment supports both process and plot.
 dependencies = [
     "numpy==2.2.6",
     "scipy==1.16.3",
@@ -17,6 +17,8 @@ dependencies = [
     "matplotlib==3.10.6",
     "unyt==3.0.4",
     "PyYAML==6.0.3",
+    # The fixed source commit supplies the validated QUOKKA snapshot frontend.
+    "yt @ git+https://github.com/yt-project/yt@fd4cf99963cdebcd0c578dc2e5ab8dea77be6437",
 ]
 
 [project.scripts]
@@ -24,12 +26,7 @@ process = "quokka2s.process_snapshot:main"
 plot = "quokka2s.plot_emission_results:main"
 
 [project.optional-dependencies]
-# The fixed source commit supplies the validated QUOKKA snapshot frontend.
-process = [
-    "yt @ git+https://github.com/yt-project/yt@fd4cf99963cdebcd0c578dc2e5ab8dea77be6437",
-]
-
-# Optional solver environment: uv sync --locked --extra process --extra tables
+# Optional solver environment: uv sync --extra tables
 # Prebuilt-table processing does not import the chemistry solver or joblib.
 # DESPOTIC reports version 2.2 on its official Bitbucket master, but 2.2 was
 # never published to PyPI (whose latest release is 2.1 and predates the GOW

@@ -685,12 +685,10 @@ dependencies = [
     { name = "pyyaml" },
     { name = "scipy" },
     { name = "unyt" },
+    { name = "yt" },
 ]
 
 [package.optional-dependencies]
-process = [
-    { name = "yt" },
-]
 tables = [
     { name = "despotic" },
     { name = "joblib" },
@@ -708,9 +706,9 @@ requires-dist = [
     { name = "scipy", specifier = "==1.16.3" },
     { name = "tqdm", marker = "extra == 'tables'", specifier = "==4.67.1" },
     { name = "unyt", specifier = "==3.0.4" },
-    { name = "yt", marker = "extra == 'process'", git = "https://github.com/yt-project/yt?rev=fd4cf99963cdebcd0c578dc2e5ab8dea77be6437" },
+    { name = "yt", git = "https://github.com/yt-project/yt?rev=fd4cf99963cdebcd0c578dc2e5ab8dea77be6437" },
 ]
-provides-extras = ["process", "tables"]
+provides-extras = ["tables"]
 
 [[package]]
 name = "rlic"

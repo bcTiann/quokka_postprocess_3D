@@ -5,23 +5,23 @@ Read what each call receives and returns before opening the function itself.
 Process and plot have independent entry points:
 
 ```bash
-uv run --no-sync process
-uv run --no-sync plot
+uv run process
+uv run plot
 ```
 
 From the repository root, both read the default `configs/emission.yaml`.
 Use `--config PATH` to select another file. Each runs directly;
 there is no shared dispatcher.
 
-First prepare the environment with `uv sync --locked --extra process`. uv
+First prepare the environment with `uv sync`. uv
 automatically installs the checkout in editable mode and registers the two
 commands from `[project.scripts]` in `pyproject.toml`. They call the existing
 `process_snapshot.main()` and `plot_emission_results.main()` functions directly.
 No activation, import-path export, or manual editable installation is needed.
 Plot reports the saved-results directory, each line being drawn, output paths,
 and the final file count and elapsed time; these messages do not alter products.
-The equivalent `uv run --no-sync python -m quokka2s.process_snapshot` and
-`uv run --no-sync python -m quokka2s.plot_emission_results` commands remain useful
+The equivalent `uv run python -m quokka2s.process_snapshot` and
+`uv run python -m quokka2s.plot_emission_results` commands remain useful
 for Python debugging.
 
 The first three settings select one snapshot and its results:
@@ -673,7 +673,7 @@ moments, including emission outside the saved channel window. Both full and
 window moments remain available in the saved numerical products.
 
 For an optional new image resolution, run
-`uv run --no-sync python -m quokka2s.prepare_emission_results --image-downsample-factor 2` once.
+`uv run python -m quokka2s.prepare_emission_results --image-downsample-factor 2` once.
 It sums neighbouring native pixels, saves their own edges and colour limits
 in a separate file, and leaves native image values unchanged. The same command
 without a factor prepares older saved products from their accumulated arrays;
@@ -739,7 +739,7 @@ requires the exact implementation identity.
 
 ### Reusable table-input survey
 
-`uv run --no-sync python -m quokka2s.check_table_input_ranges` reads the same emission YAML.
+`uv run python -m quokka2s.check_table_input_ranges` reads the same emission YAML.
 Follow its two distinct actions:
 
 1. `table_input_survey.load_or_measure_input_ranges()` reuses completed statistics or calls
@@ -794,7 +794,7 @@ native XY column with complete z physics. Omitted selected columns make the
 scan partial. The emission YAML's `slab_nx` and `max_slabs` control emission
 processing, not this range scan.
 
-For several jobs, `uv run --no-sync python -m quokka2s.check_job_table_input_ranges` reads
+For several jobs, `uv run python -m quokka2s.check_job_table_input_ranges` reads
 `configs/table_input_survey.yaml`. `source_root` contains the configured job
 directories, and each job contains `plt` plus digits snapshot directories.
 Follow its actions in this order:
