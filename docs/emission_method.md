@@ -138,7 +138,16 @@ image product, retaining the native data. Normal spectrum comparisons
 show cold+hot totals. The peak-normalized gas-phase comparison uses the
 attenuated total Halpha/HI/CII/CO and hot CIII/CIV profiles. Its gas
 histogram bin centres are connected without additional smoothing. CO's WIM/HIM
-curves are faint. Display limits of ±50 km/s do not change saved products or
-moment calculations.
+curves are faint. Individual-line spectra, gas-phase comparisons and the
+all-lines comparisons each have separate ±50 and ±200 km/s display views.
+These limits do not change saved products or moment calculations.
+
+The all-lines comparison uses cold+hot total spectra for all ten transitions,
+with separate intrinsic and dust-attenuated figures. Each profile is divided
+by its own peak among the 400 saved channels over −200 to +200 km/s. Both
+display views select this same saved normalized profile; the ±50 view does
+not use a second peak normalization. Curves therefore retain the same heights
+at the same velocities when the view changes.
+
 Per-area spectra, peak-normalized gas/line profiles and numerical colour limits
 are prepared and saved before plotting. Renderers select these fields directly.

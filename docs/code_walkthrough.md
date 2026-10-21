@@ -46,7 +46,8 @@ results_dir: ../output
 
 The supplied dataset path names snapshot `plt0655228`. Its results directory
 is `output/sigma13.v2/plt0655228/`: process writes `processed/`, and plot reads
-`processed/` and writes `figures/` plus the optional `figures_titled/`.
+`processed/` and writes the selected styles in `figures_titled/` and/or
+`figures/`. The default is titled PNG files in `figures_titled/png/`.
 Changing `jobname` to `sigma50` selects a different job even when its snapshot
 is also called `plt0655228`. Plot uses the snapshot name only; it does not
 open the dataset path or emission tables.
@@ -684,31 +685,45 @@ Open [plot_emission_results.py](../src/quokka2s/plot_emission_results.py) and st
    product and figure directories under `results_dir/jobname/snapshot_name/`.
    Supplied x/y index ranges add the same region folder used by process.
    It obtains the snapshot name from the supplied `dataset` path without
-   opening that path or checking emission-table files.
+   opening that path or checking emission-table files. `figure_formats` and
+   `figure_styles` select PNG/PDF and titled/untitled output. Explicit flags
+   override the corresponding YAML category; defaults are PNG and titled only.
 2. `read_emission_results()` in the root
    [emission_results.py](../src/quokka2s/emission_results.py) reads the three
    saved NPZ files once into `EmissionResults(images, spectra, gas_phases, ...)`.
    It loads the fields
    needed for drawing; process has already checked the scientific products.
 3. `draw_emission_products()` selects each line's saved attenuated total spectrum
-   by name. Images, normalized gas curves, surface-luminosity spectra and colour
-   limits are already saved; no numerical preparation occurs here. An optional
-   resolution setting selects `images_factor_2.npz`, prepared separately from
-   native pixels by `prepare_emission_results.py`.
+   by name for the gas-phase comparison. Images, normalized gas/line curves,
+   surface-luminosity spectra and colour limits are already saved; no numerical
+   preparation occurs here. An optional resolution setting selects
+   `images_factor_2.npz`, prepared separately from native pixels by
+   `prepare_emission_results.py`.
 4. It draws images with
    [figures/line_luminosity_images.py](../src/quokka2s/figures/line_luminosity_images.py),
    spectra with [figures/line_spectra.py](../src/quokka2s/figures/line_spectra.py),
-   and phase comparisons with
-   [figures/gas_phase_spectra.py](../src/quokka2s/figures/gas_phase_spectra.py).
-5. Each plotting step saves PNG/PDF in the figure directory's `png/` and `pdf/`
-   subdirectories. With the default `titled_figures: true`, the returned
-   `titled_output_dir` points to `figures_titled/`; the same loaded numerical
-   products also produce copies with titles under its own `png/` and `pdf/`.
+   phase comparisons with
+   [figures/gas_phase_spectra.py](../src/quokka2s/figures/gas_phase_spectra.py),
+   and all-lines comparisons with
+   [figures/all_line_spectra.py](../src/quokka2s/figures/all_line_spectra.py).
+   Each selected style draws its images once, then draws each spectral figure
+   with ±50 and ±200 km/s limits. The limits affect axes only, and filenames
+   distinguish the views with `_v50` and `_v200`.
+5. Each plotting step saves only the selected formats. Titled figures go in
+   `figures_titled/`, and untitled figures in `figures/`, using `png/` and/or
+   `pdf/` subdirectories. `--png --pdf --titled --untitled` writes both formats
+   and both styles from the same loaded products. Previously saved files in
+   unselected formats or styles remain in place.
 
 No step reopens yt, the snapshot, DESPOTIC, or Cloudy tables. Plotting selects
 saved fields and applies labels, colours, line styles, axis windows and layout.
 It does not calculate normalization, moments, physical conversions or image
-pixel sums. The normal spectrum plots use cold+hot totals. Phase-comparison
+pixel sums. The normal spectrum and all-lines plots use cold+hot totals. The
+all-lines renderer draws separate intrinsic and attenuated figures, with ten
+saved peak-normalized curves per figure. The peak is taken across the complete
+saved ±200 km/s window during numerical preparation and is shared by both
+display views. Selecting the ±50 view therefore does not renormalize a curve.
+Phase-comparison
 plots use total spectra for every line; CIII/CIV have zero cold emission, so
 their totals equal their hot profiles. The saved spectra retain both regimes.
 Curves use the saved velocity axis. Sigma labels use the full-profile

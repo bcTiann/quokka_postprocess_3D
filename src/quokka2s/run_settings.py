@@ -1,6 +1,6 @@
-"""Read shared YAML defaults and optional dataset/region command arguments.
+"""Read shared YAML defaults and explicit selection or plotting arguments.
 
-Only the paths and optional execution settings listed below are accepted. A
+Only the paths, execution and plotting settings listed below are accepted. A
 relative path in the YAML file is relative to that file, not to the shell's
 current working directory. A leading ~ expands to the user's home directory;
 environment variables such as $HOME are not expanded.
@@ -76,12 +76,15 @@ class PlotSettings:
     """Saved-result paths and display choices; no snapshot or table inputs.
 
     image_downsample_factor=2 selects the saved 2x2-summed image product.
-    A missing titled_output_dir omits the separate standalone figure version.
+    output_dir is the untitled figure directory; the titled version uses its
+    name plus "_titled". figure_formats and figure_styles select which files
+    are written. Omitted choices save PNG figures with titles only.
     """
 
     products: Path
     output_dir: Path
-    titled_output_dir: Path | None = None
+    figure_formats: tuple[str, ...] = ("png",)
+    figure_styles: tuple[str, ...] = ("titled",)
     raw_luminosity: bool = False
     allow_partial: bool = False
     image_downsample_factor: int = 1
@@ -103,14 +106,15 @@ for name in _PROCESS_TABLE_PATHS:
 _PLOT_DEFAULTS = {
     field.name: field.default
     for field in fields(PlotSettings)
-    if field.default is not MISSING and field.name != "titled_output_dir"
+    if field.default is not MISSING
 }
+_FIGURE_FORMATS = ("png", "pdf")
+_FIGURE_STYLES = ("untitled", "titled")
 _ALLOWED_SETTINGS = (
     _RUN_REQUIRED_SETTINGS
     | set(_PROCESS_DEFAULTS)
     | set(_REGION_INDEX_RANGES)
     | set(_PLOT_DEFAULTS)
-    | {"titled_figures"}
 )
 
 
@@ -141,6 +145,49 @@ def add_run_selection_arguments(parser: argparse.ArgumentParser) -> None:
             metavar=("START", "STOP"),
             help=f"Override YAML {axis} indices [START, STOP); z remains complete",
         )
+
+
+def add_plot_arguments(parser: argparse.ArgumentParser) -> None:
+    """Select output formats and title styles independently of YAML choices.
+
+    Omitted categories retain YAML values. Example: --pdf selects only PDF;
+    --png --pdf selects both. --titled --untitled writes both title versions.
+    Single-dash spellings such as -png are accepted as explicit aliases.
+    """
+    for extension in _FIGURE_FORMATS:
+        parser.add_argument(
+            f"--{extension}",
+            f"-{extension}",
+            dest="figure_formats",
+            action="append_const",
+            const=extension,
+            default=None,
+            help=f"Save {extension.upper()} figures; format flags replace YAML figure_formats",
+        )
+    for style in _FIGURE_STYLES:
+        parser.add_argument(
+            f"--{style}",
+            f"-{style}",
+            dest="figure_styles",
+            action="append_const",
+            const=style,
+            default=None,
+            help=f"Save {style} figures; title flags replace YAML figure_styles",
+        )
+
+
+def _figure_choices(
+    name: str,
+    values: object,
+    allowed: tuple[str, ...],
+) -> tuple[str, ...]:
+    """Validate a nonempty choice list and return unique choices in save order."""
+    message = f"{name} must be a nonempty list containing {', '.join(allowed)}"
+    if not isinstance(values, (list, tuple)) or not values:
+        raise ValueError(message)
+    if any(type(value) is not str or value not in allowed for value in values):
+        raise ValueError(message)
+    return tuple(value for value in allowed if value in values)
 
 
 def _read_mapping(path: str | Path) -> tuple[Path, dict]:
@@ -355,12 +402,17 @@ def load_plot_config(
     dataset: str | Path | None = None,
     x_index_range: list[int] | None = None,
     y_index_range: list[int] | None = None,
+    figure_formats: list[str] | None = None,
+    figure_styles: list[str] | None = None,
 ) -> PlotSettings:
     """Locate the selected job/snapshot/region's products and figure directories.
 
     Paths are relative to the YAML directory. image_downsample_factor counts
     native pixels per image axis; raw_luminosity and allow_partial are Boolean.
     Only the dataset folder name is used; snapshot/table paths are not opened.
+    CLI figure selections replace only their specified category. Other choices
+    use YAML values, then the PNG/titled defaults. Each selection is a nonempty
+    list; repeated choices are saved once in the standard format/style order.
     """
     config_path, supplied = _read_mapping(path)
     run = read_run_selection(
@@ -374,20 +426,27 @@ def load_plot_config(
         name: supplied.get(name, default)
         for name, default in _PLOT_DEFAULTS.items()
     }
+    if figure_formats is not None:
+        values["figure_formats"] = figure_formats
+    if figure_styles is not None:
+        values["figure_styles"] = figure_styles
+    values["figure_formats"] = _figure_choices(
+        name="figure_formats",
+        values=values["figure_formats"],
+        allowed=_FIGURE_FORMATS,
+    )
+    values["figure_styles"] = _figure_choices(
+        name="figure_styles",
+        values=values["figure_styles"],
+        allowed=_FIGURE_STYLES,
+    )
     for name in ("raw_luminosity", "allow_partial"):
         if type(values[name]) is not bool:
             raise ValueError(f"{name} must be true or false")
     values["image_downsample_factor"] = _positive_int(
         "image_downsample_factor", values["image_downsample_factor"])
-    titled_figures = supplied.get("titled_figures", True)
-    if type(titled_figures) is not bool:
-        raise ValueError("titled_figures must be true or false")
-    titled_output_dir = None
-    if titled_figures:
-        titled_output_dir = run.directory / "figures_titled"
     return PlotSettings(
         products=run.directory / "processed",
         output_dir=run.directory / "figures",
-        titled_output_dir=titled_output_dir,
         **values,
     )

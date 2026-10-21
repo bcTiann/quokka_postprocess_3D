@@ -92,7 +92,7 @@ current scientific rules.
 | `despotic/` | `table_files.py`: NPZ serialization; `cell_solver.py`: equilibrium at one state; `fixed_temperature_chemistry.py`: fixed-temperature GOW callable; `abundance_workspace.py`, `two_body_rates.py`, `reaction_terms.py`: its composition and reaction helpers; `table_builder.py`: grid calculation |
 | `despotic/` | `lookup.py` and `cell_fields.py`: process-time queries; `build_table.py`, `extend_table.py`, `interpolate_failed.py`, `list_failures.py`: table commands; `table_extension.py`: exact axis extension and raw-source validation; `prepare_table_plots.py`/`table_figure_data.py`: numerical figure preparation; `plot_table.py`/`table_plots.py`: draw saved panels |
 | `products/` | Image, spectrum, gas-phase and auxiliary numerical accumulation; `profile_preparation.py` prepares saved normalized/per-area curves; auxiliary preparation modules save masks, logarithmic panels, limits and radiation/dust samples |
-| `figures/` | `line_luminosity_images.py`, `line_spectra.py`, `gas_phase_spectra.py`: saved-product renderers; `line_labels.py`: titles; `figure_files.py`: PNG/PDF paths and saving; other modules: additional figures |
+| `figures/` | `line_luminosity_images.py`, `line_spectra.py`, `gas_phase_spectra.py`, `all_line_spectra.py`: saved-product renderers; `line_labels.py`: titles; `figure_files.py`: PNG/PDF paths and saving; other modules: additional figures |
 
 `gas_fields.mixed_gas_temperature_K()` supplies the cold-DESPOTIC/hot-QUOKKA
 temperature rule to gas-phase statistics, projection maps and phase histograms.
@@ -172,7 +172,9 @@ points, expanding `~` and using the appropriate relative-path base.
 `prepare_emission_results.py` prepares figure arrays from existing numerical
 products, including optional coarse images. Normal snapshot processing saves
 native figure arrays directly. `figures/display_settings.py` shares the
-velocity display window; these choices do not change saved channels.
+±50 and ±200 km/s spectral display windows; these choices do not change saved
+channels. Plot settings select PNG/PDF and titled/untitled output; the default
+is titled PNG files.
 
 ## Data and results
 
@@ -192,11 +194,11 @@ output/sigma13.v2/plt0655228/
     emission_report.json
     status.json
   figures/
-    png/
-    pdf/
+    png/                    # Only when untitled PNG output is selected
+    pdf/                    # Only when untitled PDF output is selected
   figures_titled/
-    png/
-    pdf/
+    png/                    # Default plot output
+    pdf/                    # Only when titled PDF output is selected
   region_x64-66_y64-66/       # Only when x/y ranges are selected
     processed/
     figures/
@@ -209,6 +211,9 @@ each other under that job's directory. Set `jobname` to a distinct output group
 when switching jobs or runs: no identity is inferred from a dataset path.
 
 Processing writes a new directory per run. Plotting may redraw from the saved
-products many times. Each figure version keeps PNG and PDF files in its own
-`png/` and `pdf/` subdirectories. Raw Cloudy calculation files belong in `runtime/`;
+products many times. Each selected figure style keeps its chosen formats in
+`png/` and/or `pdf/` subdirectories. Spectral filenames end with `_v50` or
+`_v200` to distinguish the two display windows. Images are drawn once per style.
+Existing files from unselected styles or formats remain in place.
+Raw Cloudy calculation files belong in `runtime/`;
 process and plot use only the job and snapshot selected in the shared configuration.

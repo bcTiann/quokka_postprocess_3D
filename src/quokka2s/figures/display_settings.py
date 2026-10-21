@@ -2,3 +2,7 @@
 
 
 VELOCITY_LIMITS_KMS = (-50.0, 50.0)
+SPECTRUM_VELOCITY_WINDOWS_KMS = (
+    (-50.0, 50.0),
+    (-200.0, 200.0),
+)

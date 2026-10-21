@@ -201,9 +201,10 @@ def format_phase_comparison_figure(
     *,
     phase_cut_footer: str,
     titled: bool,
+    velocity_limits_kms: tuple[float, float] = VELOCITY_LIMITS_KMS,
 ):
     """Apply the display zoom, axes, and optional title and phase-cut footer."""
-    ax.set_xlim(*VELOCITY_LIMITS_KMS)
+    ax.set_xlim(*velocity_limits_kms)
     ax.set_ylim(-.035, 1.07)
     ax.axvline(0, color='.65', ls=':', lw=.8)
     ax.grid(alpha=.18)
@@ -223,6 +224,8 @@ def plot_phase_spectrum_overlay(
     *,
     titled: bool,
     formats: tuple[str, ...],
+    velocity_limits_kms: tuple[float, float] = VELOCITY_LIMITS_KMS,
+    filename_suffix: str = "",
 ) -> list[Path]:
     """Write a separate peak-normalized gas/line figure for each transition.
 
@@ -239,6 +242,11 @@ def plot_phase_spectrum_overlay(
         Add standalone titles and phase cuts using the taller figure layout.
     formats : tuple of str
         Figure extensions, normally ("png", "pdf").
+    velocity_limits_kms : tuple of float
+        Visible velocity bounds [km/s]. Saved profiles retain their original
+        coordinates and full-window peak normalization.
+    filename_suffix : str
+        Optional view label after the line key, such as "_v200".
 
     Returns
     -------
@@ -272,8 +280,9 @@ def plot_phase_spectrum_overlay(
             key=key,
             phase_cut_footer=phase_cut_footer,
             titled=titled,
+            velocity_limits_kms=velocity_limits_kms,
         )
-        line_stem = stem.with_name(f'{stem.name}_{key}')
+        line_stem = stem.with_name(f'{stem.name}_{key}{filename_suffix}')
         paths.extend(save_figure_formats(
             figure=fig,
             stem=line_stem,

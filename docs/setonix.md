@@ -110,9 +110,22 @@ uv run plot --x 64 66 --y 64 66
 ```
 
 Plot prints its progress and reads only saved products, without opening the
-simulation or querying tables. Figures are saved beside `processed/` under
-`figures/` and `figures_titled/`, each with `png/` and `pdf/` directories.
-Set `titled_figures: false` to save only the manuscript version.
+simulation or querying tables. By default it saves only titled PNG figures
+beside `processed/`, under `figures_titled/png/`. Set `figure_formats` and
+`figure_styles` in the shared YAML, or choose output with command-line flags:
+
+```bash
+uv run plot --x 64 66 --y 64 66 --pdf
+uv run plot --x 64 66 --y 64 66 --png --pdf --titled --untitled
+```
+
+`--pdf` selects PDF only; combining `--png --pdf` selects both formats.
+`--untitled` selects the manuscript version in `figures/`; combining
+`--titled --untitled` selects both styles. Explicit flags override their YAML
+category. Each spectral figure has ±50 and ±200 km/s views, including separate
+intrinsic and attenuated all-lines comparisons normalized by each line's
+saved full-window peak. These plots use the existing products; no processing
+rerun is needed. See the [plot settings](usage.md#plot-settings) for examples.
 
 To change snapshots without editing `dataset`, both commands accept an absolute
 `--dataset` path, for example:

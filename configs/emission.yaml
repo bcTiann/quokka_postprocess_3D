@@ -23,8 +23,9 @@ query_chunk: 131072
 chunk_workers: 8
 spectral_workers: 3 
 
-# Plotting: save both manuscript and titled versions at native resolution.
-titled_figures: true
+# Plotting: PNG with titles by default; CLI flags override each selection.
+figure_formats: [png]
+figure_styles: [titled]
 image_downsample_factor: 1
 # To select factor 2, first prepare it without rereading the simulation:
 # uv run python -m quokka2s.prepare_emission_results --image-downsample-factor 2

@@ -17,13 +17,16 @@ def plot_line_spectra(
     diagnostic_suffix: str,
     titled: bool,
     formats: tuple[str, ...],
+    velocity_limits_kms: tuple[float, float] = VELOCITY_LIMITS_KMS,
+    filename_suffix: str = "",
 ) -> list[Path]:
     """Draw saved total profiles on their original velocity channels [km/s].
 
     spectra owns line/dust names and both saved profile units. per_projected_area
     selects the stored light per area [erg/s/cm^2/(km/s)] rather than raw light
     [erg/s/(km/s)]; the renderer performs no unit conversion. Returns
-    one figure per line/format; the visible window remains +/-50 km/s.
+    one figure per line/format. velocity_limits_kms selects only the display
+    window; filename_suffix distinguishes views such as "_v200".
     Example: spectra.for_line(line="halpha", dust_state="attenuated") selects Halpha.
     """
     import matplotlib.pyplot as plt
@@ -76,7 +79,7 @@ def plot_line_spectra(
                 label="Dust attenuated",
             )
             axis.legend(frameon=False, fontsize=9)
-        axis.set_xlim(*VELOCITY_LIMITS_KMS)
+        axis.set_xlim(*velocity_limits_kms)
         axis.set_ylim(bottom=0)
         axis.set_xlabel(r"$v_z$ [km s$^{-1}$]")
         axis.set_ylabel(ylabel)
@@ -87,7 +90,7 @@ def plot_line_spectra(
         figure.tight_layout()
         spectrum_paths.extend(save_figure_formats(
             figure=figure,
-            stem=output / f"spectrum_{key}{diagnostic_suffix}",
+            stem=output / f"spectrum_{key}{filename_suffix}{diagnostic_suffix}",
             formats=formats,
         ))
         plt.close(figure)

@@ -63,8 +63,9 @@ results_dir: ../output
 
 The snapshot name comes from the supplied `dataset` path, here `plt0655228`.
 Both commands select `results_dir/jobname/snapshot_name/`: process writes
-`processed/`, while plot reads `processed/` and writes `figures/` and,
-by default, `figures_titled/`. They do not search for the latest snapshot.
+`processed/`, while plot reads `processed/` and writes the selected figure
+styles. The default is `figures_titled/png/`; selecting the untitled style
+writes `figures/`. They do not search for the latest snapshot.
 If either x/y index range is set, these directories go inside the corresponding
 `region_xSTART-STOP_ySTART-STOP/` folder. An omitted or `null` axis uses `all`;
 with both axes omitted or `null`, no region folder is added.
@@ -332,10 +333,34 @@ x/y ranges to select a downloaded region; omit them to select the full-box resul
 
 | Plot setting | Meaning |
 |---|---|
-| `titled_figures` | Also save titled figures in `figures_titled/`; default true |
+| `figure_formats` | Nonempty list containing `png`, `pdf`, or both; default `[png]` |
+| `figure_styles` | Nonempty list containing `titled`, `untitled`, or both; default `[titled]` |
 | `image_downsample_factor` | Select an already prepared image resolution; default 1, native |
 | `raw_luminosity` | Display spectra in luminosity units rather than luminosity per projected area; default false |
 | `allow_partial` | Permit figures from an intentionally incomplete diagnostic run; default false |
+
+For example, the default plotting selection is:
+
+```yaml
+figure_formats: [png]
+figure_styles: [titled]
+```
+
+Replace the old `titled_figures` setting with `figure_styles`. These choices
+apply to all figures from `uv run plot`, including luminosity images.
+The command-line equivalents are:
+
+| Command | Formats | Styles |
+|---|---|---|
+| `uv run plot` | YAML value, otherwise PNG | YAML value, otherwise titled |
+| `uv run plot --pdf` | PDF only | YAML value, otherwise titled |
+| `uv run plot --png --pdf` | PNG and PDF | YAML value, otherwise titled |
+| `uv run plot --untitled` | YAML value, otherwise PNG | Untitled only |
+| `uv run plot --titled --untitled` | YAML value, otherwise PNG | Titled and untitled |
+
+An explicitly selected category replaces its YAML list. For example,
+`--pdf` does not also save PNG just because PNG is the default. Combine
+`--png --pdf --titled --untitled` to write both formats of both styles.
 
 To use a factor of 2, prepare that resolution once from the saved native pixels:
 
@@ -359,12 +384,35 @@ before rendering. Products from an earlier code version can be prepared with
 the same command without the optional factor, using only their saved arrays.
 
 The command draws individual line images, intrinsic/dust spectrum comparisons,
-and gas-phase/line-profile comparisons as PNG and PDF. Each figure directory
-contains `png/` and `pdf/` subdirectories, including `figures_titled/` when
-enabled. For example, `figures/png/spectrum_co10.png` and
-`figures/pdf/spectrum_co10.pdf` contain the two formats of the same figure.
-The displayed velocity range is −50 to +50 km/s; all saved channels remain
-intact. H I 21 cm appears once because this dust prescription leaves it unchanged. Set
+gas-phase/line-profile comparisons, and all-lines spectrum comparisons.
+Every spectral figure has separate −50 to +50 and −200 to +200 km/s views;
+the existing 400 saved channels already cover the wider range. These views
+do not change the stored arrays or recalculate spectra.
+
+The all-lines comparison draws all ten cold+hot total profiles, with separate
+intrinsic and dust-attenuated figures. Each line is divided by its own peak
+across the full saved −200 to +200 km/s window before the products are saved.
+The same normalized curve is used in both views; a peak outside ±50 km/s
+can therefore leave the narrower view below one. Each line retains its colour
+across views and dust states, and the legend sits outside the axes.
+
+Selected PNG files go in `png/` and PDF files in `pdf/` under `figures_titled/`
+or `figures/`, depending on the requested style. Examples include:
+
+```text
+figures_titled/png/spectrum_co10_v50.png
+figures_titled/png/spectrum_co10_v200.png
+figures_titled/png/gas_phase_spectrum_co10_v200.png
+figures_titled/png/spectrum_all_lines_intrinsic_v200.png
+figures_titled/png/spectrum_all_lines_attenuated_v200.png
+```
+
+Images are drawn once per selected style, rather than once per velocity view.
+For the standard ten-line products, an empty output directory receives 63 PNG
+files with the defaults, or 252 files when both formats and styles are selected.
+Plot writes only the selected formats and styles; it does not remove files
+from earlier runs. H I 21 cm appears once in the individual image/spectrum
+comparisons because this dust prescription leaves it unchanged. Set
 `allow_partial: true` only when intentionally plotting diagnostic subsets.
 
 ## Build tables

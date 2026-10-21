@@ -99,9 +99,30 @@ uv run plot
 
 For the small region above, use `uv run plot --x 64 66 --y 64 66` instead.
 Plot prints its progress and reads only saved numerical products, without
-opening the snapshot or emission tables. It saves `figures/` and
-`figures_titled/` beside `processed/`, each with `png/` and `pdf/` directories.
-Set `titled_figures: false` to save only the manuscript version.
+opening the snapshot or emission tables. The default is **PNG with titles**,
+saved in `figures_titled/png/` beside `processed/`. Select formats and styles
+with command-line flags:
+
+```bash
+uv run plot --pdf
+uv run plot --png --pdf --titled --untitled
+```
+
+`--pdf` selects only PDF; combining `--png --pdf` saves both formats.
+`--untitled` selects only the manuscript version in `figures/`; combining
+`--titled --untitled` saves both styles. Each selected style uses its own
+`png/` and/or `pdf/` directories. The equivalent YAML defaults are
+`figure_formats: [png]` and `figure_styles: [titled]`. Explicit flags override
+the YAML for that category; an omitted category keeps its YAML setting.
+
+Every spectrum is drawn in separate ±50 and ±200 km/s views. The additional
+all-lines figures compare all ten cold+hot total line profiles, each divided
+by its own peak across the saved ±200 km/s window. Intrinsic and dust-attenuated
+profiles have separate comparison figures. Both views use the same saved
+curves and normalization; no processing rerun is needed. Filenames include
+`_v50` or `_v200`, for example `spectrum_co10_v200.png` and
+`spectrum_all_lines_attenuated_v200.png`. Images are saved once per selected
+style. Existing files in unselected formats or styles are left in place.
 
 Both commands accept `--config /path/to/emission.yaml`. To select another
 snapshot without editing `dataset`, supply its absolute path and the same
