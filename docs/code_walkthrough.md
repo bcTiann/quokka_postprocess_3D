@@ -307,8 +307,8 @@ the `(1, 1, 2048)` core with complete z columns.
 
 ## 3. Calculate one batch: `emission_calculator.calculate()`
 
-With `query_chunk: 1000000`, this slab is processed in four batches of one
-million cells and one batch of 194,304 cells. The serial caller uses:
+With `query_chunk: 131072`, this slab is processed in 32 equal batches of
+131,072 cells. The serial caller uses:
 
 ```python
 for cells in slab.iter_batches(batch_size=config.query_chunk):

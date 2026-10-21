@@ -51,7 +51,7 @@ class ProcessSettings:
     Paths are absolute. Slab/query sizes count cells; workers count threads.
     Omitted execution settings use the same defaults as the shipped YAML.
     Each concurrent batch can use spectral_workers integration threads:
-    chunk_workers=2 and spectral_workers=3 allow at most six spectral tasks.
+    chunk_workers=8 and spectral_workers=3 allow at most 24 spectral tasks.
     Index ranges are [start, stop), or None for the full native axis.
     """
 
@@ -63,8 +63,8 @@ class ProcessSettings:
     cloudy_table: Path = DEFAULT_CLOUDY_TABLE
     dust_opacity_table: Path = DEFAULT_DRAINE_TABLE
     slab_nx: int = 8
-    query_chunk: int = 1_000_000
-    chunk_workers: int = 2
+    query_chunk: int = 131_072
+    chunk_workers: int = 8
     spectral_workers: int = 3
     max_slabs: int | None = None
     x_index_range: tuple[int, int] | None = None

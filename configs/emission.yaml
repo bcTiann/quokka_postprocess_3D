@@ -19,9 +19,9 @@ y_index_range: null
 # Process and plot select the same region directory from these settings.
 
 # Processing: cells per query batch, concurrent batches, threads per batch.
-query_chunk: 1000000
-chunk_workers: 2
-spectral_workers: 3  # Up to 2 x 3 spectral-integration threads in total.
+query_chunk: 131072
+chunk_workers: 8
+spectral_workers: 3  # Up to 8 x 3 spectral-integration threads in total.
 
 # Plotting: save both manuscript and titled versions at native resolution.
 titled_figures: true

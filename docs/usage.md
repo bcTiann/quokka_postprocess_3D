@@ -182,8 +182,8 @@ Omitted settings use the same defaults shown in the shared YAML:
 | Setting | Meaning | Default |
 |---|---|---|
 | `slab_nx` | Number of x cells read per slab, retaining selected y and full z | 8 |
-| `query_chunk` | Maximum cells in one table-query batch | 1,000,000 |
-| `chunk_workers` | Concurrent query batches within the loaded slab | 2 |
+| `query_chunk` | Maximum cells in one table-query batch | 131,072 |
+| `chunk_workers` | Concurrent query batches within the loaded slab | 8 |
 | `spectral_workers` | Spectral-integration threads per query batch | 3 |
 
 Emission processing internally shares native fields across up to four adjacent
@@ -194,7 +194,7 @@ cache-inclusive user memory quota. Smaller groups or a direct single-slab read
 are used when the selected geometry would exceed that value limit. Only actual
 selected windows are grouped, including a diagnostic `max_slabs` selection.
 
-The worker counts multiply: this configuration permits up to 2 × 3 spectral
+The worker counts multiply: this configuration permits up to 8 × 3 spectral
 threads. Reading slabs remains sequential. More workers do not necessarily
 make a complete run faster; select them using end-to-end timing and memory
 measurements. `max_slabs: 1` in a separate YAML makes a labelled partial
