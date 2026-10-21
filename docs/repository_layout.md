@@ -35,7 +35,7 @@ products. Plot reads saved arrays without importing this processing extension.
 | `vendor/` | Pinned external source, dust table, molecular data and their notes | Yes |
 | `inputs/snapshots/` | User-provided QUOKKA snapshots | No |
 | `inputs/tables/` | Cloudy `emission.npz`, DESPOTIC `interpolated.npz`, and their previous `emission_old.npz` / `interpolated_old.npz` | Yes; raw tables and other build files stay local |
-| `output/` | Processed numerical products and figures | No |
+| `output/` | Processed numerical products and figures, including the Setonix results | Yes |
 | `runtime/` | Cloudy build parameters, `.inc` exports, raw outputs and logs | No |
 
 ## Start reading the current pipeline

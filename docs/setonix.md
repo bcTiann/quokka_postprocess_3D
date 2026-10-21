@@ -129,3 +129,17 @@ complete job/snapshot/region results structure and set the local `results_dir`;
 plot uses only the dataset folder name, so the original snapshot and tables
 are not needed. See the [README](../README.md) for local setup and the
 [usage guide](usage.md) for additional options.
+
+## 6. Commit code and results
+
+`output/` is tracked by Git, including numerical arrays and figures. On Setonix,
+commit and push the intended code, configuration and output files normally:
+
+```bash
+git add src configs/emission.yaml output
+git commit -m "Update code and results"
+git push origin main
+```
+
+A local `git clone` includes the same output directory structure and saved files.
+For an existing local checkout, use `git pull` to receive committed updates.

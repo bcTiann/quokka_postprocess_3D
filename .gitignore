@@ -23,8 +23,7 @@
 /inputs/tables/cloudy/*
 /inputs/tables/despotic/*
 
-# Generated products and table-building workspaces.
-/output/
+# Table-building workspaces.
 /runtime/
 /archive/
 /yt-env/
@@ -58,3 +57,6 @@
 !/docs/examples/line_luminosity_halpha_intrinsic.png
 !/docs/examples/line_luminosity_halpha_attenuated.png
 !/docs/examples/spectrum_halpha.png
+
+# Track generated Setonix results, including numerical and figure files.
+!/output/**

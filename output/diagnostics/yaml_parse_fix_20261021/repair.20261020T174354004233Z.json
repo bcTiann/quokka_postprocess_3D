@@ -1,0 +1,8 @@
+{
+  "action": "Restore one broken YAML comment; all settings unchanged",
+  "configuration": "/software/projects/pawsey0807/btian/quokka_postprocess_3D/configs/emission.yaml",
+  "backup": "/software/projects/pawsey0807/btian/quokka_postprocess_3D/output/diagnostics/yaml_parse_fix_20261021/emission.before.20261020T174354004233Z.yaml",
+  "before_sha256": "196a68f3c3c340ae5bd4fb2018cddb9435729ced662754c9b04ac45866218e4d",
+  "after_sha256": "e2b7517601285f92403ace03f04c67079cbe517ee89f3a2317331431486f8746",
+  "process_or_plot_started": false
+}

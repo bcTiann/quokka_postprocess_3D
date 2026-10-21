@@ -1,6 +1,6 @@
 # Shared selection. Relative YAML paths start at this file.
-jobname: sigma13.v2
-dataset: ../inputs/snapshots/plt0655228
+jobname: sigma13-zmet0.2
+dataset: /scratch/pawsey0807/chongchong/Projects-data/2026-quokka-outflow/hpc/run2.v2/job41114622-sigma13-zmet0.2/run1/plt0782927
 results_dir: ../output
 # Results: ../output/sigma13.v2/plt0655228/{processed,figures,figures_titled}/
 
@@ -21,7 +21,7 @@ y_index_range: null
 # Processing: cells per query batch, concurrent batches, threads per batch.
 query_chunk: 131072
 chunk_workers: 8
-spectral_workers: 3  # Up to 8 x 3 spectral-integration threads in total.
+spectral_workers: 3 
 
 # Plotting: save both manuscript and titled versions at native resolution.
 titled_figures: true

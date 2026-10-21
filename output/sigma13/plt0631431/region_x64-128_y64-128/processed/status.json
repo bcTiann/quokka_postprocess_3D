@@ -1,0 +1,10 @@
+{
+  "status": "completed",
+  "counts": {
+    "all": 16777216,
+    "gas_temperature_missing": 0
+  },
+  "elapsed_seconds": 163.24705102783628,
+  "processing_complete": true,
+  "full_snapshot": false
+}

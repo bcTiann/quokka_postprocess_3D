@@ -1,0 +1,40 @@
+# Shared selection. Relative YAML paths start at this file.
+jobname: sigma13.v2
+dataset: /scratch/pawsey0807/chongchong/Projects-data/2026-quokka-outflow/hpc/run2.v2/job41101509-sigma13/run1/plt0168792 
+results_dir: ../output
+# Results: ../output/sigma13.v2/plt0655228/{processed,figures,figures_titled}/
+
+# jobname only names the output group; change it manually when switching jobs.
+# Optional overrides on both commands; CLI dataset paths must be absolute:
+# uv run process --dataset /absolute/path/plt0008703 --x 64 128 --y 32 64
+# uv run plot --dataset /absolute/path/plt0008703 --x 64 128 --y 32 64
+# Omitted CLI values keep the YAML dataset or corresponding x/y range.
+
+# Optional native x-y region; null selects the full axis. z stays complete.
+# For example, x_index_range: [64, 128] selects x indices 64 through 127.
+x_index_range: null
+y_index_range: null
+# Explicit ranges automatically add a region subdirectory, for example
+# ../output/sigma13.v2/plt0655228/region_x64-128Quick Font Size
+_yall/.
+# Process and plot select the same region directory from these settings.
+
+# Processing: cells per query batch, concurrent batches, threads per batch.
+query_chunk: 1000000
+chunk_workers: 2
+spectral_workers: 3  # Up to 2 x 3 spectral-integration threads in total.
+
+# Plotting: save both manuscript and titled versions at native resolution.
+titled_figures: true
+image_downsample_factor: 1
+# To select factor 2, first prepare it without rereading the simulation:
+# uv run python -m quokka2s.prepare_emission_results --image-downsample-factor 2
+
+# Explicit bundled inputs, relative to this YAML file.
+# DESPOTIC is the validated expanded 55 x 60 x 64 interpolated table.
+# The previous table is kept as interpolated_old.npz for reproducibility.
+despotic_table: ../inputs/tables/despotic/interpolated.npz
+# Cloudy includes two extra low-density planes; NH and temperature are unchanged.
+# The original table and every original node are preserved in emission_old.npz.
+cloudy_table: ../inputs/tables/cloudy/emission.npz
+dust_opacity_table: ../vendor/draine/kext_albedo_WD_MW_3.1_60_D03.all

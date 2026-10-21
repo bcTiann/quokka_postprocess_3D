@@ -3,6 +3,9 @@
 Process one QUOKKA snapshot, then draw emission-line images and spectra from
 the saved results. On Setonix, use the short [Setonix guide](docs/setonix.md).
 
+Setonix results are tracked in [output/](output/). A normal clone includes the
+saved numerical products and PNG/PDF figures in their original directory structure.
+
 ## 1. Clone
 
 ```bash
