@@ -1,0 +1,1354 @@
+{
+  "status": "completed",
+  "jobname": "sigma50",
+  "snapshot_name": "plt0105769",
+  "run_configuration": {
+    "dataset": "/scratch/pawsey0807/chongchong/Projects-data/2026-quokka-outflow/hpc/run2.v2/job41114623-sigma50/run1/plt0105769",
+    "output_dir": "/software/projects/pawsey0807/btian/quokka_postprocess_3D/output/sigma50/plt0105769/processed",
+    "jobname": "sigma50",
+    "snapshot_name": "plt0105769",
+    "despotic_table": "/software/projects/pawsey0807/btian/quokka_postprocess_3D/inputs/tables/despotic/interpolated.npz",
+    "cloudy_table": "/software/projects/pawsey0807/btian/quokka_postprocess_3D/inputs/tables/cloudy/emission.npz",
+    "dust_opacity_table": "/software/projects/pawsey0807/btian/quokka_postprocess_3D/vendor/draine/kext_albedo_WD_MW_3.1_60_D03.all",
+    "slab_nx": 8,
+    "query_chunk": 131072,
+    "chunk_workers": 8,
+    "spectral_workers": 3,
+    "max_slabs": null,
+    "x_index_range": null,
+    "y_index_range": null
+  },
+  "full_snapshot": true,
+  "processing_complete": true,
+  "processing_region": {
+    "xy_region": {
+      "x": [
+        0,
+        512
+      ],
+      "y": [
+        0,
+        512
+      ]
+    },
+    "z_index_range": [
+      0,
+      4096
+    ],
+    "shape": [
+      512,
+      512,
+      4096
+    ],
+    "cell_count": 1073741824,
+    "projected_area_cm2": 9.108324e+42
+  },
+  "completed_at": "2026-10-22T08:51:58.990072+00:00",
+  "counts": {
+    "all": 1073741824,
+    "gas_temperature_missing": 0
+  },
+  "mass_g": {
+    "all": 7.106832531394817e+40,
+    "cold": 6.810341962063074e+40,
+    "hot": 2.9649056933171284e+39,
+    "gas_temperature_missing": 0.0
+  },
+  "line_keys": [
+    "cii",
+    "halpha",
+    "hi21",
+    "ciii_977",
+    "ciii_1907",
+    "ciii_1909",
+    "civ_1548",
+    "civ_1551",
+    "co10",
+    "co21"
+  ],
+  "dust_states": [
+    "intrinsic",
+    "attenuated"
+  ],
+  "regimes": [
+    "cold",
+    "hot"
+  ],
+  "image_shape": [
+    512,
+    512
+  ],
+  "velocity_channels": 400,
+  "execution": {
+    "slab_nx": 8,
+    "query_chunk": 131072,
+    "chunk_workers": 8,
+    "spectral_workers_per_chunk": 3
+  },
+  "intrinsic_luminosity_erg_s": [
+    [
+      2.0528330785301853e+38,
+      3.90157561333773e+37
+    ],
+    [
+      7.008069593400907e+33,
+      5.475734513077156e+36
+    ],
+    [
+      4.727573754613071e+31,
+      1.5481233893929302e+31
+    ],
+    [
+      0.0,
+      1.0589585239325878e+38
+    ],
+    [
+      0.0,
+      2.557184975427189e+37
+    ],
+    [
+      0.0,
+      1.6226672418463115e+37
+    ],
+    [
+      0.0,
+      1.0939426575925158e+37
+    ],
+    [
+      0.0,
+      5.540194820530637e+36
+    ],
+    [
+      3.3887090194558086e+35,
+      2.1264672566552042e+33
+    ],
+    [
+      1.7328140878447164e+36,
+      6.171611465206272e+33
+    ]
+  ],
+  "transmitted_luminosity_erg_s": [
+    [
+      2.05181989811657e+38,
+      3.8910294742425993e+37
+    ],
+    [
+      5.370719848141706e+33,
+      4.2193362479319914e+36
+    ],
+    [
+      4.727573754613071e+31,
+      1.5481233893929302e+31
+    ],
+    [
+      0.0,
+      4.1103469465218606e+37
+    ],
+    [
+      0.0,
+      1.219087043904311e+37
+    ],
+    [
+      0.0,
+      7.731285795566432e+36
+    ],
+    [
+      0.0,
+      5.4606399412641e+36
+    ],
+    [
+      0.0,
+      2.7748946480761454e+36
+    ],
+    [
+      3.388581249310317e+35,
+      2.1261300843608662e+33
+    ],
+    [
+      1.732614836999793e+36,
+      6.168046731493051e+33
+    ]
+  ],
+  "cold_gas_luminosity_by_despotic_temperature": {
+    "cold_cell_selection": "T_QUOKKA < 3000 K",
+    "despotic_temperature_thresholds_K": [
+      10000.0,
+      40000.0,
+      100000.0,
+      1000000.0
+    ],
+    "threshold_selection": "finite T_DESPOTIC >= threshold; selections overlap",
+    "denominator": "This line's available luminosity in the same dust state, summed over cold and hot branches, all processed cells and all velocities. Fractions are between 0 and 1; a zero total gives null.",
+    "lines": {
+      "cii": {
+        "intrinsic": {
+          "total_luminosity_erg_s": 2.4429906398639585e+38,
+          "luminosity_above_threshold_erg_s": [
+            3.1382212976309362e+32,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "fraction_of_total_luminosity": [
+            1.2845817934880393e-06,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "attenuated": {
+          "total_luminosity_erg_s": 2.44092284554083e+38,
+          "luminosity_above_threshold_erg_s": [
+            3.1335483343820592e+32,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "fraction_of_total_luminosity": [
+            1.2837555845349817e-06,
+            0.0,
+            0.0,
+            0.0
+          ]
+        }
+      },
+      "halpha": {
+        "intrinsic": {
+          "total_luminosity_erg_s": 5.482742582670558e+36,
+          "luminosity_above_threshold_erg_s": [
+            7.419420518272594e+30,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "fraction_of_total_luminosity": [
+            1.3532316001344551e-06,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "attenuated": {
+          "total_luminosity_erg_s": 4.224706967780133e+36,
+          "luminosity_above_threshold_erg_s": [
+            5.45343824768049e+30,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "fraction_of_total_luminosity": [
+            1.2908441435752388e-06,
+            0.0,
+            0.0,
+            0.0
+          ]
+        }
+      },
+      "hi21": {
+        "intrinsic": {
+          "total_luminosity_erg_s": 6.275697144006001e+31,
+          "luminosity_above_threshold_erg_s": [
+            2.9906128402136385e+27,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "fraction_of_total_luminosity": [
+            4.7653874487394776e-05,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "attenuated": {
+          "total_luminosity_erg_s": 6.275697144006001e+31,
+          "luminosity_above_threshold_erg_s": [
+            2.9906128402136385e+27,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "fraction_of_total_luminosity": [
+            4.7653874487394776e-05,
+            0.0,
+            0.0,
+            0.0
+          ]
+        }
+      }
+    }
+  },
+  "line_sigma_window_kms": {
+    "intrinsic": {
+      "cii": 9.474006258915491,
+      "halpha": 40.687548187642655,
+      "hi21": 10.301478032884587,
+      "ciii_977": 53.945389604908854,
+      "ciii_1907": 54.3206046344055,
+      "ciii_1909": 54.335309902202575,
+      "civ_1548": 54.108082117304534,
+      "civ_1551": 54.109847947552545,
+      "co10": 8.909526778320174,
+      "co21": 8.62286468719492
+    },
+    "attenuated": {
+      "cii": 9.46356490848299,
+      "halpha": 41.40553127698038,
+      "hi21": 10.301478032884587,
+      "ciii_977": 58.78291447559326,
+      "ciii_1907": 60.152185379141535,
+      "ciii_1909": 60.18366248158726,
+      "civ_1548": 56.65980513833143,
+      "civ_1551": 56.64451502016086,
+      "co10": 8.909107613122645,
+      "co21": 8.621568721708355
+    }
+  },
+  "line_sigma_full_kms": {
+    "intrinsic": {
+      "cii": 9.481816757673705,
+      "halpha": 41.53505238053792,
+      "hi21": 10.315835975084784,
+      "ciii_977": 54.42093737850313,
+      "ciii_1907": 54.71083732255626,
+      "ciii_1909": 54.72427658711657,
+      "civ_1548": 56.007983721503365,
+      "civ_1551": 56.03077975701687,
+      "co10": 8.90479355387084,
+      "co21": 8.617934076166012
+    },
+    "attenuated": {
+      "cii": 9.471378753838984,
+      "halpha": 42.33141972536537,
+      "hi21": 10.315835975084784,
+      "ciii_977": 59.67965268135411,
+      "ciii_1907": 60.78918085318658,
+      "ciii_1909": 60.8189097720996,
+      "civ_1548": 59.19511680421495,
+      "civ_1551": 59.20743090963383,
+      "co10": 8.904373058854095,
+      "co21": 8.61663350916073
+    }
+  },
+  "line_centroid_window_kms": {
+    "intrinsic": {
+      "cii": -1.0838325075436326,
+      "halpha": 1.3548799714395094,
+      "hi21": -0.7345442151800714,
+      "ciii_977": 2.781242040488381,
+      "ciii_1907": 5.028434391082791,
+      "ciii_1909": 5.052654702490546,
+      "civ_1548": 1.8361519580129577,
+      "civ_1551": 1.7976914706496792,
+      "co10": -0.9363109266836652,
+      "co21": -0.7943493265887502
+    },
+    "attenuated": {
+      "cii": -1.0776531813009436,
+      "halpha": -0.42136634726345285,
+      "hi21": -0.7345442151800714,
+      "ciii_977": -7.3152501394444,
+      "ciii_1907": -1.4830870301366008,
+      "ciii_1909": -1.4487370194294455,
+      "civ_1548": -5.7626995349983625,
+      "civ_1551": -5.829513279198402,
+      "co10": -0.9359549817263596,
+      "co21": -0.7932817435404391
+    }
+  },
+  "line_centroid_full_kms": {
+    "intrinsic": {
+      "cii": -1.0846048368324455,
+      "halpha": 1.2345599200420558,
+      "hi21": -0.7348193815287709,
+      "ciii_977": 2.604422963270641,
+      "ciii_1907": 4.873447651188648,
+      "ciii_1909": 4.898011542458045,
+      "civ_1548": 1.5487209622658498,
+      "civ_1551": 1.5047648185076783,
+      "co10": -0.9355901561278367,
+      "co21": -0.7935671549397944
+    },
+    "attenuated": {
+      "cii": -1.0784266930140527,
+      "halpha": -0.5992777637271121,
+      "hi21": -0.7348193815287709,
+      "ciii_977": -7.749147098785953,
+      "ciii_1907": -1.7969304513639155,
+      "ciii_1909": -1.7620279020310343,
+      "civ_1548": -6.668194183306889,
+      "civ_1551": -6.741457388857445,
+      "co10": -0.9352339637680533,
+      "co21": -0.7924986150423345
+    }
+  },
+  "despotic_coordinate_clipped_cells": {
+    "nH": 0,
+    "NH": 0,
+    "dVdr": 0
+  },
+  "cloudy_attenuation_coordinate_clipped_cells": {
+    "below": 134471579,
+    "above": 564198
+  },
+  "input_tables": {
+    "despotic": "/software/projects/pawsey0807/btian/quokka_postprocess_3D/inputs/tables/despotic/interpolated.npz",
+    "cloudy": "/software/projects/pawsey0807/btian/quokka_postprocess_3D/inputs/tables/cloudy/emission.npz",
+    "dust": "/software/projects/pawsey0807/btian/quokka_postprocess_3D/vendor/draine/kext_albedo_WD_MW_3.1_60_D03.all"
+  },
+  "snapshot_grid": {
+    "shape": [
+      512,
+      512,
+      4096
+    ],
+    "cell_width_cm": [
+      5.89453125e+18,
+      5.89453125e+18,
+      5.89453125e+18
+    ]
+  },
+  "physical_settings": {
+    "X_H": 0.7157683773530885,
+    "column_mean": "harmonic",
+    "column_directions": "z",
+    "velocity_gradient_boundary_conditions": {
+      "x": "periodic central difference",
+      "y": "periodic central difference",
+      "z": "central inside; first-order one-sided at faces"
+    }
+  },
+  "constants": {
+    "hydrogen_mass_g": 1.6737352238051868e-24,
+    "boltzmann_erg_K": 1.380649e-16,
+    "gravitational_cm3_g_s2": 6.674299999999998e-08,
+    "parsec_cm": 3.085677581491367e+18,
+    "planck_erg_s": 6.62607015e-27,
+    "speed_of_light_cm_s": 29979245800.0,
+    "atomic_mass_unit_g": 1.6605390666e-24
+  },
+  "dataset": "/scratch/pawsey0807/chongchong/Projects-data/2026-quokka-outflow/hpc/run2.v2/job41114623-sigma50/run1/plt0105769",
+  "missing_emissivity_cells": {
+    "cii": 0,
+    "halpha": 0,
+    "hi21": 0,
+    "ciii_977": 0,
+    "ciii_1907": 0,
+    "ciii_1909": 0,
+    "civ_1548": 0,
+    "civ_1551": 0,
+    "co10": 0,
+    "co21": 0
+  },
+  "missing_emissivity_mass_fraction": {
+    "cii": 0.0,
+    "halpha": 0.0,
+    "hi21": 0.0,
+    "ciii_977": 0.0,
+    "ciii_1907": 0.0,
+    "ciii_1909": 0.0,
+    "civ_1548": 0.0,
+    "civ_1551": 0.0,
+    "co10": 0.0,
+    "co21": 0.0
+  },
+  "gas_temperature_missing_mass_fraction": 0.0,
+  "cell_volume_cm3": 2.0480842763185503e+56,
+  "spectral_report": {
+    "intrinsic": {
+      "line_keys": [
+        "cii",
+        "halpha",
+        "hi21",
+        "ciii_977",
+        "ciii_1907",
+        "ciii_1909",
+        "civ_1548",
+        "civ_1551",
+        "co10",
+        "co21"
+      ],
+      "regime_keys": [
+        "T_QUOKKA_lt_3000K",
+        "T_QUOKKA_ge_3000K"
+      ],
+      "axis_order": "line,regime,velocity_channel",
+      "velocity_range_kms": [
+        -200.0,
+        200.0
+      ],
+      "velocity_channels": 400,
+      "cell_counts_by_regime": [
+        [
+          3153078,
+          1070588746
+        ],
+        [
+          3153078,
+          1070588746
+        ],
+        [
+          3153078,
+          1070588746
+        ],
+        [
+          3153078,
+          1070588746
+        ],
+        [
+          3153078,
+          1070588746
+        ],
+        [
+          3153078,
+          1070588746
+        ],
+        [
+          3153078,
+          1070588746
+        ],
+        [
+          3153078,
+          1070588746
+        ],
+        [
+          3153078,
+          1070588746
+        ],
+        [
+          3153078,
+          1070588746
+        ]
+      ],
+      "profile": "analytic Gaussian integral over channel edges; existing Doppler width convention",
+      "transfer": "none added; supplied emissivities are summed as epsilon times cell volume",
+      "lines": {
+        "cii": {
+          "total": {
+            "input_luminosity_erg_s": 2.4429906398639524e+38,
+            "captured_luminosity_erg_s": 2.442980224068585e+38,
+            "outside_velocity_luminosity_erg_s": 1.041579536734509e+33,
+            "outside_velocity_fraction": 4.2635428877145165e-06
+          },
+          "T_QUOKKA_lt_3000K": {
+            "input_luminosity_erg_s": 2.0528330785301864e+38,
+            "captured_luminosity_erg_s": 2.0528330348175573e+38,
+            "outside_velocity_luminosity_erg_s": 4.371262917224383e+30,
+            "outside_velocity_fraction": 2.1293805925780266e-08
+          },
+          "T_QUOKKA_ge_3000K": {
+            "input_luminosity_erg_s": 3.90157561333766e+37,
+            "captured_luminosity_erg_s": 3.90147189251028e+37,
+            "outside_velocity_luminosity_erg_s": 1.0372082738031176e+33,
+            "outside_velocity_fraction": 2.6584343777867283e-05
+          }
+        },
+        "halpha": {
+          "total": {
+            "input_luminosity_erg_s": 5.482742582670561e+36,
+            "captured_luminosity_erg_s": 5.476743124502624e+36,
+            "outside_velocity_luminosity_erg_s": 5.999458167937517e+33,
+            "outside_velocity_fraction": 0.0010942439987790327
+          },
+          "T_QUOKKA_lt_3000K": {
+            "input_luminosity_erg_s": 7.008069593400906e+33,
+            "captured_luminosity_erg_s": 7.007921862339407e+33,
+            "outside_velocity_luminosity_erg_s": 1.477310614982571e+29,
+            "outside_velocity_fraction": 2.1080136195760227e-05
+          },
+          "T_QUOKKA_ge_3000K": {
+            "input_luminosity_erg_s": 5.47573451307716e+36,
+            "captured_luminosity_erg_s": 5.469735202640285e+36,
+            "outside_velocity_luminosity_erg_s": 5.999310436875336e+33,
+            "outside_velocity_fraction": 0.001095617477901416
+          }
+        },
+        "hi21": {
+          "total": {
+            "input_luminosity_erg_s": 6.275697144005998e+31,
+            "captured_luminosity_erg_s": 6.2756621872307295e+31,
+            "outside_velocity_luminosity_erg_s": 3.4956775268737845e+26,
+            "outside_velocity_fraction": 5.570181999959244e-06
+          },
+          "T_QUOKKA_lt_3000K": {
+            "input_luminosity_erg_s": 4.727573754613071e+31,
+            "captured_luminosity_erg_s": 4.727568109028283e+31,
+            "outside_velocity_luminosity_erg_s": 5.6455847878999e+25,
+            "outside_velocity_fraction": 1.1941822763507502e-06
+          },
+          "T_QUOKKA_ge_3000K": {
+            "input_luminosity_erg_s": 1.548123389392928e+31,
+            "captured_luminosity_erg_s": 1.548094078202447e+31,
+            "outside_velocity_luminosity_erg_s": 2.9311190481063125e+26,
+            "outside_velocity_fraction": 1.8933368413584297e-05
+          }
+        },
+        "ciii_977": {
+          "total": {
+            "input_luminosity_erg_s": 1.058958523932263e+38,
+            "captured_luminosity_erg_s": 1.0580129029055797e+38,
+            "outside_velocity_luminosity_erg_s": 9.456210266834027e+34,
+            "outside_velocity_fraction": 0.0008929726758060356
+          },
+          "T_QUOKKA_lt_3000K": {
+            "input_luminosity_erg_s": 0.0,
+            "captured_luminosity_erg_s": 0.0,
+            "outside_velocity_luminosity_erg_s": 0.0,
+            "outside_velocity_fraction": 0.0
+          },
+          "T_QUOKKA_ge_3000K": {
+            "input_luminosity_erg_s": 1.058958523932263e+38,
+            "captured_luminosity_erg_s": 1.0580129029055797e+38,
+            "outside_velocity_luminosity_erg_s": 9.456210266834027e+34,
+            "outside_velocity_fraction": 0.0008929726758060356
+          }
+        },
+        "ciii_1907": {
+          "total": {
+            "input_luminosity_erg_s": 2.5571849754269266e+37,
+            "captured_luminosity_erg_s": 2.555274765961531e+37,
+            "outside_velocity_luminosity_erg_s": 1.9102094653957222e+34,
+            "outside_velocity_fraction": 0.0007469969844777495
+          },
+          "T_QUOKKA_lt_3000K": {
+            "input_luminosity_erg_s": 0.0,
+            "captured_luminosity_erg_s": 0.0,
+            "outside_velocity_luminosity_erg_s": 0.0,
+            "outside_velocity_fraction": 0.0
+          },
+          "T_QUOKKA_ge_3000K": {
+            "input_luminosity_erg_s": 2.5571849754269266e+37,
+            "captured_luminosity_erg_s": 2.555274765961531e+37,
+            "outside_velocity_luminosity_erg_s": 1.9102094653957222e+34,
+            "outside_velocity_fraction": 0.0007469969844777495
+          }
+        },
+        "ciii_1909": {
+          "total": {
+            "input_luminosity_erg_s": 1.6226672418461505e+37,
+            "captured_luminosity_erg_s": 1.6214585056930653e+37,
+            "outside_velocity_luminosity_erg_s": 1.2087361530852211e+34,
+            "outside_velocity_fraction": 0.0007449069790242457
+          },
+          "T_QUOKKA_lt_3000K": {
+            "input_luminosity_erg_s": 0.0,
+            "captured_luminosity_erg_s": 0.0,
+            "outside_velocity_luminosity_erg_s": 0.0,
+            "outside_velocity_fraction": 0.0
+          },
+          "T_QUOKKA_ge_3000K": {
+            "input_luminosity_erg_s": 1.6226672418461505e+37,
+            "captured_luminosity_erg_s": 1.6214585056930653e+37,
+            "outside_velocity_luminosity_erg_s": 1.2087361530852211e+34,
+            "outside_velocity_fraction": 0.0007449069790242457
+          }
+        },
+        "civ_1548": {
+          "total": {
+            "input_luminosity_erg_s": 1.0939426575925156e+37,
+            "captured_luminosity_erg_s": 1.0903541995116227e+37,
+            "outside_velocity_luminosity_erg_s": 3.588458080892872e+34,
+            "outside_velocity_fraction": 0.0032802981545578805
+          },
+          "T_QUOKKA_lt_3000K": {
+            "input_luminosity_erg_s": 0.0,
+            "captured_luminosity_erg_s": 0.0,
+            "outside_velocity_luminosity_erg_s": 0.0,
+            "outside_velocity_fraction": 0.0
+          },
+          "T_QUOKKA_ge_3000K": {
+            "input_luminosity_erg_s": 1.0939426575925156e+37,
+            "captured_luminosity_erg_s": 1.0903541995116227e+37,
+            "outside_velocity_luminosity_erg_s": 3.588458080892872e+34,
+            "outside_velocity_fraction": 0.0032802981545578805
+          }
+        },
+        "civ_1551": {
+          "total": {
+            "input_luminosity_erg_s": 5.540194820530631e+36,
+            "captured_luminosity_erg_s": 5.521856986965157e+36,
+            "outside_velocity_luminosity_erg_s": 1.8337833565473673e+34,
+            "outside_velocity_fraction": 0.003309961862264855
+          },
+          "T_QUOKKA_lt_3000K": {
+            "input_luminosity_erg_s": 0.0,
+            "captured_luminosity_erg_s": 0.0,
+            "outside_velocity_luminosity_erg_s": 0.0,
+            "outside_velocity_fraction": 0.0
+          },
+          "T_QUOKKA_ge_3000K": {
+            "input_luminosity_erg_s": 5.540194820530631e+36,
+            "captured_luminosity_erg_s": 5.521856986965157e+36,
+            "outside_velocity_luminosity_erg_s": 1.8337833565473673e+34,
+            "outside_velocity_fraction": 0.003309961862264855
+          }
+        },
+        "co10": {
+          "total": {
+            "input_luminosity_erg_s": 3.40997369202236e+35,
+            "captured_luminosity_erg_s": 3.409973671428067e+35,
+            "outside_velocity_luminosity_erg_s": 2.0594293358417455e+27,
+            "outside_velocity_fraction": 6.039428810432715e-09
+          },
+          "T_QUOKKA_lt_3000K": {
+            "input_luminosity_erg_s": 3.388709019455808e+35,
+            "captured_luminosity_erg_s": 3.388709019455807e+35,
+            "outside_velocity_luminosity_erg_s": 7.378697629483821e+19,
+            "outside_velocity_fraction": 2.1774361820740703e-16
+          },
+          "T_QUOKKA_ge_3000K": {
+            "input_luminosity_erg_s": 2.1264672566552033e+33,
+            "captured_luminosity_erg_s": 2.126465197225943e+33,
+            "outside_velocity_luminosity_erg_s": 2.059429260325387e+27,
+            "outside_velocity_fraction": 9.684744751559152e-07
+          }
+        },
+        "co21": {
+          "total": {
+            "input_luminosity_erg_s": 1.7389856993099226e+36,
+            "captured_luminosity_erg_s": 1.7389856953757456e+36,
+            "outside_velocity_luminosity_erg_s": 3.9341769535672353e+27,
+            "outside_velocity_fraction": 2.262340026791724e-09
+          },
+          "T_QUOKKA_lt_3000K": {
+            "input_luminosity_erg_s": 1.7328140878447164e+36,
+            "captured_luminosity_erg_s": 1.7328140878447126e+36,
+            "outside_velocity_luminosity_erg_s": 3.8369227673315867e+21,
+            "outside_velocity_fraction": 2.214272606765318e-15
+          },
+          "T_QUOKKA_ge_3000K": {
+            "input_luminosity_erg_s": 6.171611465206273e+33,
+            "captured_luminosity_erg_s": 6.171607531033152e+33,
+            "outside_velocity_luminosity_erg_s": 3.934173121256154e+27,
+            "outside_velocity_fraction": 6.374628641864224e-07
+          }
+        }
+      }
+    },
+    "attenuated": {
+      "line_keys": [
+        "cii",
+        "halpha",
+        "hi21",
+        "ciii_977",
+        "ciii_1907",
+        "ciii_1909",
+        "civ_1548",
+        "civ_1551",
+        "co10",
+        "co21"
+      ],
+      "regime_keys": [
+        "T_QUOKKA_lt_3000K",
+        "T_QUOKKA_ge_3000K"
+      ],
+      "axis_order": "line,regime,velocity_channel",
+      "velocity_range_kms": [
+        -200.0,
+        200.0
+      ],
+      "velocity_channels": 400,
+      "cell_counts_by_regime": [
+        [
+          3153078,
+          1070588746
+        ],
+        [
+          3153078,
+          1070588746
+        ],
+        [
+          3153078,
+          1070588746
+        ],
+        [
+          3153078,
+          1070588746
+        ],
+        [
+          3153078,
+          1070588746
+        ],
+        [
+          3153078,
+          1070588746
+        ],
+        [
+          3153078,
+          1070588746
+        ],
+        [
+          3153078,
+          1070588746
+        ],
+        [
+          3153078,
+          1070588746
+        ],
+        [
+          3153078,
+          1070588746
+        ]
+      ],
+      "profile": "analytic Gaussian integral over channel edges; existing Doppler width convention",
+      "transfer": "none added; supplied emissivities are summed as epsilon times cell volume",
+      "lines": {
+        "cii": {
+          "total": {
+            "input_luminosity_erg_s": 2.4409228455408243e+38,
+            "captured_luminosity_erg_s": 2.4409124360576882e+38,
+            "outside_velocity_luminosity_erg_s": 1.0409483136094427e+33,
+            "outside_velocity_fraction": 4.264568687662901e-06
+          },
+          "T_QUOKKA_lt_3000K": {
+            "input_luminosity_erg_s": 2.0518198981165705e+38,
+            "captured_luminosity_erg_s": 2.0518198544169717e+38,
+            "outside_velocity_luminosity_erg_s": 4.369959884085498e+30,
+            "outside_velocity_fraction": 2.1297970100089294e-08
+          },
+          "T_QUOKKA_ge_3000K": {
+            "input_luminosity_erg_s": 3.891029474242539e+37,
+            "captured_luminosity_erg_s": 3.890925816407165e+37,
+            "outside_velocity_luminosity_erg_s": 1.0365783537395243e+33,
+            "outside_velocity_fraction": 2.6640208217423323e-05
+          }
+        },
+        "halpha": {
+          "total": {
+            "input_luminosity_erg_s": 4.22470696778013e+36,
+            "captured_luminosity_erg_s": 4.21941212055887e+36,
+            "outside_velocity_luminosity_erg_s": 5.294847221259882e+33,
+            "outside_velocity_fraction": 0.0012533052023823692
+          },
+          "T_QUOKKA_lt_3000K": {
+            "input_luminosity_erg_s": 5.370719848141705e+33,
+            "captured_luminosity_erg_s": 5.370596908766337e+33,
+            "outside_velocity_luminosity_erg_s": 1.2293937536754205e+29,
+            "outside_velocity_fraction": 2.2890669936932135e-05
+          },
+          "T_QUOKKA_ge_3000K": {
+            "input_luminosity_erg_s": 4.2193362479319885e+36,
+            "captured_luminosity_erg_s": 4.214041523650104e+36,
+            "outside_velocity_luminosity_erg_s": 5.294724281884456e+33,
+            "outside_velocity_fraction": 0.0012548713756765759
+          }
+        },
+        "hi21": {
+          "total": {
+            "input_luminosity_erg_s": 6.275697144005998e+31,
+            "captured_luminosity_erg_s": 6.2756621872307295e+31,
+            "outside_velocity_luminosity_erg_s": 3.4956775268737845e+26,
+            "outside_velocity_fraction": 5.570181999959244e-06
+          },
+          "T_QUOKKA_lt_3000K": {
+            "input_luminosity_erg_s": 4.727573754613071e+31,
+            "captured_luminosity_erg_s": 4.727568109028283e+31,
+            "outside_velocity_luminosity_erg_s": 5.6455847878999e+25,
+            "outside_velocity_fraction": 1.1941822763507502e-06
+          },
+          "T_QUOKKA_ge_3000K": {
+            "input_luminosity_erg_s": 1.548123389392928e+31,
+            "captured_luminosity_erg_s": 1.548094078202447e+31,
+            "outside_velocity_luminosity_erg_s": 2.9311190481063125e+26,
+            "outside_velocity_fraction": 1.8933368413584297e-05
+          }
+        },
+        "ciii_977": {
+          "total": {
+            "input_luminosity_erg_s": 4.1103469465207277e+37,
+            "captured_luminosity_erg_s": 4.10196928742662e+37,
+            "outside_velocity_luminosity_erg_s": 8.377659094107892e+34,
+            "outside_velocity_fraction": 0.0020381878228550275
+          },
+          "T_QUOKKA_lt_3000K": {
+            "input_luminosity_erg_s": 0.0,
+            "captured_luminosity_erg_s": 0.0,
+            "outside_velocity_luminosity_erg_s": 0.0,
+            "outside_velocity_fraction": 0.0
+          },
+          "T_QUOKKA_ge_3000K": {
+            "input_luminosity_erg_s": 4.1103469465207277e+37,
+            "captured_luminosity_erg_s": 4.10196928742662e+37,
+            "outside_velocity_luminosity_erg_s": 8.377659094107892e+34,
+            "outside_velocity_fraction": 0.0020381878228550275
+          }
+        },
+        "ciii_1907": {
+          "total": {
+            "input_luminosity_erg_s": 1.219087043904172e+37,
+            "captured_luminosity_erg_s": 1.2173164342841455e+37,
+            "outside_velocity_luminosity_erg_s": 1.7706096200264255e+34,
+            "outside_velocity_fraction": 0.001452406232089861
+          },
+          "T_QUOKKA_lt_3000K": {
+            "input_luminosity_erg_s": 0.0,
+            "captured_luminosity_erg_s": 0.0,
+            "outside_velocity_luminosity_erg_s": 0.0,
+            "outside_velocity_fraction": 0.0
+          },
+          "T_QUOKKA_ge_3000K": {
+            "input_luminosity_erg_s": 1.219087043904172e+37,
+            "captured_luminosity_erg_s": 1.2173164342841455e+37,
+            "outside_velocity_luminosity_erg_s": 1.7706096200264255e+34,
+            "outside_velocity_fraction": 0.001452406232089861
+          }
+        },
+        "ciii_1909": {
+          "total": {
+            "input_luminosity_erg_s": 7.731285795565543e+36,
+            "captured_luminosity_erg_s": 7.72008045157403e+36,
+            "outside_velocity_luminosity_erg_s": 1.1205343991513564e+34,
+            "outside_velocity_fraction": 0.00144935063685534
+          },
+          "T_QUOKKA_lt_3000K": {
+            "input_luminosity_erg_s": 0.0,
+            "captured_luminosity_erg_s": 0.0,
+            "outside_velocity_luminosity_erg_s": 0.0,
+            "outside_velocity_fraction": 0.0
+          },
+          "T_QUOKKA_ge_3000K": {
+            "input_luminosity_erg_s": 7.731285795565543e+36,
+            "captured_luminosity_erg_s": 7.72008045157403e+36,
+            "outside_velocity_luminosity_erg_s": 1.1205343991513564e+34,
+            "outside_velocity_fraction": 0.00144935063685534
+          }
+        },
+        "civ_1548": {
+          "total": {
+            "input_luminosity_erg_s": 5.460639941263861e+36,
+            "captured_luminosity_erg_s": 5.436163863482211e+36,
+            "outside_velocity_luminosity_erg_s": 2.4476077781650594e+34,
+            "outside_velocity_fraction": 0.004482272782113816
+          },
+          "T_QUOKKA_lt_3000K": {
+            "input_luminosity_erg_s": 0.0,
+            "captured_luminosity_erg_s": 0.0,
+            "outside_velocity_luminosity_erg_s": 0.0,
+            "outside_velocity_fraction": 0.0
+          },
+          "T_QUOKKA_ge_3000K": {
+            "input_luminosity_erg_s": 5.460639941263861e+36,
+            "captured_luminosity_erg_s": 5.436163863482211e+36,
+            "outside_velocity_luminosity_erg_s": 2.4476077781650594e+34,
+            "outside_velocity_fraction": 0.004482272782113816
+          }
+        },
+        "civ_1551": {
+          "total": {
+            "input_luminosity_erg_s": 2.7748946480760303e+36,
+            "captured_luminosity_erg_s": 2.7623192861043695e+36,
+            "outside_velocity_luminosity_erg_s": 1.2575361971660804e+34,
+            "outside_velocity_fraction": 0.004531834021295156
+          },
+          "T_QUOKKA_lt_3000K": {
+            "input_luminosity_erg_s": 0.0,
+            "captured_luminosity_erg_s": 0.0,
+            "outside_velocity_luminosity_erg_s": 0.0,
+            "outside_velocity_fraction": 0.0
+          },
+          "T_QUOKKA_ge_3000K": {
+            "input_luminosity_erg_s": 2.7748946480760303e+36,
+            "captured_luminosity_erg_s": 2.7623192861043695e+36,
+            "outside_velocity_luminosity_erg_s": 1.2575361971660804e+34,
+            "outside_velocity_fraction": 0.004531834021295156
+          }
+        },
+        "co10": {
+          "total": {
+            "input_luminosity_erg_s": 3.409842550153925e+35,
+            "captured_luminosity_erg_s": 3.409842529563395e+35,
+            "outside_velocity_luminosity_erg_s": 2.0590530222626418e+27,
+            "outside_velocity_fraction": 6.038557475827419e-09
+          },
+          "T_QUOKKA_lt_3000K": {
+            "input_luminosity_erg_s": 3.388581249310316e+35,
+            "captured_luminosity_erg_s": 3.388581249310318e+35,
+            "outside_velocity_luminosity_erg_s": 0.0,
+            "outside_velocity_fraction": 0.0
+          },
+          "T_QUOKKA_ge_3000K": {
+            "input_luminosity_erg_s": 2.1261300843608665e+33,
+            "captured_luminosity_erg_s": 2.126128025307712e+33,
+            "outside_velocity_luminosity_erg_s": 2.0590531545603845e+27,
+            "outside_velocity_fraction": 9.684511637863184e-07
+          }
+        },
+        "co21": {
+          "total": {
+            "input_luminosity_erg_s": 1.738782883731286e+36,
+            "captured_luminosity_erg_s": 1.738782879799366e+36,
+            "outside_velocity_luminosity_erg_s": 3.931919957536329e+27,
+            "outside_velocity_fraction": 2.261305879143893e-09
+          },
+          "T_QUOKKA_lt_3000K": {
+            "input_luminosity_erg_s": 1.732614836999793e+36,
+            "captured_luminosity_erg_s": 1.7326148369997852e+36,
+            "outside_velocity_luminosity_erg_s": 7.673845534663173e+21,
+            "outside_velocity_fraction": 4.429054496584627e-15
+          },
+          "T_QUOKKA_ge_3000K": {
+            "input_luminosity_erg_s": 6.168046731493051e+33,
+            "captured_luminosity_erg_s": 6.168042799580704e+33,
+            "outside_velocity_luminosity_erg_s": 3.931912347101477e+27,
+            "outside_velocity_fraction": 6.374647466637642e-07
+          }
+        }
+      }
+    }
+  },
+  "phase_velocity_report": {
+    "phase_order": [
+      "CNM",
+      "UNM",
+      "WNM",
+      "WIM",
+      "HIM"
+    ],
+    "phase_boundaries_K": [
+      200.0,
+      3000.0,
+      10000.0,
+      316227.7660168379
+    ],
+    "boundary_rule": "lower inclusive; upper exclusive; HIM has no upper bound",
+    "velocity_window_kms": [
+      -200.0,
+      200.0
+    ],
+    "histogram_boundary_rule": "both outer edges included; no clipping",
+    "global_mean_velocity_kms": -1.5678694238722182,
+    "sigma_reference": "gas with available mixed temperature over the full velocity range",
+    "groups": {
+      "CNM": {
+        "count": 1883945,
+        "mass_g": 6.735466449634914e+40,
+        "mean_velocity_kms": -1.224568948454426,
+        "sigma_internal_kms": 9.060421353378135,
+        "sigma_about_global_mean_kms": 9.06692286926345,
+        "mass_fraction": 0.9477452043340865,
+        "cell_fraction": 0.0017545605078339577,
+        "in_window": {
+          "count": 1883945,
+          "mass_g": 6.735466449634914e+40,
+          "mean_velocity_kms": -1.224568948454426,
+          "sigma_internal_kms": 9.060421353378135,
+          "sigma_about_global_mean_kms": 9.06692286926345
+        },
+        "below_window": {
+          "count": 0,
+          "mass_g": 0.0
+        },
+        "above_window": {
+          "count": 0,
+          "mass_g": 0.0
+        },
+        "histogram_mass_g": 6.735466449634937e+40
+      },
+      "UNM": {
+        "count": 375576,
+        "mass_g": 7.086462063949983e+38,
+        "mean_velocity_kms": -0.9092102808482248,
+        "sigma_internal_kms": 9.087525845052173,
+        "sigma_about_global_mean_kms": 9.111364214604766,
+        "mass_fraction": 0.009971336784207528,
+        "cell_fraction": 0.00034978240728378296,
+        "in_window": {
+          "count": 375576,
+          "mass_g": 7.086462063949983e+38,
+          "mean_velocity_kms": -0.9092102808482248,
+          "sigma_internal_kms": 9.087525845052173,
+          "sigma_about_global_mean_kms": 9.111364214604766
+        },
+        "below_window": {
+          "count": 0,
+          "mass_g": 0.0
+        },
+        "above_window": {
+          "count": 0,
+          "mass_g": 0.0
+        },
+        "histogram_mass_g": 7.086462063949995e+38
+      },
+      "WNM": {
+        "count": 7066410,
+        "mass_g": 1.859971615946003e+39,
+        "mean_velocity_kms": 0.0679122168523015,
+        "sigma_internal_kms": 12.055245208312149,
+        "sigma_about_global_mean_kms": 12.165718992672174,
+        "mass_fraction": 0.02617159765239265,
+        "cell_fraction": 0.0065811071544885635,
+        "in_window": {
+          "count": 7064699,
+          "mass_g": 1.8599563731442138e+39,
+          "mean_velocity_kms": 0.06756054769074848,
+          "sigma_internal_kms": 12.026232426146985,
+          "sigma_about_global_mean_kms": 12.136922903256641
+        },
+        "below_window": {
+          "count": 566,
+          "mass_g": 6.181446312743965e+33
+        },
+        "above_window": {
+          "count": 1145,
+          "mass_g": 9.061355475324287e+33
+        },
+        "histogram_mass_g": 1.8599563731442105e+39
+      },
+      "WIM": {
+        "count": 110064697,
+        "mass_g": 6.107740463698221e+38,
+        "mean_velocity_kms": -1.484775182059919,
+        "sigma_internal_kms": 32.6105755102969,
+        "sigma_about_global_mean_kms": 32.61068137536838,
+        "mass_fraction": 0.008594180933231431,
+        "cell_fraction": 0.10250573698431253,
+        "in_window": {
+          "count": 109969544,
+          "mass_g": 6.102135133726803e+38,
+          "mean_velocity_kms": -1.390210765588451,
+          "sigma_internal_kms": 31.63561344708617,
+          "sigma_about_global_mean_kms": 31.636112289159712
+        },
+        "below_window": {
+          "count": 37823,
+          "mass_g": 4.1197608358899346e+35
+        },
+        "above_window": {
+          "count": 57330,
+          "mass_g": 1.4855691355288768e+35
+        },
+        "histogram_mass_g": 6.1021351337268216e+38
+      },
+      "HIM": {
+        "count": 954351196,
+        "mass_g": 5.342689488876891e+38,
+        "mean_velocity_kms": -51.510700519899586,
+        "sigma_internal_kms": 221.57309447203724,
+        "sigma_about_global_mean_kms": 227.1319496940064,
+        "mass_fraction": 0.007517680296074617,
+        "cell_fraction": 0.8888088129460812,
+        "in_window": {
+          "count": 442669181,
+          "mass_g": 2.6689643707041234e+38,
+          "mean_velocity_kms": 11.047559677291394,
+          "sigma_internal_kms": 127.30827714456593,
+          "sigma_about_global_mean_kms": 127.93180402434766
+        },
+        "below_window": {
+          "count": 337775648,
+          "mass_g": 1.8294792970592355e+38
+        },
+        "above_window": {
+          "count": 173906367,
+          "mass_g": 8.44245821113533e+37
+        },
+        "histogram_mass_g": 2.6689643707041257e+38
+      },
+      "total": {
+        "count": 1073741824,
+        "mass_g": 7.106832531394817e+40,
+        "mean_velocity_kms": -1.5678694238722182,
+        "sigma_internal_kms": 21.89938688008202,
+        "sigma_about_global_mean_kms": 21.89938688008202,
+        "mass_fraction": 1.0,
+        "cell_fraction": 1.0,
+        "in_window": {
+          "count": 561962945,
+          "mass_g": 7.080037702633167e+40,
+          "mean_velocity_kms": -1.142633046575461,
+          "sigma_internal_kms": 12.371381804780839,
+          "sigma_about_global_mean_kms": 12.378687884272665
+        },
+        "below_window": {
+          "count": 337814037,
+          "mass_g": 1.833660872358257e+38
+        },
+        "above_window": {
+          "count": 173964842,
+          "mass_g": 8.458220038038147e+37
+        },
+        "histogram_mass_g": 7.080037702633165e+40
+      }
+    }
+  },
+  "image_luminosity_conservation": {
+    "relative_tolerance": 1e-10,
+    "maximum_relative_difference": 9.454021774625202e-15,
+    "worst_dust_state": "intrinsic",
+    "worst_line": "ciii_977"
+  },
+  "cold_CIII_CIV": "Omitted by the adopted prescription; hot contributions only",
+  "exclusions": "Each line omits only its own missing emissivities in both images and spectra. Hot atomic lines do not depend on DESPOTIC; both CO lines require DESPOTIC at all temperatures. Missing entries are distinct from physical zero emission.",
+  "interpretation": "Local volume emission with inherited Cloudy escape treatment and DESPOTIC LVG; one-sided -z foreground Draine extinction applied before image and spectrum accumulation; no scattered-in light.",
+  "dust_attenuation": {
+    "model": "Draine MW R_V=3.1 total extinction",
+    "opacity_table": "/software/projects/pawsey0807/btian/quokka_postprocess_3D/vendor/draine/kext_albedo_WD_MW_3.1_60_D03.all",
+    "observer": "outer -z boundary face for each (x,y) sightline",
+    "interpolation": "linear in log(wavelength), log(C_ext/H)",
+    "sigma_ext_cm2_H": {
+      "cii": 2.242540209758823e-25,
+      "halpha": 3.80932766019611e-22,
+      "hi21": 0.0,
+      "ciii_977": 2.1820444981944028e-21,
+      "ciii_1907": 1.1496332559608702e-21,
+      "ciii_1909": 1.1506972066419683e-21,
+      "civ_1548": 1.1713851248756978e-21,
+      "civ_1551": 1.1700039270654974e-21,
+      "co10": 1.2532898405300952e-27,
+      "co21": 3.9853164183954296e-27
+    },
+    "hi21": "dust extinction neglected beyond the 1 cm table limit"
+  },
+  "elapsed_seconds": 3577.220824244898,
+  "input_identity": {
+    "snapshot_files": {
+      "files": [
+        {
+          "path": "Header",
+          "resolved_path": "/scratch/pawsey0807/chongchong/Projects-data/2026-quokka-outflow/hpc/run2.v2/job41114623-sigma50/run1/plt0105769/Header",
+          "size_bytes": 9864,
+          "modified_ns": 1792261180000000000
+        },
+        {
+          "path": "Level_0/Cell_D_00000",
+          "resolved_path": "/scratch/pawsey0807/chongchong/Projects-data/2026-quokka-outflow/hpc/run2.v2/job41114623-sigma50/run1/plt0105769/Level_0/Cell_D_00000",
+          "size_bytes": 68719489212,
+          "modified_ns": 1792261180000000000
+        },
+        {
+          "path": "Level_0/Cell_H",
+          "resolved_path": "/scratch/pawsey0807/chongchong/Projects-data/2026-quokka-outflow/hpc/run2.v2/job41114623-sigma50/run1/plt0105769/Level_0/Cell_H",
+          "size_bytes": 59466,
+          "modified_ns": 1792261180000000000
+        },
+        {
+          "path": "StochasticStellarPop_particles/Fields.yaml",
+          "resolved_path": "/scratch/pawsey0807/chongchong/Projects-data/2026-quokka-outflow/hpc/run2.v2/job41114623-sigma50/run1/plt0105769/StochasticStellarPop_particles/Fields.yaml",
+          "size_bytes": 362,
+          "modified_ns": 1792261180000000000
+        },
+        {
+          "path": "StochasticStellarPop_particles/Header",
+          "resolved_path": "/scratch/pawsey0807/chongchong/Projects-data/2026-quokka-outflow/hpc/run2.v2/job41114623-sigma50/run1/plt0105769/StochasticStellarPop_particles/Header",
+          "size_bytes": 1508,
+          "modified_ns": 1792261180000000000
+        },
+        {
+          "path": "metadata.yaml",
+          "resolved_path": "/scratch/pawsey0807/chongchong/Projects-data/2026-quokka-outflow/hpc/run2.v2/job41114623-sigma50/run1/plt0105769/metadata.yaml",
+          "size_bytes": 18195,
+          "modified_ns": 1792261180000000000
+        }
+      ],
+      "directory_links": []
+    },
+    "table_sha256": {
+      "despotic_table": "11e2fac106f5d2103fd82094c67d27676464a81182e7688880cb17d3f737488b",
+      "cloudy_table": "9ae6655c230cf855e02ab7be8c1e084a2794a404b5648386ea3e7f4a75502d02",
+      "dust_opacity_table": "b56680cc38b85f051f20c4405303e8c480cc9bec714fd5ba722a257a40ae840c"
+    },
+    "source_sha256": {
+      "__init__.py": "ce9d316e67a2e1773eb5b80c71aec070664c828aa9ca360bb3ea331998ccb8aa",
+      "check_job_table_input_ranges.py": "ba4a7436be4d866879bf743b08bc93e986a938904830db0ec4703613e5d77431",
+      "check_table_input_ranges.py": "d7f5b1707f53bef17ced9fc41d3102006f00764a4d23c2c4801d28e9fd4010fd",
+      "cloudy/__init__.py": "6f59eb149b3848015f72d637633da736f7184d4f45a97aca8196bf3d1cac03ef",
+      "cloudy/cell_fields.py": "65ed710528514f7e4f6a9d508229f730d5c0151733ed025be780eccd2bb7e167",
+      "cloudy/incident_spectrum.py": "fc5ba398c9337eb2619eb379eeba6f57c554344ab4dea299800cf7ed6581520a",
+      "cloudy/lookup.py": "89f00494bdd2f7a2971a16cbfe5bc5401fe09248562cb57e47ffa59fa0124d01",
+      "cloudy/table_definition.py": "de0c0bf28656bc1b26248b405c0f90e06d81c883fe6d44a0f87781bb4b994e6a",
+      "cold_gas_reader.py": "429646776ec5d4da4131e39e65f8d965ed856241b2ca8555e5c0cb4f8fd8fa13",
+      "cold_gas_survey.py": "2f977c4a7d39ca2140056f0c3b3a09fc678d3d87214af63d81517900c6a0c954",
+      "constants.py": "38a4b10b2a1752ff246c3eb875b4dbaaf3623989a8633716dcbb08135d23f701",
+      "despotic/__init__.py": "40a8247432e2e628f9f6c2688a391ec7e6c628022e13b24bf9a1d339d256cfa2",
+      "despotic/abundance_workspace.py": "7bec7e0525684e2aac3a5e156e2a93c6cd5f1b336eb6ddfbfbd7a66dcaad768b",
+      "despotic/build_table.py": "acd61b00795e966128ce9b13b7127c5051ac8d05fc9ad9e6b36ebca5234a2461",
+      "despotic/cell_fields.py": "f07216e12640bf8728e98cd497ed3c51e67ed9cd7a0cd505c60f9df691883d41",
+      "despotic/cell_solver.py": "3e235f7b66e614879817ad569e388f0c92a1e42feb42838ea8227b8ccc7b833d",
+      "despotic/checkpoint.py": "4bc03ece54871a9adb7367f22c57653adafc06d5e7815bf87dfc5aa44773838d",
+      "despotic/extend_table.py": "abfa8f34b6f49e08f9df07c3ca7a920657aad4c90acfc6ee428be572f5d8ce57",
+      "despotic/fixed_temperature_chemistry.py": "637735ff0177b975848aefe0c78d7416244f3086dc2906db6d0148de38291b97",
+      "despotic/interpolate_failed.py": "4c1854c3f67dbe3ba9c274241ed73281be7bbc5c29bd9cc2e23b038b33a329a6",
+      "despotic/list_failures.py": "9204e6ba99763d2d7c903b3d75687aa3cb9e1feedf0d0e8eff1470c45d9a12fe",
+      "despotic/lookup.py": "733ac72b4638d1897b52613f0c74ece60b36875dd74204fc3a3d99f932ddfa31",
+      "despotic/plot_table.py": "8f46b1d5a742e2398eee6f07fa07ac3c6edd24660ed5740e976bcded61b1d3ea",
+      "despotic/prepare_table_plots.py": "3b7ab0150780c94e4aa7449e1b99fe90b035259e2f34f43cf79e148d62873e85",
+      "despotic/reaction_terms.py": "678415162550708fbe995c51c1492eec55fccefa1748f23ab59c162b4cda3c8e",
+      "despotic/snapshot_domain.py": "50375a44096da7af5528bd045b8eb2ae0c6ca30f4eb2ce3430fb6205acff3a59",
+      "despotic/solver_settings.py": "f3e4579a29ea17c6d6d9fce0f02843f7a7b5d0572eac30f7dd79d6933c5c2f90",
+      "despotic/table_builder.py": "28ad7201d8071cf475ec3dc01d31b8b0cb5653a8580df01e8402df1f5ca608af",
+      "despotic/table_data.py": "7a0bf865f4da3a18c17153fdfcc85581650fa31eba9a68b3a45bc88c679061b4",
+      "despotic/table_extension.py": "dabf9cc75fa8d7eaf16b5a8040c5023205d08d251b11a4e40baecd05eb65486d",
+      "despotic/table_figure_data.py": "50ba36b18035d97c7d6b577ce02be6b640189611ee3ced810c77edad5609040a",
+      "despotic/table_files.py": "fd8fb002a5a17a2bc5da52ce581f168b18ae3b2ca037d23315e77b7d22f080a9",
+      "despotic/table_plots.py": "fda752f725542f100a7924c4c3220da256b5c617277baad1a6aadde8ce242721",
+      "despotic/thermal_solver.py": "3a3eda98bebc3087e93cb0b1d148d32cd9d378e57b0b154d41febf49c346f7b4",
+      "despotic/two_body_rates.py": "0aa7641cf4a1611232a84ebe854af0cde8464369f0208360bea18e73b91a9855",
+      "emission_results.py": "190a259bfd1b12242ad800fb47369e2d4e9430cb6be0044ff9dcc42397915321",
+      "figures/__init__.py": "30e83bfcb338bbd00ebd897a5faeb73150d8e8a37ec73cb662792d19bf878c99",
+      "figures/all_line_spectra.py": "a7807f84e1a3c21715f461dc64c3b74ee07a4dee6c136fa93d2757f18e50d89d",
+      "figures/cold_gas_phase.py": "90265d6fd58e2cef769d0aaa2570deded70546454a33529c50ac2cf7c3e02a62",
+      "figures/display_settings.py": "3dab689466fde317ccbe7ca9ea267b4b5c7770815cc5b60e289de140b627ed8d",
+      "figures/emission_phase_histograms.py": "1d13b1496b1e6f96dfdd2c35eea5e696e93d3e2e6f053ecc3286d83d680cc60f",
+      "figures/figure_files.py": "9f4dcc268b1b7159f74d01c8e2e95cbe92ce48aa3c66b42b9bfc6b71b79bb739",
+      "figures/gas_phase_spectra.py": "cb26619a42d488173cd76d1387f2dfa04fbe97f5ac3ea8fa6c2225277acd3fd4",
+      "figures/gas_projections.py": "a76e3db18d5f88f1fa2bd218176da01e3195ccfad57b026c5b00cdebbc14635e",
+      "figures/line_labels.py": "4c99b1a76148ffba59206b5bfb531b6356307c5b2d6b95b429353bd1eab410f7",
+      "figures/line_luminosity_images.py": "98c2d216a0f160219505a19c455e040f7d1b80a264fb65b29ff14daa980c857c",
+      "figures/line_spectra.py": "100d4d57b59d6d3caca7586e4e8317e828ac8fcbcdc550fad695226c1ce64180",
+      "figures/radiation_fields.py": "635d38afec0092ae6730cb8b16c943a5c3ec865f310a4dbbad7e620d35052551",
+      "figures/table_input_slices.py": "b44a48319bb9f56006d528e760393a14b60ab8805ea336502c08dea59dd5f8dc",
+      "file_provenance.py": "9099a8fcec21b7d6f9201b79e8145323af41eed78f6532c62944a224703f1347",
+      "input_paths.py": "1089b1133edc23d04bcd96d83685bb4317d52f73019b50e769bb0350b530cdcf",
+      "line_definitions.py": "3daf5ae8672b098a8d28457309fe389cbe6db3a2edb0e0ee539e787941c11ebb",
+      "native_snapshot_reader.py": "05c0d58075275f612a26f94aa51a858a92dad6a4f34c618c08d67867222b97f0",
+      "paths.py": "240661eca290c47cf202708c6a35deab6ae22cf16eb477cfa48b6ad6f391974e",
+      "physics/__init__.py": "d6d16c53f464a2301997e234ca06628877e048db34ef1d263faaaf5d69f47df6",
+      "physics/cell_emission.py": "6d51caa2d627f7f6e51899ce9e4e2c6360085ae1a8326231ef6ab403547eba73",
+      "physics/composition.py": "334cc44e507f1a2c2f625a72f677d1fe851b712e4df5fffa8a8bbb03771731e3",
+      "physics/dust_attenuation.py": "8c11cea152e2877ab762ac038e4bd79b2be285cb26a445209097b93868147070",
+      "physics/gas_fields.py": "2f840f0af4fb8f71e9637ac499d2925f59f4334beb168a16ce3681028f00c8dd",
+      "physics/hydrogen_emissivity.py": "aa019c46a1ccefae258716698f93f0a614dd5ba689d5cb8b61b4f11033a36446",
+      "physics/line_emissivity.py": "8d71528580e543c08256d1cf2d80cb93f5243f3e9bcb1f27e5b70eac849e95d9",
+      "physics/settings.py": "397e62e2ec652b5114fa31511d95abeebb2d70e403f6bb0cfb7f8c09fff3d70b",
+      "plot_cold_gas_phase.py": "ccd7bb012ce5d5a56438002fa7656108ed2163958c0a53d9e7b5bd9973111a73",
+      "plot_emission_results.py": "24586130d21ee17d6511a974abd401813ee5eccd2c26108aea52e0441bf58eb0",
+      "prepare_cold_gas_phase.py": "0bd5a954f7af6b5b8f955351786e2b788b3d198eae68ed1b98f93624c22c8401",
+      "prepare_emission_results.py": "bd4c4df2118e1d39a0ea45c9982dd3f982e801d97ac5740bed06668e4ab6a816",
+      "process_progress.py": "157718e34179cdd8705d869139e33fa5c1cf1e92522a87c27233d6ea950a9680",
+      "process_reuse.py": "0a708357594012c3f94560e9d46fc4dc2b762fb8e1b6b4ad54b13b2e16b4a2a6",
+      "process_snapshot.py": "aa5f987821f9d420e12f48a01d6f4221dcf7391559565c3d9cb8d7464eedd3a5",
+      "processing_inputs.py": "d908bc7191ac0542c2272cb79e0310d90f22583c6dd4803cfa116944b7b689ef",
+      "processing_report.py": "40447d5fc2c195062cf0e5dc99c00498b51e5aef931cd144529973a57b3758d6",
+      "products/__init__.py": "9ffd06b762c9fb4d0a16b5a2fcf21976a2dc6a73a85b527ecd1f5c4136d6e20f",
+      "products/_gaussian_fractions.pyx": "884eff76abc91addcd560e9f8313eab37b9a8dfaa5bc310d60886b7085649a42",
+      "products/cold_despotic_luminosity.py": "c76b27cd1fc9f4078ddd963beaf939547e7d8410d27898a252a8931ceef569b1",
+      "products/cold_gas_phase.py": "b01d5dd59fd1ffdf5844007ac6e17b75e0ebb701cbd5b6b079ed433d49eecc10",
+      "products/dust_extinction.py": "ae8d9dc4f39a168f32f20e905f2274fe4c9e183be7b73279144bf9b188b71b72",
+      "products/emission_phase_histograms.py": "cd4c5669f6d7f16b448f5b15c7f7215733cae01ec0e752828faa45f7b7db1720",
+      "products/emission_products.py": "aeb09a2fad81759fd8eb82264f4f49dba2b16abbf3ba98715b5326c090ba5134",
+      "products/gas_phase_velocity.py": "959047acf17393f6c7f5a3d273e05b4b7fb6b4f9e726cb07912724a94b0704b9",
+      "products/gas_projections.py": "66a473ac3bb9bf2f399c1ff39d18c53d4fc71520dcae0e23122340f4dc905659",
+      "products/integrated_spectra.py": "2f520bb61239a4524cb70bc9949131a1fbaf077a09983d88cf34d0150f38a7a0",
+      "products/line_luminosity_images.py": "d8bb671664b503e5105c814021750a07120ea203e8f8bc44ddb75f7daf3cfc4a",
+      "products/line_velocity_moments.py": "0ddd6b9a2b47ac6c96897fef5e13785109ba70c4d5fedef3d85340cc36d3493d",
+      "products/phase_histogram_preparation.py": "306e743d0579e1cefae4a43551ec2412b4f5d6bab7c51638ab25ed7006dc2933",
+      "products/profile_preparation.py": "70637bd391abae54c756f3cdb2691a67ec8dbff8becc9d6b3e1c7dc86ce65fdd",
+      "products/radiation_fields.py": "3c12e728cfdf541d79eefa5279b648cc99df168cbfd713a7cba5bb6ce596c749",
+      "products/table_input_slices.py": "f7b6dccbb458b1f6b0aebd70ad3151f470f41bc82b3535c5a4e0db6674c7f240",
+      "result_files.py": "5c686e47b570378eece605a07d049036c8805d6a6387820694227038587e01aa",
+      "result_metadata.py": "d69d6dbd7ec715ec1b6710f82698d128186feb6845eb272c25e49772416c99e7",
+      "run_settings.py": "09461d9558682446b1e6e704cd7da470529bc65f7543a94134d09cfaf6f1da3b",
+      "slab_field_cache.py": "d65cdd247536a2aa4d72b5d9a73c456e20cfb2b1f91253838852e912f160e9c5",
+      "snapshot_headers.py": "18be5ab7e6d7d036aa066c68f134748fcc4130c7e05bbd1cc3059f97f0057c64",
+      "snapshot_inventory.py": "2711e2d458b4931478f2f5f44e9820531a7f121a203eeb955a050321dae8cc27",
+      "snapshot_reader.py": "3fc5df20a352b257941db75fe2eb90a36ceef454f0a783dae139fed0d3a1e8dc",
+      "table_input_files.py": "afda43413ede2e6a80e92dfefa24c5abac7560882abf0e16ecea599dfbbd8a89",
+      "table_input_jobs.py": "d6c33a3dfc4b22c9112623609f7478d0b98718a418e52b3f5a80a4e411903a50",
+      "table_input_range_check.py": "2ea82aa917bd7d57cf0ebc4edbf044e27c910d1586c5b80a743c527c6ae7315c",
+      "table_input_reader.py": "e8f5df49ff8181fc1559b907cdbee546cd658672c673f4d9535ba5c18074471a",
+      "table_input_statistics.py": "b83f4c15e01f232f057a94452fd38173c8141e4a5781c021c9de8bc0b78604f0",
+      "table_input_survey.py": "eea54fe045738def6b15399f4bccd890c3f3c04497c11d066364acfe751861c3",
+      "table_input_worker.py": "962051b55e19a3610be96a7cccb28b0b2be9826544c496a02bda7de022b39fc9"
+    }
+  }
+}
