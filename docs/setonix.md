@@ -78,8 +78,9 @@ are saved in `$MYSOFTWARE/quokka_postprocess_3D/output/`. No separate scratch
 output directory or symbolic link is needed. The original simulation stays at
 its existing path and is read-only.
 
-Keep the supplied table paths. `jobname` only names the output group: change it
-manually when switching to another job. `dataset` selects one complete snapshot.
+Keep the supplied table paths. `jobname` only names the output group: use a
+distinct name when switching simulation runs. `dataset` selects one complete
+snapshot or its containing run directory.
 YAML does not expand shell variables; relative paths start at the YAML file.
 Coverage is snapshot-dependent; see
 [table-input checks](usage.md#check-table-input-ranges).
@@ -98,21 +99,55 @@ report their current stage about every ten seconds; active batches show whether
 they are looking up emission or integrating spectra. No extra option is needed.
 Results are saved under
 `output/jobname/plt0008703/region_x64-66_y64-66/processed/`. A full box has no region
-folder. Existing `processed/` directories are not overwritten; choose a fresh
-results root for a separate run.
+folder. Process draws figures from the saved products by default. Complete
+matching results are reused after configuration, input/source identity and
+product-integrity checks; incomplete, conflicting or legacy `processed/`
+directories are reported without being overwritten. Legacy results remain
+drawable with plot. Choose a fresh results root for a separate calculation;
+see the [reuse rules](usage.md#completed-result-reuse).
+
+To process the run's direct `plt` plus digits directories, in numeric order:
+
+```bash
+uv run process --dataset /scratch/pawsey0807/chongchong/Projects-data/2026-quokka-outflow/hpc/run2.v2/job41101509-sigma13/run1/
+```
+
+Each snapshot is saved and drawn before the next starts. The inventory is fixed
+at startup and discovery does not recurse. For numerical products only, append
+`--no-plot`; draw the whole output group later with `uv run plot --all`.
+Ordinary per-snapshot failures are summarized while other snapshots continue;
+any failure produces a nonzero exit status. Ctrl-C stops the batch. There is no
+slab checkpoint for restarting an interrupted numerical calculation.
 
 ## 5. Plot
 
-After process finishes, use the same selection:
+Process already draws figures by default. To redraw a saved region, use the
+same selection:
 
 ```bash
 uv run plot --x 64 66 --y 64 66
 ```
 
+Without `--all`, YAML `dataset` must select one snapshot. If it names a run
+directory, use `plot --all` for the output group, or supply
+`--dataset /path/to/run1/plt0008703` to redraw one snapshot. Plot does not expand
+raw run directories.
+
+To draw every saved snapshot after a numerical-only batch, repeat any x/y
+overrides used during processing:
+
+```bash
+uv run plot --all --x 64 66 --y 64 66
+```
+
+This reads the current `results_dir/jobname/` only; the original run directory
+and tables need not exist. `--all` cannot be combined with explicit `--dataset`.
+
 Plot prints its progress and reads only saved products, without opening the
 simulation or querying tables. By default it saves only titled PNG figures
 beside `processed/`, under `figures_titled/png/`. Set `figure_formats` and
-`figure_styles` in the shared YAML, or choose output with command-line flags:
+`figure_styles` in the shared YAML, or choose output with command-line flags
+accepted by both plot and process:
 
 ```bash
 uv run plot --x 64 66 --y 64 66 --pdf

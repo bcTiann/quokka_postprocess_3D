@@ -46,13 +46,15 @@ Do not manually edit `uv.lock`.
 ## Shared configuration
 
 Process and plot both read [configs/emission.yaml](../configs/emission.yaml).
-Choose one snapshot in the YAML, or override its dataset and x/y ranges with
-explicit command-line options. Other settings continue to come from the YAML.
+Choose one snapshot or a containing run directory in the YAML, or override its
+dataset and x/y ranges with explicit command-line options. Process plots each
+snapshot after saving its numerical products unless `--no-plot` is supplied.
+Other settings continue to come from the YAML.
 
 | Setting | Meaning |
 |---|---|
-| `jobname` | Output group name, for example `sigma13.v2`; change it manually when switching jobs |
-| `dataset` | Complete QUOKKA snapshot directory |
+| `jobname` | Output group name, for example `sigma13.v2`; use a distinct group for each simulation run |
+| `dataset` | Complete QUOKKA snapshot directory, or its containing run directory for process |
 | `results_dir` | Root containing all jobs and snapshots |
 
 ```yaml
@@ -64,8 +66,9 @@ results_dir: ../output
 The snapshot name comes from the supplied `dataset` path, here `plt0655228`.
 Both commands select `results_dir/jobname/snapshot_name/`: process writes
 `processed/`, while plot reads `processed/` and writes the selected figure
-styles. The default is `figures_titled/png/`; selecting the untitled style
-writes `figures/`. They do not search for the latest snapshot.
+styles. Process invokes plot by default after saving each snapshot. The default
+is `figures_titled/png/`; selecting the untitled style writes `figures/`. They do
+not search for the latest snapshot.
 If either x/y index range is set, these directories go inside the corresponding
 `region_xSTART-STOP_ySTART-STOP/` folder. An omitted or `null` axis uses `all`;
 with both axes omitted or `null`, no region folder is added.
@@ -115,12 +118,18 @@ absolute paths and are read-only.
 
 Relative paths are resolved from the YAML file's directory, so `../inputs/` in
 `configs/emission.yaml` refers to this clone's `inputs/` directory.
-`dataset` must point to the individual snapshot containing `Header`, rather
-than its parent `inputs/snapshots/` directory. Processing refuses to overwrite
-an existing `processed/` directory; choose another results root for a rerun
-of the same job, snapshot and region selection.
-An interrupted emission run starts again from the beginning in a new directory.
-Table-building checkpoints are a separate mechanism.
+For process, `dataset` may point to an individual snapshot containing `Header`
+or a run directory containing snapshot directories. Run discovery selects only
+direct subdirectories named `plt` plus digits, sorts them by numeric suffix,
+and fixes the list before processing begins. It does not recurse or watch for
+new snapshots. Each snapshot keeps its own output directory.
+Complete results with matching source identity and exact saved calculation
+settings are reused after product-integrity checks. Incomplete, conflicting or
+legacy `processed/` directories are reported without being overwritten. Choose
+another results root for a separate calculation of the same job, snapshot and
+region selection; the [reuse rules](#completed-result-reuse) explain the checks.
+There is no emission slab checkpoint: an interrupted snapshot must be restarted
+from the beginning in a new directory. Table-building checkpoints are separate.
 
 Existing numerical products can be reused without rerunning process. Place
 their complete directory at `results_dir/jobname/snapshot_name/processed/`,
@@ -166,7 +175,9 @@ Native ranges are half-open, and z always spans complete original columns.
 manually when switching jobs; no job number or run name is inferred from the
 dataset. Both commands select the same result directory, for example
 `results_dir/jobname/plt0008703/region_x64-128_y32-64/`.
-Process reads the selected snapshot and refuses existing process outputs.
+Process reads the selected snapshot, or processes the run's snapshots in order.
+Existing complete results are reused only when their settings and saved
+input/source identity match.
 Plot uses only the dataset folder name to select saved products, without
 checking the original snapshot or opening tables. Use the same effective
 dataset, jobname and region for process and plot.
@@ -174,6 +185,77 @@ dataset, jobname and region for process and plot.
 `emission_report.json` saves the effective `run_configuration`, including
 dataset/result paths, ranges, tables and execution settings. CLI overrides do
 not edit YAML; a later command or diagnostic does not inherit them.
+
+### Process a whole run and plot its saved results
+
+```bash
+# Calculate, save and draw one snapshot before starting the next.
+uv run process --dataset /path/to/simulations/run1/
+
+# Or calculate the entire run now and draw it later.
+uv run process --dataset /path/to/simulations/run1/ --no-plot
+uv run plot --all
+```
+
+The same directory selection works in YAML. There is no separate batch config
+and snapshots are processed sequentially; worker settings still apply inside
+each snapshot. Before starting, process prints the fixed snapshot inventory.
+During the run it prints the current snapshot number and the existing slab/batch
+progress. At the end it summarizes completed, reused and failed snapshots.
+
+`--no-plot` suppresses drawing and does not validate or use plotting settings.
+Otherwise process accepts the same `--png`, `--pdf`, `--titled` and `--untitled`
+flags as plot, applying them after each snapshot's products are safely saved.
+A drawing failure retains those products; a later invocation can reuse them
+without recalculating the snapshot. Ordinary failures affect that snapshot and
+the batch continues; any failure gives a nonzero exit status. Ctrl-C stops the
+batch immediately. Failed or incomplete result directories are never deleted
+or replaced automatically.
+
+`plot --all` scans direct `plt` plus digits directories in the configured
+`results_dir/jobname/`, in numeric order. It reads saved products only and does
+not need `dataset` in YAML or access the original simulation and table paths.
+It cannot be combined with explicit `--dataset`. Missing products, failed
+loads and incomplete diagnostic results are reported per snapshot; other
+snapshots continue and the command exits nonzero if any failed. The existing
+`allow_partial: true` option explicitly permits diagnostic plots.
+
+Use the same configuration and x/y selection for a later batch plot. CLI
+overrides do not persist, so repeat the ranges if they were supplied to process:
+
+```bash
+uv run process --config /path/to/emission.yaml --dataset /path/to/run1/ --x 64 66 --y 32 34 --no-plot
+uv run plot --config /path/to/emission.yaml --all --x 64 66 --y 32 34 --pdf --untitled
+```
+
+An output group should correspond to one simulation run: two runs may contain
+the same snapshot names, and `plot --all` selects all matching results in that
+group rather than interpreting the original run path.
+
+### Completed-result reuse
+
+Before skipping a calculation, `process_reuse.py` requires both `status.json`
+and `emission_report.json` to say `completed` with `processing_complete: true`.
+The saved `run_configuration` must match the current resolved settings exactly,
+including execution settings. All three numerical NPZ products must pass ZIP
+CRC checks and load through the current saved-product reader with the required
+fields. Completion refers to the selected region: a regional result may have
+`full_snapshot: false` while `processing_complete: true` and is reusable.
+
+The report also saves `input_identity`, containing each snapshot file's relative
+path, size and nanosecond modification time, plus SHA-256 hashes of the DESPOTIC,
+Cloudy and dust input files and the package's Python/Cython sources. Snapshot
+payload bytes are not hashed; their identity check uses file metadata only.
+Identity is captured before calculation and checked again before saving. These
+are additive report fields; numerical array formats and scientific calculations
+are unchanged. Table hashes govern reuse of a saved result, while physical
+compatibility checks for loading a table remain unchanged.
+
+Older results without `input_identity` are preserved and rejected for automatic
+process reuse. They can still be drawn using `plot` or `plot --all`, which only
+need their saved numerical products. Changed, incomplete or corrupt results are
+also preserved; choose another `results_dir` for a new calculation. No snapshot
+or output is deleted to make reuse succeed.
 
 ## Processing settings
 
@@ -326,10 +408,11 @@ settings under `physical_settings`. See the
 Copy the completed `processed/` directory to the laptop, preserving its job,
 snapshot and, if present, region folders. In the same shared YAML, set
 `results_dir` to the local results root and `jobname` to the selected job.
-The basename of `dataset`
-selects the saved snapshot. Its original Setonix path can remain unchanged;
+For a single plot, the basename of `dataset` selects the saved snapshot. Its
+original Setonix path can remain unchanged;
 plot does not require that path or the tables to exist locally. Retain the same
 x/y ranges to select a downloaded region; omit them to select the full-box result.
+Use `plot --all` to redraw the entire output group without a dataset selection.
 
 | Plot setting | Meaning |
 |---|---|
@@ -347,7 +430,8 @@ figure_styles: [titled]
 ```
 
 Replace the old `titled_figures` setting with `figure_styles`. These choices
-apply to all figures from `uv run plot`, including luminosity images.
+apply to all figures from `uv run plot` and process's automatic plots, including
+luminosity images.
 The command-line equivalents are:
 
 | Command | Formats | Styles |

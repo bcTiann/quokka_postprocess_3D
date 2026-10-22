@@ -1,7 +1,8 @@
 # Repository directories and reading order
 
 The repository has one current emission workflow. Process reads the snapshot
-and fixed lookup tables; plot reads the saved numerical products. Table-building
+and fixed lookup tables, saves products, then invokes plot by default; plot
+reads only the saved numerical products. Table-building
 tools and additional paper figures have their own commands.
 
 `pyproject.toml` declares dependencies; `uv.lock` records the resolved versions
@@ -43,8 +44,9 @@ products. Plot reads saved arrays without importing this processing extension.
 1. [shared configuration](../configs/emission.yaml): choose the simulation job,
    snapshot and results root. Both commands can override `dataset` and x/y ranges
    explicitly on the command line. The bundled emission tables are defaults.
-2. [process_snapshot.py](../src/quokka2s/process_snapshot.py): read inputs, process
-   slabs, build/check/save results.
+2. [process_snapshot.py](../src/quokka2s/process_snapshot.py): select one snapshot
+   or a run inventory, read inputs, process slabs, build/check/save results,
+   then draw each saved result unless `--no-plot` is selected.
 3. [snapshot_reader.py](../src/quokka2s/snapshot_reader.py): derive six copied
    core arrays from one slab. [native_snapshot_reader.py](../src/quokka2s/native_snapshot_reader.py)
    uses yt block/file metadata to copy selected x/y cells plus one periodic
@@ -99,8 +101,9 @@ temperature rule to gas-phase statistics, projection maps and phase histograms.
 `products/gas_phase_velocity.py` owns the phase names and temperature bounds;
 `GasPhaseResults` reads the saved definitions for plotting. Presentation titles
 belong to `figures/line_labels.py`. `file_provenance.py` provides file hashes for
-table-build and diagnostic identities; process-time table checks use the
-physical domain, not file hashes.
+table-build, diagnostic and completed-result identities. Table loading checks
+the physical domain; the separate result-reuse check also requires matching
+table-file hashes.
 
 `configs/despotic_extension.yaml` selects an existing raw table and new bounds.
 `extend_table.py` prints a plan or runs the extension. `table_builder.py` owns
@@ -114,13 +117,32 @@ The root modules also separate the final processing steps:
 `processing_report.py` builds the readable summary; `result_files.py` writes
 already-built arrays and the report. `run_settings.py` returns `ProcessSettings`
 or `PlotSettings` from the same YAML and explicit command-line overrides.
-Both derive the snapshot directory from `results_dir/jobname/snapshot_name`.
+Its plural loaders build the fixed lists for process and plot entry points;
+the single-record loaders remain available for figure tools.
+`snapshot_inventory.py` lists only direct `plt` plus digits directories in
+numeric order. Process accepts one snapshot or a containing run directory;
+`plot --all` lists snapshots under `results_dir/jobname/` without opening the
+original run. Plot does not need YAML `dataset` in that mode, and rejects an
+explicit `--dataset` together with `--all`.
+Both derive each snapshot directory from `results_dir/jobname/snapshot_name`.
 `--dataset ABS_PATH` replaces the YAML dataset; `--x` and `--y` each replace
 only their matching YAML range. Omitted options keep YAML values. CLI dataset
 paths must be absolute after expanding `~`; YAML relative paths still start at
 the YAML file. Plot uses the dataset folder name without accessing the original
 snapshot. `jobname` is only a manually chosen output group. Process writes its
 `processed/` subdirectory; plot reads that subdirectory and writes figures.
+The process entry point calls `plot_one_snapshot()` after each snapshot is
+saved unless `--no-plot` is supplied. `process_reuse.py` verifies status/report
+completion, exact configuration and input/source identity, NPZ CRCs and required
+product fields before reusing complete results. It records snapshot file
+metadata without hashing payload bytes, and hashes the three lookup/dust inputs
+and package Python/Cython sources. The identity is captured before calculation
+and rechecked before saving, then stored in the report. A selected region is
+complete according to `processing_complete`, even with `full_snapshot=False`.
+Incomplete, conflicting and legacy outputs without identity are preserved and
+reported; legacy outputs remain drawable with plot. Batch failures
+are summarized and return a nonzero exit status. There is no slab checkpoint
+or simultaneous processing of multiple snapshots.
 `process_progress.py` owns the timestamped slab/batch console display and its
 ten-second heartbeat. It stores stage labels and counters, without cell arrays
 or changes to numerical scheduling and merge order.
@@ -210,10 +232,12 @@ contain a snapshot named `plt0655228`. More snapshots of one job sit alongside
 each other under that job's directory. Set `jobname` to a distinct output group
 when switching jobs or runs: no identity is inferred from a dataset path.
 
-Processing writes a new directory per run. Plotting may redraw from the saved
-products many times. Each selected figure style keeps its chosen formats in
+Processing writes a new directory for each selected snapshot/region, or reuses
+matching completed results. Plotting may redraw from the saved products many
+times, individually or with `plot --all`. Each selected figure style keeps its chosen formats in
 `png/` and/or `pdf/` subdirectories. Spectral filenames end with `_v50` or
 `_v200` to distinguish the two display windows. Images are drawn once per style.
 Existing files from unselected styles or formats remain in place.
-Raw Cloudy calculation files belong in `runtime/`;
-process and plot use only the job and snapshot selected in the shared configuration.
+Raw Cloudy calculation files belong in `runtime/`. Each emission output group
+should correspond to one simulation run; `plot --all` selects that group's
+saved snapshots, using the configured or overridden x/y region.

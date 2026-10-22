@@ -8,6 +8,9 @@ results_dir: ../output
 # Optional overrides on both commands; CLI dataset paths must be absolute:
 # uv run process --dataset /absolute/path/plt0008703 --x 64 128 --y 32 64
 # uv run plot --dataset /absolute/path/plt0008703 --x 64 128 --y 32 64
+# Process also accepts /absolute/path/run1/ and plots each snapshot by default.
+# Use process --no-plot for numerical products only, then plot --all to draw them.
+# Repeat any CLI x/y ranges for the later plot command; overrides do not edit YAML.
 # Omitted CLI values keep the YAML dataset or corresponding x/y range.
 
 # Optional native x-y region; null selects the full axis. z stays complete.

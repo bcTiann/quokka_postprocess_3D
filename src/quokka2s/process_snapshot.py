@@ -8,16 +8,24 @@ from __future__ import annotations
 import argparse
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from pathlib import Path
 import time
 
 from quokka2s.physics.cell_emission import CellEmissionCalculator
-from quokka2s.run_settings import add_run_selection_arguments, load_process_config
+from quokka2s.run_settings import (
+    ProcessSettings,
+    add_plot_arguments,
+    add_run_selection_arguments,
+    load_plot_config,
+    load_process_configs,
+)
 from quokka2s.processing_inputs import load_processing_inputs
 from quokka2s.result_files import write_emission_results, write_status
 from quokka2s.result_metadata import ResultMetadata
 from quokka2s.processing_report import build_processing_report
 from quokka2s.process_progress import SlabProgress
+from quokka2s.process_reuse import processing_input_identity, reuse_completed_results
 from quokka2s.products.emission_products import EmissionProducts
 from quokka2s.snapshot_reader import slab_windows
 
@@ -336,32 +344,15 @@ def print_run_settings(config, config_path: Path) -> None:
     )
 
 
-def main(argv=None):
-    """Process the selected job/snapshot and save checked numerical products.
+def run_one_snapshot(config: ProcessSettings, config_path: Path) -> None:
+    """Calculate, check and save one snapshot's numerical products without drawing.
 
-    argv is a sequence of command arguments, or None for sys.argv[1:].
-    From the repository root, the default is configs/emission.yaml;
-    --config PATH selects another YAML file. --dataset supplies an absolute
-    snapshot path; --x/--y override native ranges. Omitted options retain YAML.
+    config owns resolved paths and one native x/y selection. All accumulators,
+    snapshot fields and lookup readers stay local to this call and are released
+    before the next snapshot or plotting step.
     """
-    parser = argparse.ArgumentParser(
-        prog='process',
-        description=__doc__,
-    )
-    add_run_selection_arguments(parser)
-    args = parser.parse_args(argv)
-    config_path = args.config
-    try:
-        config = load_process_config(
-            path=config_path,
-            dataset=args.dataset,
-            x_index_range=args.x_index_range,
-            y_index_range=args.y_index_range,
-        )
-    except (ValueError, OSError) as exc:
-        parser.error(str(exc))
-
     print_run_settings(config=config, config_path=config_path)
+    input_identity = processing_input_identity(config=config)
     snapshot, emission_calculator = load_processing_inputs(config)
     print('Outputs: allocating image, spectrum and gas-phase accumulators...', flush=True)
     products = EmissionProducts(
@@ -408,6 +399,9 @@ def main(argv=None):
             image_conservation=image_conservation,
             began=began,
         )
+        if processing_input_identity(config=config) != input_identity:
+            raise ValueError("Processing inputs or source files changed during calculation")
+        report["input_identity"] = input_identity
         stage = "saving results"
         print(f'Outputs: saving numerical products and report to: {config.output_dir}', flush=True)
         write_emission_results(
@@ -437,6 +431,99 @@ def main(argv=None):
             failure_context=(products.failure_context if stage == "processing cells" else {}),
         )
         raise
+
+
+def main(argv=None):
+    """Process one snapshot or a run's direct plt directories, then draw each.
+
+    --dataset overrides YAML with an absolute snapshot or parent run directory.
+    --no-plot saves numerical products only. Plot choices otherwise use the same
+    YAML and format/title flags as plot. Each invocation freezes its inventory;
+    completed matching products are reused and conflicting output is preserved.
+    """
+    parser = argparse.ArgumentParser(
+        prog="process",
+        description=__doc__,
+    )
+    add_run_selection_arguments(parser)
+    add_plot_arguments(parser)
+    parser.add_argument(
+        "--no-plot",
+        action="store_true",
+        help="Save numerical products only; draw them later with plot --all",
+    )
+    args = parser.parse_args(argv)
+    try:
+        configs = load_process_configs(
+            path=args.config,
+            dataset=args.dataset,
+            x_index_range=args.x_index_range,
+            y_index_range=args.y_index_range,
+        )
+        plot_defaults = None
+        if not args.no_plot:
+            plot_defaults = load_plot_config(
+                path=args.config,
+                dataset=args.dataset,
+                x_index_range=args.x_index_range,
+                y_index_range=args.y_index_range,
+                figure_formats=args.figure_formats,
+                figure_styles=args.figure_styles,
+            )
+    except (ValueError, OSError) as exc:
+        parser.error(str(exc))
+
+    started = time.monotonic()
+    processed = []
+    reused = []
+    plotted = []
+    failures = []
+    total = len(configs)
+    print(f"Process inventory: {total} snapshot(s); plotting={'off' if args.no_plot else 'on'}", flush=True)
+    for config in configs:
+        print(f"  {config.snapshot_name}: {config.dataset} -> {config.output_dir}", flush=True)
+    for index, config in enumerate(configs, start=1):
+        print(f"Snapshot {index}/{total}: {config.snapshot_name}", flush=True)
+        stage = "processing numerical products"
+        try:
+            if reuse_completed_results(config=config):
+                reused.append(config.snapshot_name)
+                print(f"Process: reusing completed matching results: {config.output_dir}", flush=True)
+            else:
+                run_one_snapshot(config=config, config_path=args.config)
+                processed.append(config.snapshot_name)
+            if plot_defaults is not None:
+                stage = "plotting saved products"
+                # Import only after numerical processing has released its arrays.
+                from quokka2s.plot_emission_results import plot_one_snapshot
+
+                plot_config = replace(
+                    plot_defaults,
+                    products=config.output_dir,
+                    output_dir=config.output_dir.parent / "figures",
+                )
+                plot_one_snapshot(config=plot_config)
+                plotted.append(config.snapshot_name)
+        except Exception as exc:
+            failures.append((config.snapshot_name, stage, f"{type(exc).__name__}: {exc}"))
+            print(f"Snapshot failed ({stage}): {config.snapshot_name}: {exc}", flush=True)
+        elapsed = time.monotonic() - started
+        eta = elapsed / index * (total - index)
+        print(
+            f"Snapshots: {index}/{total}; elapsed {duration_label(elapsed)}; "
+            f"ETA ~{duration_label(eta)}",
+            flush=True,
+        )
+    print(
+        f"Process summary: processed={len(processed)}, reused={len(reused)}, "
+        f"plotted={len(plotted)}, failed={len(failures)}; "
+        f"elapsed {duration_label(time.monotonic() - started)}",
+        flush=True,
+    )
+    for name, stage, error in failures:
+        print(f"  FAILED {name} ({stage}): {error}", flush=True)
+    if failures:
+        raise SystemExit(1)
 
 
 if __name__ == '__main__':

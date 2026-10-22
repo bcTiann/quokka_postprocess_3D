@@ -1,7 +1,8 @@
 # quokka2s — QUOKKA emission post-processing
 
-Process one QUOKKA snapshot, then draw emission-line images and spectra from
-the saved results. On Setonix, use the short [Setonix guide](docs/setonix.md).
+Process one QUOKKA snapshot or a run directory, drawing emission-line images
+and spectra after each snapshot is saved. On Setonix, use the short
+[Setonix guide](docs/setonix.md).
 
 Setonix results are tracked in [output/](output/). A normal clone includes the
 saved numerical products and PNG/PDF figures in their original directory structure.
@@ -56,9 +57,10 @@ dataset: ../inputs/snapshots/plt0655228
 results_dir: ../output
 ```
 
-`dataset` is the complete snapshot directory. `jobname` names its output group;
-change it yourself when switching jobs, since no job identity is inferred from
-the input path. Keep `results_dir: ../output` to save results in the repository's
+`dataset` is a complete snapshot directory or its containing run directory.
+`jobname` names the output group; use a distinct name for each simulation run,
+since no job identity is inferred from the input path. Keep
+`results_dir: ../output` to save results in the repository's
 `output/` directory. On Setonix this is `$MYSOFTWARE/quokka_postprocess_3D/output/`;
 no separate scratch output directory or link is needed. Relative YAML paths
 start at the YAML file. Shell variables are not expanded there.
@@ -75,7 +77,8 @@ From the repository root:
 uv run process
 ```
 
-This uses the YAML settings. For a small setup test, run
+This uses the YAML settings and draws figures after saving each snapshot's
+numerical products. For a small setup test, run
 `uv run process --x 64 66 --y 64 66`: x/y indices 64 and 65, with complete z
 columns. Ranges include the start and exclude the stop. Each supplied CLI axis
 overrides its YAML range; omitted axes keep their YAML settings.
@@ -86,26 +89,60 @@ seconds, including each active batch's current stage and elapsed time.
 It reads the snapshot and tables without modifying them, and saves under
 `results_dir/jobname/snapshot_name/processed/`. Explicit x/y ranges add, for
 example, `region_x64-66_y64-66/` before `processed/`. A full box has no region
-folder. Process refuses an existing `processed/` directory; use a fresh results
-root for a separate run.
+folder. Complete results with matching settings and saved input/source identity
+are reused after product-integrity checks; incomplete, conflicting or legacy
+`processed/` directories are reported without being overwritten. Legacy results
+remain drawable with plot. Use a fresh results root for a separate calculation;
+see the [reuse rules](docs/usage.md#completed-result-reuse).
+
+To process a whole run, pass its directory. Only direct subdirectories named
+`plt` plus digits are selected, in numeric order. The list is fixed at startup;
+each snapshot is calculated, saved and plotted before the next starts:
+
+```bash
+uv run process --dataset /path/to/simulations/run1/
+```
+
+Use `--no-plot` to save numerical products only, then draw the entire output
+group later:
+
+```bash
+uv run process --dataset /path/to/simulations/run1/ --no-plot
+uv run plot --all
+```
+
+Use the same `--config` and x/y ranges for both commands when overriding the
+defaults. `plot --all` scans `results_dir/jobname/`, so the original snapshots
+are not needed. Per-snapshot failures remain visible in the final summary;
+other snapshots continue, and any failure gives a nonzero exit status. Ctrl-C
+stops the batch. Interrupted numerical calculations restart at snapshot level,
+not from the last slab.
 
 ## 5. Plot
 
-After process finishes, use the same selection:
+Process already plots by default. To redraw one saved snapshot, use the same
+selection, or use `--all` for every saved snapshot in the selected output group:
 
 ```bash
 uv run plot
+uv run plot --all
 ```
 
-For the small region above, use `uv run plot --x 64 66 --y 64 66` instead.
+Without `--all`, YAML `dataset` must select one snapshot. If it names a run
+directory, use `plot --all` for the output group, or supply
+`--dataset /path/to/run1/plt0008703` to redraw one snapshot. Plot does not expand
+raw run directories.
+
+For the small region above, add `--x 64 66 --y 64 66` to the appropriate plot command.
 Plot prints its progress and reads only saved numerical products, without
 opening the snapshot or emission tables. The default is **PNG with titles**,
 saved in `figures_titled/png/` beside `processed/`. Select formats and styles
-with command-line flags:
+with command-line flags, also accepted by process for its automatic plots:
 
 ```bash
 uv run plot --pdf
 uv run plot --png --pdf --titled --untitled
+uv run process --pdf --untitled
 ```
 
 `--pdf` selects only PDF; combining `--png --pdf` saves both formats.

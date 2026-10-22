@@ -19,6 +19,7 @@ from quokka2s.input_paths import (
     DEFAULT_DRAINE_TABLE,
 )
 from quokka2s.paths import resolve_path
+from quokka2s.snapshot_inventory import is_snapshot_name, list_snapshot_directories
 
 
 # Relative names only: the entry points use the working directory; standalone
@@ -128,7 +129,10 @@ def add_run_selection_arguments(parser: argparse.ArgumentParser) -> None:
         "--dataset",
         type=Path,
         metavar="PATH",
-        help="Absolute snapshot path overriding YAML dataset; plot uses only its folder name",
+        help=(
+            "Absolute dataset path overriding YAML: process accepts one snapshot "
+            "or its run directory; plot selects one snapshot by folder name"
+        ),
     )
     parser.add_argument(
         "--config",
@@ -365,6 +369,67 @@ def load_process_config(
     dataset must be absolute; jobname still identifies the output group.
     """
     config_path, supplied = _read_mapping(path)
+    return _process_settings(
+        config_path=config_path,
+        supplied=supplied,
+        dataset=dataset,
+        x_index_range=x_index_range,
+        y_index_range=y_index_range,
+    )
+
+
+def load_process_configs(
+    path: str | Path,
+    *,
+    dataset: str | Path | None = None,
+    x_index_range: list[int] | None = None,
+    y_index_range: list[int] | None = None,
+) -> list[ProcessSettings]:
+    """Select one snapshot or the direct plt+digits children of a run directory.
+
+    A directory containing Header, or a supplied plt+digits name, selects one
+    snapshot. A missing Header on a named snapshot remains a processing failure;
+    it is not treated as an empty run. All snapshots share the selected x/y
+    ranges and execution settings. Directory discovery never reads cell data.
+    """
+    config_path, supplied = _read_mapping(path)
+    selected = _process_settings(
+        config_path=config_path,
+        supplied=supplied,
+        dataset=dataset,
+        x_index_range=x_index_range,
+        y_index_range=y_index_range,
+    )
+    if is_snapshot_name(selected.snapshot_name) or (selected.dataset / "Header").is_file():
+        return [selected]
+
+    snapshots = list_snapshot_directories(directory=selected.dataset)
+    if not snapshots:
+        raise ValueError(f"No plt+digits snapshot directories found in {selected.dataset}")
+    configurations = []
+    for snapshot in snapshots:
+        config = _process_settings(
+            config_path=config_path,
+            supplied=supplied,
+            dataset=snapshot,
+            x_index_range=x_index_range,
+            y_index_range=y_index_range,
+        )
+        if config.output_dir.resolve().is_relative_to(selected.dataset):
+            raise ValueError("results_dir must be outside the input run directory")
+        configurations.append(config)
+    return configurations
+
+
+def _process_settings(
+    *,
+    config_path: Path,
+    supplied: dict,
+    dataset: str | Path | None,
+    x_index_range: list[int] | None,
+    y_index_range: list[int] | None,
+) -> ProcessSettings:
+    """Validate one snapshot's paths, index ranges and calculation settings."""
     run = read_run_selection(
         supplied=supplied,
         config_directory=config_path.parent,
@@ -415,6 +480,83 @@ def load_plot_config(
     list; repeated choices are saved once in the standard format/style order.
     """
     config_path, supplied = _read_mapping(path)
+    return _plot_settings(
+        config_path=config_path,
+        supplied=supplied,
+        dataset=dataset,
+        x_index_range=x_index_range,
+        y_index_range=y_index_range,
+        figure_formats=figure_formats,
+        figure_styles=figure_styles,
+    )
+
+
+def load_plot_configs(
+    path: str | Path,
+    *,
+    all_snapshots: bool = False,
+    dataset: str | Path | None = None,
+    x_index_range: list[int] | None = None,
+    y_index_range: list[int] | None = None,
+    figure_formats: list[str] | None = None,
+    figure_styles: list[str] | None = None,
+) -> list[PlotSettings]:
+    """Select one saved result or every plt+digits directory in the output job.
+
+    all_snapshots ignores YAML dataset entirely and lists results_dir/jobname
+    only. Source snapshots and emission tables may be absent. The same native
+    x/y region and figure choices apply to each selected result; missing products
+    remain visible to the plotting caller rather than disappearing from the list.
+    """
+    if all_snapshots and dataset is not None:
+        raise ValueError("--all cannot be combined with --dataset")
+    config_path, supplied = _read_mapping(path)
+    if not all_snapshots:
+        return [_plot_settings(
+            config_path=config_path,
+            supplied=supplied,
+            dataset=dataset,
+            x_index_range=x_index_range,
+            y_index_range=y_index_range,
+            figure_formats=figure_formats,
+            figure_styles=figure_styles,
+        )]
+
+    missing = {"jobname", "results_dir"} - set(supplied)
+    if missing:
+        raise ValueError(f"Missing setting(s): {', '.join(sorted(missing))}")
+    jobname = _folder_name("jobname", supplied["jobname"])
+    results_dir = _path_value("results_dir", supplied["results_dir"], config_path.parent)
+    job_directory = results_dir / jobname
+    snapshots = list_snapshot_directories(directory=job_directory)
+    if not snapshots:
+        raise ValueError(f"No plt+digits result directories found in {job_directory}")
+    configurations = []
+    for snapshot in snapshots:
+        config = _plot_settings(
+            config_path=config_path,
+            supplied=supplied,
+            dataset=snapshot,
+            x_index_range=x_index_range,
+            y_index_range=y_index_range,
+            figure_formats=figure_formats,
+            figure_styles=figure_styles,
+        )
+        configurations.append(config)
+    return configurations
+
+
+def _plot_settings(
+    *,
+    config_path: Path,
+    supplied: dict,
+    dataset: str | Path | None,
+    x_index_range: list[int] | None,
+    y_index_range: list[int] | None,
+    figure_formats: list[str] | None,
+    figure_styles: list[str] | None,
+) -> PlotSettings:
+    """Validate saved-result selection and figure choices from one YAML mapping."""
     run = read_run_selection(
         supplied=supplied,
         config_directory=config_path.parent,

@@ -19,9 +19,10 @@ from quokka2s.figures.gas_phase_spectra import (
 from quokka2s.figures.line_luminosity_images import plot_line_images
 from quokka2s.figures.line_spectra import plot_line_spectra
 from quokka2s.run_settings import (
+    PlotSettings,
     add_plot_arguments,
     add_run_selection_arguments,
-    load_plot_config,
+    load_plot_configs,
 )
 
 
@@ -127,35 +128,14 @@ def draw_emission_products(
     return paths
 
 
-def main(argv=None) -> None:
-    """Plot the job and snapshot selected by the shared emission YAML.
+def plot_one_snapshot(config: PlotSettings) -> int:
+    """Read one saved snapshot/region and return the number of figure files.
 
-    argv is a sequence of command arguments, or None for sys.argv[1:].
-    From the repository root, the default is configs/emission.yaml;
-    --config PATH selects another YAML file. --dataset and --x/--y override the
-    YAML selection, locating saved products without accessing snapshots or tables.
+    config contains resolved product/output paths and display choices only.
+    This is also the post-processing action used by the process command; it
+    reopens saved arrays rather than receiving live numerical accumulators.
     """
-    parser = argparse.ArgumentParser(
-        prog='plot',
-        description=__doc__,
-    )
-    add_run_selection_arguments(parser)
-    add_plot_arguments(parser)
-    args = parser.parse_args(argv)
-    config_path = args.config
     started = time.perf_counter()
-    print(f'Plot configuration: {config_path}', flush=True)
-    try:
-        config = load_plot_config(
-            path=config_path,
-            dataset=args.dataset,
-            x_index_range=args.x_index_range,
-            y_index_range=args.y_index_range,
-            figure_formats=args.figure_formats,
-            figure_styles=args.figure_styles,
-        )
-    except (ValueError, OSError) as exc:
-        parser.error(str(exc))
     print(f'Plot: reading saved numerical products from {config.products}', flush=True)
     products = read_emission_results(
         directory=config.products,
@@ -176,6 +156,77 @@ def main(argv=None) -> None:
     file_count = sum(len(files) for groups in paths.values() for files in groups.values())
     elapsed_seconds = time.perf_counter() - started
     print(f'Plot finished: saved {file_count} files in {elapsed_seconds:.1f} s.', flush=True)
+    return file_count
+
+
+def main(argv=None) -> None:
+    """Plot one selection or all saved snapshots in the configured output job.
+
+    argv is a sequence of command arguments, or None for sys.argv[1:].
+    --all discovers results under results_dir/jobname without accessing raw
+    snapshots or tables. --x/--y and figure flags apply to every selection.
+    Ordinary batch failures are listed after the remaining snapshots finish.
+    """
+    parser = argparse.ArgumentParser(
+        prog='plot',
+        description=__doc__,
+    )
+    add_run_selection_arguments(parser)
+    add_plot_arguments(parser)
+    parser.add_argument(
+        '--all',
+        dest='all_snapshots',
+        action='store_true',
+        help='Plot every saved plt+digits snapshot in the configured output job',
+    )
+    args = parser.parse_args(argv)
+    if args.all_snapshots and args.dataset is not None:
+        parser.error('--all cannot be combined with --dataset')
+    print(f'Plot configuration: {args.config}', flush=True)
+    try:
+        configs = load_plot_configs(
+            path=args.config,
+            all_snapshots=args.all_snapshots,
+            dataset=args.dataset,
+            x_index_range=args.x_index_range,
+            y_index_range=args.y_index_range,
+            figure_formats=args.figure_formats,
+            figure_styles=args.figure_styles,
+        )
+    except (ValueError, OSError) as exc:
+        parser.error(str(exc))
+
+    started = time.perf_counter()
+    succeeded = 0
+    file_count = 0
+    failures = []
+    snapshot_count = len(configs)
+    print(f'Plot: selected {snapshot_count} snapshot(s).', flush=True)
+    for snapshot_index, config in enumerate(configs, start=1):
+        print(
+            f'Plot snapshot {snapshot_index}/{snapshot_count}: {config.products.parent}',
+            flush=True,
+        )
+        try:
+            file_count += plot_one_snapshot(config=config)
+            succeeded += 1
+        except Exception as exc:
+            if not args.all_snapshots:
+                raise
+            error = f'{type(exc).__name__}: {exc}'
+            failures.append((config.products.parent, error))
+            print(f'Plot failed: {config.products.parent}: {error}', flush=True)
+
+    elapsed_seconds = time.perf_counter() - started
+    print(
+        f'Plot summary: {succeeded} succeeded, {len(failures)} failed; '
+        f'saved {file_count} files in {elapsed_seconds:.1f} s.',
+        flush=True,
+    )
+    for directory, error in failures:
+        print(f'  Failed: {directory}: {error}', flush=True)
+    if failures:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

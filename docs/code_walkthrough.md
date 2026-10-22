@@ -2,7 +2,8 @@
 
 Start at `main()` near the bottom of [process_snapshot.py](../src/quokka2s/process_snapshot.py).
 Read what each call receives and returns before opening the function itself.
-Process and plot have independent entry points:
+Process calculates, saves and then plots each selected snapshot by default.
+The separate plot entry point redraws saved products:
 
 ```bash
 uv run process
@@ -11,7 +12,9 @@ uv run plot
 
 From the repository root, both read the default `configs/emission.yaml`.
 Use `--config PATH` to select another file. Each runs directly;
-there is no shared dispatcher.
+there is no shared dispatcher. `process --no-plot` saves numerical products
+without drawing. Process accepts a single snapshot or a containing run directory;
+`plot --all` selects every snapshot in the configured output group.
 Both also accept an absolute `--dataset` path and `--x START STOP` /
 `--y START STOP` overrides, for example:
 
@@ -19,6 +22,21 @@ Both also accept an absolute `--dataset` path and `--x START STOP` /
 uv run process --dataset /path/to/simulations/plt0008703 --x 64 128 --y 32 64
 uv run plot --dataset /path/to/simulations/plt0008703 --x 64 128 --y 32 64
 ```
+
+For a whole run, the corresponding commands are:
+
+```bash
+uv run process --dataset /path/to/simulations/run1/ --no-plot
+uv run plot --all
+```
+
+`load_process_configs()` freezes the run's direct `plt` plus digits directories
+in numeric order. Each resulting `ProcessSettings` describes one snapshot.
+Without `--no-plot`, main calls `plot_one_snapshot()` after that snapshot is
+saved, before moving to the next. Plot uses `load_plot_configs()`; its `--all`
+inventory comes from `results_dir/jobname/`, without reading the original run.
+Both commands apply the same selected x/y region to every snapshot. CLI ranges
+must be repeated for a later plot command because overrides do not edit YAML.
 
 First prepare the environment with `uv sync`. uv
 automatically installs the checkout in editable mode and registers commands
@@ -84,7 +102,8 @@ The package has five purpose-specific folders:
 
 | Stage | Function | What it produces |
 |---|---|---|
-| Read settings | `load_process_config()` | A `ProcessSettings` record with YAML settings, command-line selection and resolved input/output paths |
+| Read settings | `load_process_configs()` | A fixed list of `ProcessSettings` records with YAML settings, command-line selection and resolved per-snapshot paths |
+| Reuse completed results | `process_reuse.reuse_completed_results()` | Complete, intact products with exact matching configuration and input/source identity, or a clear preserved-output error |
 | Open inputs | `processing_inputs.load_processing_inputs(config)` | `snapshot`, `emission_calculator` |
 | Create output arrays | `EmissionProducts(...)` | Initially empty image, spectrum, and gas-phase accumulators |
 | Process cells | `process_snapshot()` | The accumulated numerical results |
@@ -93,8 +112,24 @@ The package has five purpose-specific folders:
 | Check outputs | `products.check_outputs(outputs)` | Conservation/accounting checks; image-conservation diagnostics |
 | Build report | `processing_report.build_processing_report()` | Readable settings, counts, luminosities and check results |
 | Save | `result_files.write_emission_results()` then `write_status()` | Three NPZ files, the JSON report, then completion status |
+| Draw | `plot_emission_results.plot_one_snapshot()` unless `--no-plot` | Figures read from the saved numerical products |
 
 The orchestration stays in [process_snapshot.py](../src/quokka2s/process_snapshot.py).
+`main()` loops over the fixed inventory; `run_one_snapshot()` owns one numerical
+calculation. Its caller invokes plotting only after saving has finished, or
+after existing completed results have been checked for reuse. An ordinary
+per-snapshot processing or drawing failure is reported and the loop continues;
+the final exit status is nonzero if any snapshot failed. Ctrl-C stops the loop.
+The single-record `load_process_config()` remains available for figure tools.
+`process_reuse.py` checks the status and report completion flags, exact
+`run_configuration`, saved `input_identity`, NPZ CRCs and required product
+fields. Regional products can be complete with `full_snapshot=False`; completion
+uses `processing_complete`. Identity records snapshot file paths/sizes/mtime_ns
+without hashing payloads, and hashes the three lookup/dust inputs plus package
+Python/Cython sources. It is captured before calculation and rechecked before
+saving as additive report metadata. These table hashes govern result reuse,
+without changing table-domain compatibility. Legacy results without identity
+are preserved and cannot be reused by process, but remain drawable by plot.
 Its console observer, [process_progress.py](../src/quokka2s/process_progress.py),
 records batch numbers, stage labels and timestamps only. A heartbeat thread
 reports long reads/calculations about every ten seconds; workers update their
@@ -681,18 +716,26 @@ including the failed stage; it is not a resume checkpoint.
 
 Open [plot_emission_results.py](../src/quokka2s/plot_emission_results.py) and start at `main()`.
 
-1. `load_plot_config()` reads the shared YAML and returns `PlotSettings` with
-   product and figure directories under `results_dir/jobname/snapshot_name/`.
+1. `load_plot_configs()` reads the shared YAML and returns one or more
+   `PlotSettings` records with product and figure directories under
+   `results_dir/jobname/snapshot_name/`.
    Supplied x/y index ranges add the same region folder used by process.
    It obtains the snapshot name from the supplied `dataset` path without
    opening that path or checking emission-table files. `figure_formats` and
    `figure_styles` select PNG/PDF and titled/untitled output. Explicit flags
    override the corresponding YAML category; defaults are PNG and titled only.
-2. `read_emission_results()` in the root
+   With `--all`, it lists only direct `plt` plus digits result directories in
+   numeric order. That mode does not need YAML `dataset` and rejects explicit
+   `--dataset`. The single-record `load_plot_config()` remains available for
+   tools that already select one result directory.
+2. `main()` calls `plot_one_snapshot()` sequentially for each selected record.
+   Process uses this same function for automatic plotting. Its
+   `read_emission_results()` call in the root
    [emission_results.py](../src/quokka2s/emission_results.py) reads the three
    saved NPZ files once into `EmissionResults(images, spectra, gas_phases, ...)`.
    It loads the fields
    needed for drawing; process has already checked the scientific products.
+   Incomplete diagnostic products require explicit `allow_partial: true`.
 3. `draw_emission_products()` selects each line's saved attenuated total spectrum
    by name for the gas-phase comparison. Images, normalized gas/line curves,
    surface-luminosity spectra and colour limits are already saved; no numerical
