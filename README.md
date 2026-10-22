@@ -7,6 +7,18 @@ and spectra after each snapshot is saved. On Setonix, use the short
 Setonix results are tracked in [output/](output/). A normal clone includes the
 saved numerical products and PNG/PDF figures in their original directory structure.
 
+## Experimental Julia backend
+
+The `codex/julia-experimental` branch provides Julia/Mera processing for one
+complete uniform-grid snapshot and the existing saved-product Python plotting,
+including job name and simulation time in titled figures. Keep it in a separate
+checkout and environment while validating a new physical case. See the
+[Julia local and Setonix installation guide](julia/README.md) for pinned
+dependencies, fixed-table export, a region smoke test, full-snapshot Slurm jobs
+and plot-only use. The [implementation guide](docs/julia_process.md) describes
+the numerical workflow and current input limits. The commands below continue
+to describe the Python pipeline.
+
 ## 1. Clone
 
 ```bash

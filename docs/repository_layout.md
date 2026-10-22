@@ -1,9 +1,16 @@
 # Repository directories and reading order
 
-The repository has one current emission workflow. Process reads the snapshot
-and fixed lookup tables, saves products, then invokes plot by default; plot
-reads only the saved numerical products. Table-building
-tools and additional paper figures have their own commands.
+The independent Julia/Mera implementation in `julia/` processes a complete
+snapshot or selected x/y region in bounded z batches, prepares numerical figure
+arrays, and draws all standard emission figures. Its supported native layout,
+fixed dependencies, asset export, commands and separate raw/prepared schemas
+are described in [julia_process.md](julia_process.md). The Python workflow below
+remains the production reference.
+
+The Python production workflow reads the snapshot and fixed lookup tables,
+saves products, then invokes plot by default; plot reads only saved numerical
+products. Table-building tools and additional paper figures have their own
+commands.
 
 `pyproject.toml` declares dependencies; `uv.lock` records the resolved versions
 and source identities. uv creates `.venv` with `uv sync` and selects it for
@@ -28,6 +35,7 @@ products. Plot reads saved arrays without importing this processing extension.
 |---|---|---|
 | `configs/` | Shared `emission.yaml` for process/plot and `table_input_survey.yaml` for job surveys; paths are relative to their YAML file | Yes |
 | `src/quokka2s/` | Reusable calculations and process/plot entry points | Yes |
+| `julia/` | Independent Julia/Mera streaming snapshot processor, pinned environment, asset exporter, saved-product preparation and standard renderer entry point | Yes |
 | `tools/cloudy/` | Build radiation inputs, run Cloudy, package its emission table | Yes |
 | `tools/despotic/` | Install required GOW corrections, measure table axes, check coverage | Yes |
 | `tools/snapshots/` | Survey stored field extrema from snapshot text headers | Yes |
@@ -38,6 +46,31 @@ products. Plot reads saved arrays without importing this processing extension.
 | `inputs/tables/` | Cloudy `emission.npz`, DESPOTIC `interpolated.npz`, and their previous `emission_old.npz` / `interpolated_old.npz` | Yes; raw tables and other build files stay local |
 | `output/` | Processed numerical products and figures, including the Setonix results | Yes |
 | `runtime/` | Cloudy build parameters, `.inc` exports, raw outputs and logs | No |
+
+## Julia entry points and data ownership
+
+[`julia/bin/process.jl`](../julia/bin/process.jl) calls
+[`run_snapshot()`](../julia/src/pipeline.jl). It selects all x/y cells by default;
+`--x` and `--y` independently restrict native indices while z retains the
+complete original sightlines. `reader.jl` reads Mera geometry and units;
+`stream_reader.jl` validates aligned native z layers, performs a density prepass
+for complete shielding/foreground columns, and emits thin-z batches.
+`emission.jl` consumes fixed exported tables. `stream_products.jl` owns the
+persistent image/spectrum/phase accumulator and calls the numerical kernels in
+`products.jl`. Reader cache limits estimate retained arrays rather than process
+RSS. Uniform level-0, cubic cells and the supported FAB z-layer layout are
+required; the detailed restrictions are in the Julia guide.
+
+`pipeline.jl` saves raw `products.npz` and a raw-complete report, then calls
+[`prepare_results.py`](../julia/prepare_results.py) before marking numerical
+processing complete. Its `prepared/` directory contains the existing Python
+image/spectrum/phase reader schema and a preparation manifest.
+[`plot_results.py`](../julia/plot_results.py) reads only that prepared directory
+and reuses the four standard renderer families: 63 figures per selected style
+and format. `--no-plot` skips rendering while still completing numerical figure
+preparation. Rendering has its own status, separate from numerical completion.
+The retained `run_region()` API is an in-memory diagnostic that saves raw
+products; it is not the command's streaming execution path.
 
 ## Start reading the current pipeline
 
