@@ -100,20 +100,26 @@ To process a whole run, pass its directory. Only direct subdirectories named
 each snapshot is calculated, saved and plotted before the next starts:
 
 ```bash
-uv run process --dataset /path/to/simulations/run1/
+uv run process --dataset /path/to/simulations/run1/ --jobname sigma13.v2
 ```
+
+Every explicit `--dataset` requires an explicit `--jobname`, even if the YAML
+already names that group. A missing pair is rejected before configuration or
+input access and before creating output. The group is chosen manually, never
+inferred from the path; automatic plotting uses that same group.
 
 Use `--no-plot` to save numerical products only, then draw the entire output
 group later:
 
 ```bash
-uv run process --dataset /path/to/simulations/run1/ --no-plot
-uv run plot --all
+uv run process --dataset /path/to/simulations/run1/ --jobname sigma13.v2 --no-plot
+uv run plot --all --jobname sigma13.v2
 ```
 
-Use the same `--config` and x/y ranges for both commands when overriding the
-defaults. `plot --all` scans `results_dir/jobname/`, so the original snapshots
-are not needed. Per-snapshot failures remain visible in the final summary;
+Repeat the selected `--jobname`, `--config` and x/y overrides in the later plot
+command; command-line choices do not edit YAML or persist. `plot --all` scans
+`results_dir/jobname/`, so the original snapshots are not needed. Per-snapshot
+failures remain visible in the final summary;
 other snapshots continue, and any failure gives a nonzero exit status. Ctrl-C
 stops the batch. Interrupted numerical calculations restart at snapshot level,
 not from the last slab.
@@ -128,10 +134,13 @@ uv run plot
 uv run plot --all
 ```
 
-Without `--all`, YAML `dataset` must select one snapshot. If it names a run
-directory, use `plot --all` for the output group, or supply
-`--dataset /path/to/run1/plt0008703` to redraw one snapshot. Plot does not expand
-raw run directories.
+Without `--all`, the selected dataset must name one snapshot. If YAML names a
+run directory, use `plot --all` for the output group, or supply
+`--dataset /path/to/run1/plt0008703 --jobname sigma13.v2` to redraw one snapshot.
+Plot does not expand raw run directories. With no CLI dataset, it keeps the
+YAML dataset; `--jobname sigma50` alone overrides only the output group. For
+example, `uv run plot --all --jobname sigma50` draws that group's saved results,
+while bare `plot --all` uses the YAML group.
 
 For the small region above, add `--x 64 66 --y 64 66` to the appropriate plot command.
 Plot prints its progress and reads only saved numerical products, without
@@ -166,15 +175,16 @@ snapshot without editing `dataset`, supply its absolute path and the same
 region to both commands:
 
 ```bash
-uv run process --dataset /path/to/simulations/plt0008703 --x 64 66 --y 64 66
-uv run plot --dataset /path/to/simulations/plt0008703 --x 64 66 --y 64 66
+uv run process --dataset /path/to/simulations/plt0008703 --jobname sigma13.v2 --x 64 66 --y 64 66
+uv run plot --dataset /path/to/simulations/plt0008703 --jobname sigma13.v2 --x 64 66 --y 64 66
 ```
 
-CLI `--dataset` accepts an absolute path (including `~/...`); YAML keeps its
-existing relative-path support. `jobname`, tables, workers and output root still
-come from YAML. Plot uses only the dataset folder name to locate saved products;
-the original simulation is not needed. Process records its effective settings
-in `emission_report.json`.
+CLI `--dataset` accepts an absolute path (including `~/...`) and requires its
+paired `--jobname`; YAML keeps its existing relative-path support. With neither
+option supplied, the YAML dataset and group are used. Tables, workers and output
+root continue to come from YAML. Single-snapshot plot uses only the dataset
+folder name to locate saved products; the original simulation is not needed.
+Process records its effective settings in `emission_report.json`.
 
 [Detailed usage](docs/usage.md) · [Methods](docs/emission_method.md) ·
 [Code guide](docs/code_walkthrough.md) · [Repository layout](docs/repository_layout.md)

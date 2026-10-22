@@ -42,8 +42,9 @@ products. Plot reads saved arrays without importing this processing extension.
 ## Start reading the current pipeline
 
 1. [shared configuration](../configs/emission.yaml): choose the simulation job,
-   snapshot and results root. Both commands can override `dataset` and x/y ranges
-   explicitly on the command line. The bundled emission tables are defaults.
+   snapshot and results root. Both commands can override `dataset`, `jobname`
+   and x/y ranges explicitly on the command line. The bundled emission tables
+   are defaults.
 2. [process_snapshot.py](../src/quokka2s/process_snapshot.py): select one snapshot
    or a run inventory, read inputs, process slabs, build/check/save results,
    then draw each saved result unless `--no-plot` is selected.
@@ -122,14 +123,19 @@ the single-record loaders remain available for figure tools.
 `snapshot_inventory.py` lists only direct `plt` plus digits directories in
 numeric order. Process accepts one snapshot or a containing run directory;
 `plot --all` lists snapshots under `results_dir/jobname/` without opening the
-original run. Plot does not need YAML `dataset` in that mode, and rejects an
-explicit `--dataset` together with `--all`.
+original run. `plot --all --jobname sigma50` selects that group, while bare
+`--all` uses the YAML group. Plot does not need YAML `dataset` in that mode, and
+rejects an explicit `--dataset` together with `--all`.
 Both derive each snapshot directory from `results_dir/jobname/snapshot_name`.
-`--dataset ABS_PATH` replaces the YAML dataset; `--x` and `--y` each replace
-only their matching YAML range. Omitted options keep YAML values. CLI dataset
-paths must be absolute after expanding `~`; YAML relative paths still start at
-the YAML file. Plot uses the dataset folder name without accessing the original
-snapshot. `jobname` is only a manually chosen output group. Process writes its
+`--dataset ABS_PATH` replaces the YAML dataset and requires explicit
+`--jobname NAME`; argparse rejects an unpaired dataset before configuration or
+input access and before output creation. CLI jobname alone overrides only the
+YAML group; with no corresponding CLI option the YAML dataset/group is retained.
+`--x` and `--y` each replace only their matching YAML range. Overrides do not
+write YAML or persist. CLI dataset paths must be absolute after expanding `~`;
+YAML relative paths still start at the YAML file. Plot uses the dataset folder
+name without accessing the original snapshot. `jobname` is only a manually
+chosen output group, also passed to process's automatic plots. Process writes its
 `processed/` subdirectory; plot reads that subdirectory and writes figures.
 The process entry point calls `plot_one_snapshot()` after each snapshot is
 saved unless `--no-plot` is supplied. `process_reuse.py` verifies status/report

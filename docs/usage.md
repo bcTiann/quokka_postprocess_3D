@@ -47,8 +47,8 @@ Do not manually edit `uv.lock`.
 
 Process and plot both read [configs/emission.yaml](../configs/emission.yaml).
 Choose one snapshot or a containing run directory in the YAML, or override its
-dataset and x/y ranges with explicit command-line options. Process plots each
-snapshot after saving its numerical products unless `--no-plot` is supplied.
+dataset, output group and x/y ranges with explicit command-line options. Process
+plots each snapshot after saving its numerical products unless `--no-plot` is supplied.
 Other settings continue to come from the YAML.
 
 | Setting | Meaning |
@@ -157,23 +157,30 @@ Absolute paths and `~/...` are supported in the supplied configurations too.
 Use absolute paths for snapshot and result locations outside the clone.
 YAML does not expand `$VARIABLE` expressions.
 
-### Override the dataset or region on the command line
+### Override the dataset, output group or region on the command line
 
 ```bash
-uv run process --dataset /path/to/simulations/plt0008703 --x 64 128 --y 32 64
-uv run plot --dataset /path/to/simulations/plt0008703 --x 64 128 --y 32 64
+uv run process --dataset /path/to/simulations/plt0008703 --jobname sigma13.v2 --x 64 128 --y 32 64
+uv run plot --dataset /path/to/simulations/plt0008703 --jobname sigma13.v2 --x 64 128 --y 32 64
 ```
 
-Both commands accept `--dataset ABS_PATH`, `--x START STOP`, `--y START STOP`
-and `--config PATH`. CLI `--dataset` must be an absolute path after expanding
-`~`; a relative CLI dataset is rejected. Relative datasets inside YAML continue
-to resolve from the YAML directory. Each supplied option overrides only its
-corresponding YAML setting; omitted dataset or axes keep their YAML values.
-Native ranges are half-open, and z always spans complete original columns.
+Both commands accept `--dataset ABS_PATH`, `--jobname NAME`, `--x START STOP`,
+`--y START STOP` and `--config PATH`. Every explicit `--dataset` requires an
+explicit `--jobname`, even when the YAML already has the intended group.
+Argument parsing rejects a missing pair before reading configuration or input
+data and before creating output. This rule applies to the process/plot commands;
+other tools keep their own options.
 
-`jobname` still comes from YAML and only names the output group. Change it
-manually when switching jobs; no job number or run name is inferred from the
-dataset. Both commands select the same result directory, for example
+CLI `--dataset` must be an absolute path after expanding `~`; a relative CLI
+dataset is rejected. Relative datasets inside YAML continue to resolve from the
+YAML directory. Without CLI `--dataset`, the YAML dataset is used. CLI
+`--jobname` alone overrides the output group while keeping that dataset; without
+CLI `--jobname`, the YAML group is used. Each x/y option replaces only its own
+YAML range. Native ranges are half-open, and z spans complete original columns.
+
+`jobname` only names the output group. Choose it manually when switching runs;
+no job number or run name is inferred from the dataset. Both commands select
+the same result directory, for example
 `results_dir/jobname/plt0008703/region_x64-128_y32-64/`.
 Process reads the selected snapshot, or processes the run's snapshots in order.
 Existing complete results are reused only when their settings and saved
@@ -190,11 +197,11 @@ not edit YAML; a later command or diagnostic does not inherit them.
 
 ```bash
 # Calculate, save and draw one snapshot before starting the next.
-uv run process --dataset /path/to/simulations/run1/
+uv run process --dataset /path/to/simulations/run1/ --jobname sigma13.v2
 
 # Or calculate the entire run now and draw it later.
-uv run process --dataset /path/to/simulations/run1/ --no-plot
-uv run plot --all
+uv run process --dataset /path/to/simulations/run1/ --jobname sigma13.v2 --no-plot
+uv run plot --all --jobname sigma13.v2
 ```
 
 The same directory selection works in YAML. There is no separate batch config
@@ -212,20 +219,23 @@ the batch continues; any failure gives a nonzero exit status. Ctrl-C stops the
 batch immediately. Failed or incomplete result directories are never deleted
 or replaced automatically.
 
-`plot --all` scans direct `plt` plus digits directories in the configured
-`results_dir/jobname/`, in numeric order. It reads saved products only and does
-not need `dataset` in YAML or access the original simulation and table paths.
+`plot --all` scans direct `plt` plus digits directories in the selected
+`results_dir/jobname/`, in numeric order. Use `plot --all --jobname sigma50` for
+that output group; bare `plot --all` uses the YAML group. It reads saved products
+only and does not need `dataset` in YAML or access the original simulation and
+table paths.
 It cannot be combined with explicit `--dataset`. Missing products, failed
 loads and incomplete diagnostic results are reported per snapshot; other
 snapshots continue and the command exits nonzero if any failed. The existing
 `allow_partial: true` option explicitly permits diagnostic plots.
 
-Use the same configuration and x/y selection for a later batch plot. CLI
-overrides do not persist, so repeat the ranges if they were supplied to process:
+Automatic plotting uses the same selected job group as process. For a later
+batch plot, repeat the selected `--jobname`, configuration and x/y overrides.
+CLI overrides do not persist or write YAML:
 
 ```bash
-uv run process --config /path/to/emission.yaml --dataset /path/to/run1/ --x 64 66 --y 32 34 --no-plot
-uv run plot --config /path/to/emission.yaml --all --x 64 66 --y 32 34 --pdf --untitled
+uv run process --config /path/to/emission.yaml --dataset /path/to/run1/ --jobname sigma13.v2 --x 64 66 --y 32 34 --no-plot
+uv run plot --config /path/to/emission.yaml --all --jobname sigma13.v2 --x 64 66 --y 32 34 --pdf --untitled
 ```
 
 An output group should correspond to one simulation run: two runs may contain
@@ -407,7 +417,8 @@ settings under `physical_settings`. See the
 
 Copy the completed `processed/` directory to the laptop, preserving its job,
 snapshot and, if present, region folders. In the same shared YAML, set
-`results_dir` to the local results root and `jobname` to the selected job.
+`results_dir` to the local results root and `jobname` to the selected job, or
+override the group with `--jobname` for that invocation.
 For a single plot, the basename of `dataset` selects the saved snapshot. Its
 original Setonix path can remain unchanged;
 plot does not require that path or the tables to exist locally. Retain the same

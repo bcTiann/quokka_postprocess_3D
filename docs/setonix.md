@@ -109,12 +109,34 @@ see the [reuse rules](usage.md#completed-result-reuse).
 To process the run's direct `plt` plus digits directories, in numeric order:
 
 ```bash
-uv run process --dataset /scratch/pawsey0807/chongchong/Projects-data/2026-quokka-outflow/hpc/run2.v2/job41101509-sigma13/run1/
+uv run process --dataset /scratch/pawsey0807/chongchong/Projects-data/2026-quokka-outflow/hpc/run2.v2/job41101509-sigma13/run1/ --jobname job41101509-sigma13-run1
 ```
+
+Every explicit `--dataset` requires an explicit `--jobname`, even if YAML
+already names that group. Missing jobname is rejected during argument parsing,
+before reading configuration or inputs and before creating output. Job names
+are chosen manually, never inferred from the simulation path.
+
+For example, select the sigma50 run and its output group without editing YAML:
+
+```bash
+uv run process --dataset /scratch/pawsey0807/chongchong/Projects-data/2026-quokka-outflow/hpc/run2.v2/job41114623-sigma50/run1 --jobname sigma50 --x 256 258 --y 256 258
+```
+
+Automatic plots use that same `sigma50` group and selected region. To calculate
+first and draw later, append `--no-plot`, then run:
+
+```bash
+uv run plot --all --jobname sigma50 --x 256 258 --y 256 258
+```
+
+CLI choices do not persist or write YAML; repeat the group and region on a
+later plot invocation. Bare `plot --all` would use the YAML group instead.
 
 Each snapshot is saved and drawn before the next starts. The inventory is fixed
 at startup and discovery does not recurse. For numerical products only, append
-`--no-plot`; draw the whole output group later with `uv run plot --all`.
+`--no-plot`; draw the original example group later with
+`uv run plot --all --jobname job41101509-sigma13-run1`.
 Ordinary per-snapshot failures are summarized while other snapshots continue;
 any failure produces a nonzero exit status. Ctrl-C stops the batch. There is no
 slab checkpoint for restarting an interrupted numerical calculation.
@@ -128,16 +150,16 @@ same selection:
 uv run plot --x 64 66 --y 64 66
 ```
 
-Without `--all`, YAML `dataset` must select one snapshot. If it names a run
-directory, use `plot --all` for the output group, or supply
-`--dataset /path/to/run1/plt0008703` to redraw one snapshot. Plot does not expand
-raw run directories.
+Without `--all`, the selected dataset must name one snapshot. If YAML names a
+run directory, use `plot --all` for the output group, or supply
+`--dataset /path/to/run1/plt0008703 --jobname job41101509-sigma13-run1` to redraw
+one snapshot. Plot does not expand raw run directories.
 
-To draw every saved snapshot after a numerical-only batch, repeat any x/y
-overrides used during processing:
+To draw every saved snapshot after a numerical-only batch, repeat the selected
+group and any x/y overrides used during processing:
 
 ```bash
-uv run plot --all --x 64 66 --y 64 66
+uv run plot --all --jobname job41101509-sigma13-run1 --x 64 66 --y 64 66
 ```
 
 This reads the current `results_dir/jobname/` only; the original run directory
@@ -166,13 +188,15 @@ To change snapshots without editing `dataset`, both commands accept an absolute
 `--dataset` path, for example:
 
 ```bash
-uv run process --dataset /scratch/pawsey0807/chongchong/Projects-data/2026-quokka-outflow/hpc/run2.v2/job41101509-sigma13/run1/plt0001450 --x 64 66 --y 64 66
-uv run plot --dataset /scratch/pawsey0807/chongchong/Projects-data/2026-quokka-outflow/hpc/run2.v2/job41101509-sigma13/run1/plt0001450 --x 64 66 --y 64 66
+uv run process --dataset /scratch/pawsey0807/chongchong/Projects-data/2026-quokka-outflow/hpc/run2.v2/job41101509-sigma13/run1/plt0001450 --jobname job41101509-sigma13-run1 --x 64 66 --y 64 66
+uv run plot --dataset /scratch/pawsey0807/chongchong/Projects-data/2026-quokka-outflow/hpc/run2.v2/job41101509-sigma13/run1/plt0001450 --jobname job41101509-sigma13-run1 --x 64 66 --y 64 66
 ```
 
-`~/...` also works for CLI `--dataset`; relative CLI paths are rejected. Other
-settings still come from YAML, selected with optional `--config PATH`. Process
-saves the effective configuration in its report. For local plotting, copy the
+`~/...` also works for CLI `--dataset`; relative CLI paths are rejected. Without
+CLI dataset, the YAML dataset is used. `--jobname NAME` alone overrides only the
+YAML output group; without it, the YAML group is used. Other settings still come
+from YAML, selected with optional `--config PATH`. Process saves the effective
+configuration in its report. For local plotting, copy the
 complete job/snapshot/region results structure and set the local `results_dir`;
 plot uses only the dataset folder name, so the original snapshot and tables
 are not needed. See the [README](../README.md) for local setup and the

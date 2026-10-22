@@ -164,7 +164,8 @@ def main(argv=None) -> None:
 
     argv is a sequence of command arguments, or None for sys.argv[1:].
     --all discovers results under results_dir/jobname without accessing raw
-    snapshots or tables. --x/--y and figure flags apply to every selection.
+    snapshots or tables. --jobname replaces the YAML output group; an explicit
+    --dataset requires it. --x/--y and figure flags apply to every selection.
     Ordinary batch failures are listed after the remaining snapshots finish.
     """
     parser = argparse.ArgumentParser(
@@ -182,12 +183,15 @@ def main(argv=None) -> None:
     args = parser.parse_args(argv)
     if args.all_snapshots and args.dataset is not None:
         parser.error('--all cannot be combined with --dataset')
+    if args.dataset is not None and args.jobname is None:
+        parser.error('--dataset requires --jobname; explicitly name the output group')
     print(f'Plot configuration: {args.config}', flush=True)
     try:
         configs = load_plot_configs(
             path=args.config,
             all_snapshots=args.all_snapshots,
             dataset=args.dataset,
+            jobname=args.jobname,
             x_index_range=args.x_index_range,
             y_index_range=args.y_index_range,
             figure_formats=args.figure_formats,
@@ -201,6 +205,8 @@ def main(argv=None) -> None:
     file_count = 0
     failures = []
     snapshot_count = len(configs)
+    if args.jobname is not None:
+        print(f'Output group: {args.jobname} (from --jobname)', flush=True)
     print(f'Plot: selected {snapshot_count} snapshot(s).', flush=True)
     for snapshot_index, config in enumerate(configs, start=1):
         print(

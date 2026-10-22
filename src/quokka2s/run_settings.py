@@ -120,10 +120,11 @@ _ALLOWED_SETTINGS = (
 
 
 def add_run_selection_arguments(parser: argparse.ArgumentParser) -> None:
-    """Add shared YAML defaults and explicit dataset/native x/y overrides.
+    """Add shared YAML defaults and explicit job, dataset and native x/y overrides.
 
-    Example: --dataset /simulations/plt0008703 --x 64 128 --y 32 64.
-    Omitted options retain YAML values; index stops are excluded.
+    Example: --dataset /simulations/plt0008703 --jobname sigma50 --x 64 128.
+    An explicit dataset requires an explicit jobname. Omitted options retain
+    YAML values; overrides affect this invocation only and stops remain exclusive.
     """
     parser.add_argument(
         "--dataset",
@@ -131,7 +132,16 @@ def add_run_selection_arguments(parser: argparse.ArgumentParser) -> None:
         metavar="PATH",
         help=(
             "Absolute dataset path overriding YAML: process accepts one snapshot "
-            "or its run directory; plot selects one snapshot by folder name"
+            "or its run directory; plot selects one snapshot by folder name; "
+            "requires --jobname"
+        ),
+    )
+    parser.add_argument(
+        "--jobname",
+        metavar="NAME",
+        help=(
+            "Output job group overriding YAML for this invocation only; "
+            "required with --dataset"
         ),
     )
     parser.add_argument(
@@ -243,23 +253,30 @@ def read_run_selection(
     config_directory: Path,
     *,
     dataset: str | Path | None = None,
+    jobname: str | None = None,
     x_index_range: list[int] | None = None,
     y_index_range: list[int] | None = None,
 ) -> RunSelection:
     """Select one saved-result directory without accessing original inputs.
 
-    Explicit CLI options replace only their corresponding YAML values. jobname
-    always labels the output group; dataset supplies the spelled snapshot folder
-    name without resolving or inspecting the source. Plot therefore works when
-    the original snapshot and emission tables are unavailable.
+    Explicit CLI options replace only their corresponding YAML values, without
+    updating the file. An explicit dataset requires an explicit jobname rather
+    than silently retaining the YAML output group. dataset supplies the spelled
+    snapshot name without inspecting its source; plot works without that source.
     """
-    required = _RUN_REQUIRED_SETTINGS if dataset is None else {"jobname", "results_dir"}
+    if dataset is not None and jobname is None:
+        raise ValueError("--dataset requires --jobname; select the output job group explicitly")
+    required = {"results_dir"}
+    if dataset is None:
+        required.add("dataset")
+    if jobname is None:
+        required.add("jobname")
     missing = required - set(supplied)
     if missing:
         raise ValueError(f"Missing setting(s): {', '.join(sorted(missing))}")
     dataset_name = _selected_dataset(supplied, dataset)
     snapshot_name = _folder_name("dataset folder name", Path(dataset_name).name)
-    jobname = _folder_name("jobname", supplied["jobname"])
+    jobname = _folder_name("jobname", supplied["jobname"] if jobname is None else jobname)
     if x_index_range is None:
         x_index_range = supplied.get("x_index_range")
     if y_index_range is None:
@@ -356,6 +373,7 @@ def load_process_config(
     path: str | Path,
     *,
     dataset: str | Path | None = None,
+    jobname: str | None = None,
     x_index_range: list[int] | None = None,
     y_index_range: list[int] | None = None,
 ) -> ProcessSettings:
@@ -365,14 +383,15 @@ def load_process_config(
     worker settings count threads. x/y_index_range selects native cell indices;
     omitted axes use the full extent. The z axis always remains complete.
     Plot options in the shared file are accepted but not used by process.
-    Explicit dataset/x/y overrides replace only those YAML settings. The CLI
-    dataset must be absolute; jobname still identifies the output group.
+    Explicit overrides replace only their matching YAML settings for this run.
+    A CLI dataset must be absolute and accompanied by an explicit jobname.
     """
     config_path, supplied = _read_mapping(path)
     return _process_settings(
         config_path=config_path,
         supplied=supplied,
         dataset=dataset,
+        jobname=jobname,
         x_index_range=x_index_range,
         y_index_range=y_index_range,
     )
@@ -382,6 +401,7 @@ def load_process_configs(
     path: str | Path,
     *,
     dataset: str | Path | None = None,
+    jobname: str | None = None,
     x_index_range: list[int] | None = None,
     y_index_range: list[int] | None = None,
 ) -> list[ProcessSettings]:
@@ -390,13 +410,15 @@ def load_process_configs(
     A directory containing Header, or a supplied plt+digits name, selects one
     snapshot. A missing Header on a named snapshot remains a processing failure;
     it is not treated as an empty run. All snapshots share the selected x/y
-    ranges and execution settings. Directory discovery never reads cell data.
+    ranges, output job and execution settings. An explicit dataset requires an
+    explicit jobname. Directory discovery never reads cell data.
     """
     config_path, supplied = _read_mapping(path)
     selected = _process_settings(
         config_path=config_path,
         supplied=supplied,
         dataset=dataset,
+        jobname=jobname,
         x_index_range=x_index_range,
         y_index_range=y_index_range,
     )
@@ -412,6 +434,7 @@ def load_process_configs(
             config_path=config_path,
             supplied=supplied,
             dataset=snapshot,
+            jobname=selected.jobname,
             x_index_range=x_index_range,
             y_index_range=y_index_range,
         )
@@ -426,6 +449,7 @@ def _process_settings(
     config_path: Path,
     supplied: dict,
     dataset: str | Path | None,
+    jobname: str | None,
     x_index_range: list[int] | None,
     y_index_range: list[int] | None,
 ) -> ProcessSettings:
@@ -434,6 +458,7 @@ def _process_settings(
         supplied=supplied,
         config_directory=config_path.parent,
         dataset=dataset,
+        jobname=jobname,
         x_index_range=x_index_range,
         y_index_range=y_index_range,
     )
@@ -465,6 +490,7 @@ def load_plot_config(
     path: str | Path,
     *,
     dataset: str | Path | None = None,
+    jobname: str | None = None,
     x_index_range: list[int] | None = None,
     y_index_range: list[int] | None = None,
     figure_formats: list[str] | None = None,
@@ -478,12 +504,15 @@ def load_plot_config(
     CLI figure selections replace only their specified category. Other choices
     use YAML values, then the PNG/titled defaults. Each selection is a nonempty
     list; repeated choices are saved once in the standard format/style order.
+    Explicit dataset selection requires an explicit jobname. Neither override
+    modifies YAML; jobname alone may select a different saved output group.
     """
     config_path, supplied = _read_mapping(path)
     return _plot_settings(
         config_path=config_path,
         supplied=supplied,
         dataset=dataset,
+        jobname=jobname,
         x_index_range=x_index_range,
         y_index_range=y_index_range,
         figure_formats=figure_formats,
@@ -496,6 +525,7 @@ def load_plot_configs(
     *,
     all_snapshots: bool = False,
     dataset: str | Path | None = None,
+    jobname: str | None = None,
     x_index_range: list[int] | None = None,
     y_index_range: list[int] | None = None,
     figure_formats: list[str] | None = None,
@@ -507,6 +537,8 @@ def load_plot_configs(
     only. Source snapshots and emission tables may be absent. The same native
     x/y region and figure choices apply to each selected result; missing products
     remain visible to the plotting caller rather than disappearing from the list.
+    jobname overrides the YAML group only for this invocation. Without --all,
+    an explicit dataset also requires an explicit jobname.
     """
     if all_snapshots and dataset is not None:
         raise ValueError("--all cannot be combined with --dataset")
@@ -516,16 +548,20 @@ def load_plot_configs(
             config_path=config_path,
             supplied=supplied,
             dataset=dataset,
+            jobname=jobname,
             x_index_range=x_index_range,
             y_index_range=y_index_range,
             figure_formats=figure_formats,
             figure_styles=figure_styles,
         )]
 
-    missing = {"jobname", "results_dir"} - set(supplied)
+    required = {"results_dir"}
+    if jobname is None:
+        required.add("jobname")
+    missing = required - set(supplied)
     if missing:
         raise ValueError(f"Missing setting(s): {', '.join(sorted(missing))}")
-    jobname = _folder_name("jobname", supplied["jobname"])
+    jobname = _folder_name("jobname", supplied["jobname"] if jobname is None else jobname)
     results_dir = _path_value("results_dir", supplied["results_dir"], config_path.parent)
     job_directory = results_dir / jobname
     snapshots = list_snapshot_directories(directory=job_directory)
@@ -537,6 +573,7 @@ def load_plot_configs(
             config_path=config_path,
             supplied=supplied,
             dataset=snapshot,
+            jobname=jobname,
             x_index_range=x_index_range,
             y_index_range=y_index_range,
             figure_formats=figure_formats,
@@ -551,6 +588,7 @@ def _plot_settings(
     config_path: Path,
     supplied: dict,
     dataset: str | Path | None,
+    jobname: str | None,
     x_index_range: list[int] | None,
     y_index_range: list[int] | None,
     figure_formats: list[str] | None,
@@ -561,6 +599,7 @@ def _plot_settings(
         supplied=supplied,
         config_directory=config_path.parent,
         dataset=dataset,
+        jobname=jobname,
         x_index_range=x_index_range,
         y_index_range=y_index_range,
     )

@@ -4,14 +4,19 @@ dataset: /scratch/pawsey0807/chongchong/Projects-data/2026-quokka-outflow/hpc/ru
 results_dir: ../output
 # Results: ../output/sigma13.v2/plt0655228/{processed,figures,figures_titled}/
 
-# jobname only names the output group; change it manually when switching jobs.
-# Optional overrides on both commands; CLI dataset paths must be absolute:
-# uv run process --dataset /absolute/path/plt0008703 --x 64 128 --y 32 64
-# uv run plot --dataset /absolute/path/plt0008703 --x 64 128 --y 32 64
+# jobname only names the output group; choose it manually for each simulation run.
+# Every CLI --dataset requires explicit --jobname, even if YAML has that group.
+# A missing pair is rejected before config/input access or output creation.
+# CLI dataset paths must be absolute; omitted dataset keeps the YAML path.
+# uv run process --dataset /absolute/path/plt0008703 --jobname my-run --x 64 128 --y 32 64
+# uv run plot --dataset /absolute/path/plt0008703 --jobname my-run --x 64 128 --y 32 64
 # Process also accepts /absolute/path/run1/ and plots each snapshot by default.
-# Use process --no-plot for numerical products only, then plot --all to draw them.
-# Repeat any CLI x/y ranges for the later plot command; overrides do not edit YAML.
-# Omitted CLI values keep the YAML dataset or corresponding x/y range.
+# Use process --no-plot for numerical products only, then draw the chosen group:
+# uv run plot --all --jobname my-run
+# Repeat CLI jobname and x/y overrides later; they do not persist or edit YAML.
+# --jobname alone changes only the group; omitted jobname keeps the YAML group.
+# Bare plot --all uses the YAML group; automatic plots use process's chosen group.
+# Omitted x/y options keep their corresponding YAML range.
 
 # Optional native x-y region; null selects the full axis. z stays complete.
 # For example, x_index_range: [64, 128] selects x indices 64 through 127.

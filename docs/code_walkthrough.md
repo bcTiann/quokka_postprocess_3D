@@ -15,19 +15,19 @@ Use `--config PATH` to select another file. Each runs directly;
 there is no shared dispatcher. `process --no-plot` saves numerical products
 without drawing. Process accepts a single snapshot or a containing run directory;
 `plot --all` selects every snapshot in the configured output group.
-Both also accept an absolute `--dataset` path and `--x START STOP` /
-`--y START STOP` overrides, for example:
+Both also accept an absolute `--dataset` path, paired `--jobname` and
+`--x START STOP` / `--y START STOP` overrides, for example:
 
 ```bash
-uv run process --dataset /path/to/simulations/plt0008703 --x 64 128 --y 32 64
-uv run plot --dataset /path/to/simulations/plt0008703 --x 64 128 --y 32 64
+uv run process --dataset /path/to/simulations/plt0008703 --jobname sigma13.v2 --x 64 128 --y 32 64
+uv run plot --dataset /path/to/simulations/plt0008703 --jobname sigma13.v2 --x 64 128 --y 32 64
 ```
 
 For a whole run, the corresponding commands are:
 
 ```bash
-uv run process --dataset /path/to/simulations/run1/ --no-plot
-uv run plot --all
+uv run process --dataset /path/to/simulations/run1/ --jobname sigma13.v2 --no-plot
+uv run plot --all --jobname sigma13.v2
 ```
 
 `load_process_configs()` freezes the run's direct `plt` plus digits directories
@@ -35,8 +35,9 @@ in numeric order. Each resulting `ProcessSettings` describes one snapshot.
 Without `--no-plot`, main calls `plot_one_snapshot()` after that snapshot is
 saved, before moving to the next. Plot uses `load_plot_configs()`; its `--all`
 inventory comes from `results_dir/jobname/`, without reading the original run.
-Both commands apply the same selected x/y region to every snapshot. CLI ranges
-must be repeated for a later plot command because overrides do not edit YAML.
+Both commands apply the same selected x/y region to every snapshot. The selected
+group is passed to automatic plotting. A later plot command must repeat CLI
+jobname and range overrides because they do not edit YAML or persist.
 
 First prepare the environment with `uv sync`. uv
 automatically installs the checkout in editable mode and registers commands
@@ -75,14 +76,18 @@ uses `all` in the name; both omitted or `null` keep the full-box directory.
 These names require only configuration values, so plot can select a region
 without the original snapshot.
 
-The shared selection logic applies only explicitly supplied CLI overrides:
-`--dataset` replaces YAML `dataset`, while `--x` and `--y` each replace their
-corresponding YAML range. Omitted options retain YAML values. CLI dataset paths
-must be absolute after expanding `~`; YAML relative paths remain relative to
-the YAML file. `jobname` stays a manually chosen output group and is never
-inferred from the input path. Half-open native indices and complete z columns
-are unchanged. Plot receives only saved-product/output paths, using the dataset
-folder name without source or table access.
+The shared selection logic applies explicitly supplied CLI overrides. Every
+explicit `--dataset` requires an explicit `--jobname`; argparse rejects a
+missing pair before reading YAML or inputs and before creating output. Without
+CLI dataset, the YAML dataset is used; CLI jobname alone replaces only the YAML
+group, and no CLI jobname keeps the YAML group. `--x` and `--y` each replace
+their corresponding YAML range. CLI dataset paths must be absolute after
+expanding `~`; YAML relative paths remain relative to the YAML file. `jobname`
+stays a manually chosen output group and is never inferred from the input path.
+Half-open native indices and complete z columns are unchanged. Plot receives
+only saved-product/output paths, using the dataset folder name without source
+or table access. `plot --all --jobname sigma50` selects saved snapshots from
+that group; bare `--all` uses the YAML group.
 
 The main commands are in the [root README](../README.md). Detailed
 settings and table-building commands are in the [usage guide](usage.md).

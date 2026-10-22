@@ -436,7 +436,8 @@ def run_one_snapshot(config: ProcessSettings, config_path: Path) -> None:
 def main(argv=None):
     """Process one snapshot or a run's direct plt directories, then draw each.
 
-    --dataset overrides YAML with an absolute snapshot or parent run directory.
+    --dataset requires --jobname and overrides YAML with an absolute snapshot
+    or parent run directory. --jobname alone replaces the YAML output group.
     --no-plot saves numerical products only. Plot choices otherwise use the same
     YAML and format/title flags as plot. Each invocation freezes its inventory;
     completed matching products are reused and conflicting output is preserved.
@@ -453,10 +454,13 @@ def main(argv=None):
         help="Save numerical products only; draw them later with plot --all",
     )
     args = parser.parse_args(argv)
+    if args.dataset is not None and args.jobname is None:
+        parser.error("--dataset requires --jobname; explicitly name the output group")
     try:
         configs = load_process_configs(
             path=args.config,
             dataset=args.dataset,
+            jobname=args.jobname,
             x_index_range=args.x_index_range,
             y_index_range=args.y_index_range,
         )
@@ -465,6 +469,7 @@ def main(argv=None):
             plot_defaults = load_plot_config(
                 path=args.config,
                 dataset=args.dataset,
+                jobname=args.jobname,
                 x_index_range=args.x_index_range,
                 y_index_range=args.y_index_range,
                 figure_formats=args.figure_formats,
@@ -479,6 +484,8 @@ def main(argv=None):
     plotted = []
     failures = []
     total = len(configs)
+    group_source = "--jobname" if args.jobname is not None else "YAML"
+    print(f"Output group: {configs[0].jobname} (from {group_source})", flush=True)
     print(f"Process inventory: {total} snapshot(s); plotting={'off' if args.no_plot else 'on'}", flush=True)
     for config in configs:
         print(f"  {config.snapshot_name}: {config.dataset} -> {config.output_dir}", flush=True)
