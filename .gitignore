@@ -60,3 +60,6 @@
 
 # Track generated Setonix results, including numerical and figure files.
 !/output/**
+
+# Local Julia runtime, package cache, and migration verification artifacts.
+/output/diagnostics/julia_process_20261022/
