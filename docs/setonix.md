@@ -184,6 +184,15 @@ intrinsic and attenuated all-lines comparisons normalized by each line's
 saved full-window peak. These plots use the existing products; no processing
 rerun is needed. See the [plot settings](usage.md#plot-settings) for examples.
 
+Every titled figure also identifies the saved jobname, snapshot and simulation
+time, for example `sigma13.v2 | plt0655228 | time = 256.00 Myr` (million years).
+Process saves the actual snapshot time in `processed/emission_report.json`, so
+plot still reads only saved results. Untitled figures keep their existing
+appearance. Legacy reports without time show `time = unavailable`; the
+[plot settings](usage.md#plot-settings) describe a one-time metadata preparation
+command using the original snapshot. Prepare that metadata on Setonix before
+copying legacy results locally, then use `--titled` to redraw just that style.
+
 To change snapshots without editing `dataset`, both commands accept an absolute
 `--dataset` path, for example:
 

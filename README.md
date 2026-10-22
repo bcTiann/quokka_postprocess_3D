@@ -161,6 +161,15 @@ uv run process --pdf --untitled
 `figure_formats: [png]` and `figure_styles: [titled]`. Explicit flags override
 the YAML for that category; an omitted category keeps its YAML setting.
 
+Every titled figure includes the saved jobname, snapshot name and simulation
+time, for example `sigma13.v2 | plt0655228 | time = 256.00 Myr`.
+`Myr` means million years. Process saves the snapshot time in
+`processed/emission_report.json`; plot reads that saved metadata without opening
+the snapshot. Untitled figures retain their existing appearance. Older results
+without a saved time display `time = unavailable`; see
+[backfilling plot metadata](docs/usage.md#plot-settings) to add the actual time
+from the original snapshot and redraw the titled figures.
+
 Every spectrum is drawn in separate ±50 and ±200 km/s views. The additional
 all-lines figures compare all ten cold+hot total line profiles, each divided
 by its own peak across the saved ±200 km/s window. Intrinsic and dust-attenuated

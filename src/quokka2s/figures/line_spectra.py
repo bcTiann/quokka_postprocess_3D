@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from textwrap import fill
 
 from quokka2s.emission_results import SpectralResults
 from quokka2s.figures.figure_files import save_figure_formats
@@ -19,6 +20,7 @@ def plot_line_spectra(
     formats: tuple[str, ...],
     velocity_limits_kms: tuple[float, float] = VELOCITY_LIMITS_KMS,
     filename_suffix: str = "",
+    run_label: str = "",
 ) -> list[Path]:
     """Draw saved total profiles on their original velocity channels [km/s].
 
@@ -27,6 +29,7 @@ def plot_line_spectra(
     [erg/s/(km/s)]; the renderer performs no unit conversion. Returns
     one figure per line/format. velocity_limits_kms selects only the display
     window; filename_suffix distinguishes views such as "_v200".
+    run_label identifies the job, snapshot and saved time in titled figures only.
     Example: spectra.for_line(line="halpha", dust_state="attenuated") selects Halpha.
     """
     import matplotlib.pyplot as plt
@@ -36,6 +39,9 @@ def plot_line_spectra(
     else:
         ylabel = r"$dL/dv$ [erg s$^{-1}$ (km s$^{-1}$)$^{-1}$]"
     spectrum_paths = []
+    header = fill(run_label, width=80) if titled and run_label else ""
+    header_height = 0.22 * (header.count("\n") + 1) if header else 0.0
+    figure_height = 3.5 + header_height
     for line_index, key in enumerate(spectra.line_keys, start=1):
         print(f'  Line spectra [{line_index}/{len(spectra.line_keys)}]: {key}', flush=True)
         intrinsic = spectra.for_line(
@@ -54,7 +60,7 @@ def plot_line_spectra(
         else:
             intrinsic_profile = intrinsic.dL_dv_erg_s_per_kms
             attenuated_profile = attenuated.dL_dv_erg_s_per_kms
-        figure, axis = plt.subplots(figsize=(6.2, 3.5))
+        figure, axis = plt.subplots(figsize=(6.2, figure_height))
         if key == "hi21":
             axis.plot(
                 intrinsic.velocity_kms,
@@ -87,6 +93,13 @@ def plot_line_spectra(
             axis.set_title(LINE_TITLES[key])
         axis.ticklabel_format(axis="y", style="sci", scilimits=(-2, 2), useMathText=True)
         axis.grid(alpha=0.18)
+        if header:
+            figure.suptitle(
+                header,
+                fontsize=9,
+                y=1 - 0.06 / figure_height,
+                parse_math=False,
+            )
         figure.tight_layout()
         spectrum_paths.extend(save_figure_formats(
             figure=figure,

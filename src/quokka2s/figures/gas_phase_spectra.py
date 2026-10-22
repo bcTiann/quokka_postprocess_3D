@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from textwrap import fill
 
 import numpy as np
 
@@ -25,18 +26,21 @@ PHASE_COLORS = {
 # Peaks use the saved channels; sigma labels use the complete Gaussian moments.
 
 
-def create_phase_comparison_figure(*, titled: bool):
+def create_phase_comparison_figure(*, titled: bool, run_label: str = ""):
     """Create the profile axes and a separate legend area for the chosen style."""
     import matplotlib.pyplot as plt
 
-    fig = plt.figure(figsize=(9.1, 5.25 if titled else 4.15))
+    header = fill(run_label, width=110) if titled and run_label else ""
+    header_height = 0.35 + 0.20 * header.count("\n") if header else 0.0
+    figure_height = (5.25 if titled else 4.15) + header_height
+    fig = plt.figure(figsize=(9.1, figure_height))
     grid = fig.add_gridspec(
         1,
         2,
         left=.095,
         right=.985,
-        bottom=.20 if titled else .17,
-        top=.85 if titled else .98,
+        bottom=.20 * 5.25 / figure_height if header else (.20 if titled else .17),
+        top=.85 * 5.25 / figure_height if header else (.85 if titled else .98),
         width_ratios=(1, .40),
         wspace=.05,
     )
@@ -202,6 +206,7 @@ def format_phase_comparison_figure(
     phase_cut_footer: str,
     titled: bool,
     velocity_limits_kms: tuple[float, float] = VELOCITY_LIMITS_KMS,
+    run_label: str = "",
 ):
     """Apply the display zoom, axes, and optional title and phase-cut footer."""
     ax.set_xlim(*velocity_limits_kms)
@@ -212,9 +217,37 @@ def format_phase_comparison_figure(
     ax.set_ylabel('Peak-normalised profile', fontsize=11)
     ax.tick_params(labelsize=10)
     if titled:
-        fig.suptitle(LINE_TITLES[key], fontsize=15, y=.965)
-        fig.text(.5, .902, 'LOS z', ha='center', fontsize=10)
-        fig.text(.5, .052, phase_cut_footer, ha='center', va='center', fontsize=8.4)
+        header = fill(run_label, width=110) if run_label else ""
+        if header:
+            figure_height = fig.get_figheight()
+            header_height = figure_height - 5.25
+            fig.suptitle(
+                LINE_TITLES[key],
+                fontsize=15,
+                y=(.965 * 5.25 + header_height) / figure_height,
+            )
+            fig.text(
+                .5,
+                (.902 * 5.25 + header_height) / figure_height,
+                header,
+                ha='center',
+                va='top',
+                fontsize=9,
+                parse_math=False,
+            )
+            fig.text(.5, .902 * 5.25 / figure_height, 'LOS z', ha='center', fontsize=10)
+            fig.text(
+                .5,
+                .052 * 5.25 / figure_height,
+                phase_cut_footer,
+                ha='center',
+                va='center',
+                fontsize=8.4,
+            )
+        else:
+            fig.suptitle(LINE_TITLES[key], fontsize=15, y=.965)
+            fig.text(.5, .902, 'LOS z', ha='center', fontsize=10)
+            fig.text(.5, .052, phase_cut_footer, ha='center', va='center', fontsize=8.4)
 
 
 def plot_phase_spectrum_overlay(
@@ -226,6 +259,7 @@ def plot_phase_spectrum_overlay(
     formats: tuple[str, ...],
     velocity_limits_kms: tuple[float, float] = VELOCITY_LIMITS_KMS,
     filename_suffix: str = "",
+    run_label: str = "",
 ) -> list[Path]:
     """Write a separate peak-normalized gas/line figure for each transition.
 
@@ -247,6 +281,8 @@ def plot_phase_spectrum_overlay(
         coordinates and full-window peak normalization.
     filename_suffix : str
         Optional view label after the line key, such as "_v200".
+    run_label : str
+        Job, snapshot and saved simulation time; shown only in titled figures.
 
     Returns
     -------
@@ -266,7 +302,10 @@ def plot_phase_spectrum_overlay(
     paths = []
     for line_index, (key, line_spectrum) in enumerate(line_spectra.items(), start=1):
         print(f'  Gas-phase spectra [{line_index}/{len(line_spectra)}]: {key}', flush=True)
-        fig, ax, legend_ax = create_phase_comparison_figure(titled=titled)
+        fig, ax, legend_ax = create_phase_comparison_figure(
+            titled=titled,
+            run_label=run_label,
+        )
         draw_phase_comparison_curves(
             ax=ax,
             legend_ax=legend_ax,
@@ -281,6 +320,7 @@ def plot_phase_spectrum_overlay(
             phase_cut_footer=phase_cut_footer,
             titled=titled,
             velocity_limits_kms=velocity_limits_kms,
+            run_label=run_label,
         )
         line_stem = stem.with_name(f'{stem.name}_{key}{filename_suffix}')
         paths.extend(save_figure_formats(

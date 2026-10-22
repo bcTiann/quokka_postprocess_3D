@@ -66,6 +66,8 @@ def build_processing_report(
         'status': 'completed' if outputs.processing_complete else 'partial diagnostic',
         'jobname': config.jobname,
         'snapshot_name': config.snapshot_name,
+        # Physical simulation age from the snapshot header, in million years.
+        'simulation_time_myr': float(snapshot.dataset.current_time.to('Myr').value),
         'run_configuration': {
             name: str(value) if isinstance(value, Path) else value
             for name, value in vars(config).items()

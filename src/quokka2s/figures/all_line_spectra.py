@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from textwrap import fill
 
 from quokka2s.emission_results import SpectralResults
 from quokka2s.figures.figure_files import save_figure_formats
@@ -36,6 +37,7 @@ def plot_all_line_spectra(
     diagnostic_suffix: str,
     titled: bool,
     formats: tuple[str, ...],
+    run_label: str = "",
 ) -> list[Path]:
     """Write intrinsic and attenuated comparisons using saved normalized totals.
 
@@ -48,13 +50,17 @@ def plot_all_line_spectra(
     output is the figure directory. filename_suffix distinguishes display windows,
     for example "_v50"; diagnostic_suffix labels incomplete products if allowed
     by the caller. Returned paths include both dust states in requested formats.
+    run_label adds job, snapshot and saved time to titled figures only.
     """
     import matplotlib.pyplot as plt
 
     paths = []
+    header = fill(run_label, width=115) if titled and run_label else ""
+    header_height = 0.22 * (header.count("\n") + 1) if header else 0.0
+    figure_height = 4.7 + header_height
     for dust_state in ("intrinsic", "attenuated"):
         print(f"  All-line spectrum: {dust_state}", flush=True)
-        figure, axis = plt.subplots(figsize=(9.3, 4.7))
+        figure, axis = plt.subplots(figsize=(9.3, figure_height))
         for line_key in spectra.line_keys:
             line_spectrum = spectra.for_line(
                 line=line_key,
@@ -95,11 +101,18 @@ def plot_all_line_spectra(
         )
         if titled:
             axis.set_title(f"All emission lines: {DUST_STATE_TITLES[dust_state]}")
+        if header:
+            figure.suptitle(
+                header,
+                fontsize=9,
+                y=1 - 0.06 / figure_height,
+                parse_math=False,
+            )
         figure.subplots_adjust(
             left=0.09,
             right=0.70,
-            bottom=0.16,
-            top=0.88 if titled else 0.97,
+            bottom=0.16 * 4.7 / figure_height if header else 0.16,
+            top=0.88 * 4.7 / figure_height if header else (0.88 if titled else 0.97),
         )
         paths.extend(save_figure_formats(
             figure=figure,

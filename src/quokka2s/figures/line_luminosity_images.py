@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from textwrap import fill
 
 import numpy as np
 
@@ -17,6 +18,7 @@ def plot_line_images(
     diagnostic_suffix: str,
     titled: bool,
     formats: tuple[str, ...],
+    run_label: str = "",
 ) -> list[Path]:
     """Draw paired luminosity images from their own saved names and pixel edges.
 
@@ -50,6 +52,7 @@ def plot_line_images(
                 line_key=key,
                 dust_state=display_state,
                 titled=titled,
+                run_label=run_label,
             )
             image_stem = f"line_luminosity_{key}"
             if display_state:
@@ -72,6 +75,7 @@ def create_line_luminosity_image(
     line_key: str,
     dust_state: str,
     titled: bool,
+    run_label: str = "",
 ):
     """Draw one line's x-y image using its shared intrinsic/attenuated scale.
 
@@ -89,6 +93,8 @@ def create_line_luminosity_image(
         Transition name and "intrinsic"/"attenuated"; HI uses an empty state.
     titled : bool
         Include the standalone line/dust title.
+    run_label : str
+        Job, snapshot and saved simulation time; shown only in titled figures.
 
     Returns
     -------
@@ -98,7 +104,10 @@ def create_line_luminosity_image(
     """
     import matplotlib.pyplot as plt
 
-    figure, axis = plt.subplots(figsize=(5.2, 4.5))
+    header = fill(run_label, width=64) if titled and run_label else ""
+    header_height = 0.22 * (header.count("\n") + 1) if header else 0.0
+    figure_height = 4.5 + header_height
+    figure, axis = plt.subplots(figsize=(5.2, figure_height))
     image = luminosity_image_erg_s.T  # Matplotlib rows=y, columns=x.
     if color_scale is None:
         axis.set_facecolor("white")
@@ -135,5 +144,12 @@ def create_line_luminosity_image(
         axis.set_title(title)
     if color_scale is not None:
         figure.colorbar(mesh, ax=axis, label=r"Pixel luminosity [erg s$^{-1}$]")
+    if header:
+        figure.suptitle(
+            header,
+            fontsize=9,
+            y=1 - 0.06 / figure_height,
+            parse_math=False,
+        )
     figure.tight_layout()
     return figure

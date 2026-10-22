@@ -457,6 +457,33 @@ An explicitly selected category replaces its YAML list. For example,
 `--pdf` does not also save PNG just because PNG is the default. Combine
 `--png --pdf --titled --untitled` to write both formats of both styles.
 
+Every titled figure includes the saved `jobname`, snapshot name and simulation
+time, for example `sigma13.v2 | plt0655228 | time = 256.00 Myr`, where Myr means
+million years. Process records the actual snapshot time as
+`simulation_time_myr` in `processed/emission_report.json`. Plot reads only
+this saved metadata; the untitled style keeps its existing appearance.
+
+Older products without a saved time display `time = unavailable`. To add the
+actual time without repeating the emission calculation, prepare the metadata
+once from the matching original snapshot, then redraw only the titled style:
+
+```bash
+uv run python -m quokka2s.prepare_plot_metadata \
+  --products /absolute/path/to/output/sigma13.v2/plt0655228/processed \
+  --dataset /absolute/path/to/simulations/plt0655228
+uv run plot --dataset /absolute/path/to/simulations/plt0655228 \
+  --jobname sigma13.v2 --titled
+```
+
+The preparation command reads snapshot metadata and updates the saved report;
+it preserves the numerical NPZ files. Add `--jobname sigma13.v2` to preparation
+only when the legacy report has no saved jobname. Use the exact region's
+`processed/` directory and repeat its x/y selection when redrawing a region.
+For a batch of legacy results, prepare each snapshot's report before using
+`plot --all --jobname sigma13.v2 --titled`. Snapshot numbers and file dates are
+never used to guess simulation time. Normal plotting continues to work without
+the original snapshots after metadata preparation.
+
 To use a factor of 2, prepare that resolution once from the saved native pixels:
 
 ```bash

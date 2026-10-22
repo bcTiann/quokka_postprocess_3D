@@ -26,6 +26,17 @@ from quokka2s.run_settings import (
 )
 
 
+def format_run_label(products: EmissionResults) -> str:
+    """Format saved run identity; Myr is simulation age, not processing time."""
+    jobname = products.jobname or "jobname unavailable"
+    snapshot_name = products.snapshot_name or "snapshot unavailable"
+    if products.simulation_time_myr is None:
+        time_label = "time = unavailable"
+    else:
+        time_label = f"time = {products.simulation_time_myr:.2f} Myr"
+    return f"{jobname} | {snapshot_name} | {time_label}"
+
+
 def draw_emission_products(
     products: EmissionResults,
     output_dir: str | Path,
@@ -54,6 +65,7 @@ def draw_emission_products(
         raise ValueError("Partial diagnostic products require allow_partial=True")
     diagnostic_suffix = "" if products.processing_complete else "_partial_diagnostic"
     images = products.images
+    run_label = format_run_label(products)
     # CIII/CIV have zero cold light, so their attenuated totals equal hot profiles.
     attenuated_lines = {
         key: products.spectra.for_line(
@@ -82,6 +94,7 @@ def draw_emission_products(
             diagnostic_suffix=diagnostic_suffix,
             titled=titled,
             formats=formats,
+            run_label=run_label,
         )
         spectrum_paths = []
         phase_paths = []
@@ -98,6 +111,7 @@ def draw_emission_products(
                 formats=formats,
                 velocity_limits_kms=velocity_limits_kms,
                 filename_suffix=filename_suffix,
+                run_label=run_label,
             ))
             phase_paths.extend(plot_phase_spectrum_overlay(
                 line_spectra=attenuated_lines,
@@ -107,6 +121,7 @@ def draw_emission_products(
                 formats=formats,
                 velocity_limits_kms=velocity_limits_kms,
                 filename_suffix=filename_suffix,
+                run_label=run_label,
             ))
             all_line_paths.extend(plot_all_line_spectra(
                 spectra=products.spectra,
@@ -116,6 +131,7 @@ def draw_emission_products(
                 formats=formats,
                 velocity_limits_kms=velocity_limits_kms,
                 filename_suffix=filename_suffix,
+                run_label=run_label,
             ))
         paths[style] = {
             "images": image_paths,

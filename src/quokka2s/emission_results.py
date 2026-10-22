@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from pathlib import Path
 
 import numpy as np
@@ -197,6 +198,8 @@ class EmissionResults:
     processing_complete means the requested region was completed; full_snapshot
     additionally means that region is the complete original box. No dataset,
     lookup table, calculator or per-cell arrays are retained.
+    Optional run identity comes from emission_report.json. simulation_time_myr
+    is the saved simulation age in Myr; None denotes legacy missing metadata.
     """
 
     images: ImageResults
@@ -204,6 +207,9 @@ class EmissionResults:
     gas_phases: GasPhaseResults
     processing_complete: bool
     full_snapshot: bool
+    jobname: str | None = None
+    snapshot_name: str | None = None
+    simulation_time_myr: float | None = None
 
 
 def _read_product_arrays(path: Path, fields: tuple[str, ...]) -> dict[str, np.ndarray]:
@@ -323,10 +329,28 @@ def read_emission_results(
         sigma_about_global_mean_kms=phase_arrays["sigma_about_global_mean_kms"],
         sigma_internal_kms=phase_arrays["sigma_internal_kms"],
     )
+    # Identity belongs to the saved run, even after its directory is copied.
+    # Legacy products remain readable; missing metadata is labelled explicitly.
+    report_path = directory / "emission_report.json"
+    report = json.loads(report_path.read_text()) if report_path.exists() else {}
+    run_configuration = report.get("run_configuration") or {}
+    jobname = report.get("jobname") or run_configuration.get("jobname")
+    snapshot_name = report.get("snapshot_name") or run_configuration.get("snapshot_name")
+    saved_dataset = report.get("dataset") or run_configuration.get("dataset")
+    if not snapshot_name and saved_dataset:
+        snapshot_name = Path(saved_dataset).name
+    simulation_time_myr = report.get("simulation_time_myr")
+    if simulation_time_myr is not None:
+        simulation_time_myr = float(simulation_time_myr)
+        if not np.isfinite(simulation_time_myr) or simulation_time_myr < 0:
+            raise ValueError("Saved simulation_time_myr must be finite and nonnegative")
     return EmissionResults(
         images=images,
         spectra=spectra,
         gas_phases=gas_phases,
         processing_complete=bool(image_arrays["processing_complete"]),
         full_snapshot=bool(image_arrays["full_snapshot"]),
+        jobname=jobname,
+        snapshot_name=snapshot_name,
+        simulation_time_myr=simulation_time_myr,
     )
