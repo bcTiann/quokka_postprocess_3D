@@ -123,7 +123,14 @@ cd ../../..
 Check that the architecture is `x86_64` and the checksum reports the Linux
 archive as `OK` before extracting. Downloads and checksums are from
 [Julia's official releases](https://julialang.org/downloads/manual-downloads/).
-In `configs/emission_julia.yaml`, set:
+Keep machine-specific paths in the ignored local configuration. Copy it once:
+
+```bash
+cp configs/emission_julia.yaml configs/emission_julia.local.yaml
+```
+
+In `configs/emission_julia.local.yaml`, set the real dataset, job name and new
+output directory, together with:
 
 ```yaml
 julia_executable: ../runtime/julia/julia-1.13.2/bin/julia
@@ -132,8 +139,12 @@ julia_executable: ../runtime/julia/julia-1.13.2/bin/julia
 Then initialize the project:
 
 ```bash
-uv run process-julia --setup
+uv run process-julia --setup --config configs/emission_julia.local.yaml
+uv run process-julia --dry-run --config configs/emission_julia.local.yaml
 ```
+
+Use `--config configs/emission_julia.local.yaml` for later process and setup
+commands too. Commands without `--config` read the tracked default YAML.
 
 `--setup` checks the exact Julia version, instantiates and precompiles the
 checked-in manifest, and exports the repository's current fixed emission/dust
@@ -145,13 +156,15 @@ access; later processing reuses the installed environment.
 By default all launcher-managed files stay under ignored `runtime/julia/`:
 `depot/` for Julia packages, `assets/` for `tables.npz` and `physics.json`, and
 `matplotlib/` for the plotting cache. uv uses `runtime/uv-cache/`. No separate
-shell environment file is required. Setonix installation and execution still
-need verification on the target machine; local tests do not establish cluster
-performance.
+shell environment file is required. Validate the selected snapshot on the
+target machine; installation or a small-region test does not establish
+full-snapshot performance.
 
 ## Select inputs in YAML
 
-Edit [configs/emission_julia.yaml](../configs/emission_julia.yaml), for example:
+Edit your selected YAML (`configs/emission_julia.local.yaml` in the Setonix
+example). The default template is
+[configs/emission_julia.yaml](../configs/emission_julia.yaml):
 
 ```yaml
 dataset: /absolute/path/to/run/plt0000000
@@ -208,6 +221,34 @@ These ranges select four full z columns and need at least five native cells
 on each x/y axis for their surrounding halo. Choose valid interior indices for
 the selected snapshot. CLI axes override only their respective YAML axes.
 Small selections may still read large intersecting FAB blocks.
+
+Size the batch and reader allowance for the selected native geometry before a
+full run. `batch_cells` must hold at least one complete selected x/y plane;
+the default `131072` fits a 256-by-256 plane, but a 512-by-512 plane requires
+at least `262144`. The reader allowance also depends on the native z-layer
+depths, since the reader retains adjacent layers for velocity gradients.
+
+For example, a 512-by-512-by-4096 snapshot stored as 32 complete z layers of
+128 cells can use this conservative single-thread configuration:
+
+```yaml
+x_index_range: null
+y_index_range: null
+threads: 1
+batch_cells: 262144
+reader_cache_mib: 4096
+save_cells: false
+```
+
+For that exact layout, the reader plan estimates 3,164,922,400 retained bytes
+(3018.31 MiB), including x/y halos and one output plane. `4096` MiB is the
+reader's allowed retained-array budget, not reserved memory or a process RSS
+limit: Mera temporaries, Julia, emission/product arrays and Python need extra
+memory. This is a metadata-based sizing example, not a completed full-snapshot
+run or a performance measurement. Recalculate for a different selected plane
+or native layer layout. The reader rejects insufficient batch/cache settings
+before its density prepass; `--dry-run` only checks launch settings and does
+not inspect snapshot metadata.
 
 For the full snapshot, keep both YAML ranges `null` and run:
 
@@ -309,6 +350,9 @@ uv sync --locked
 uv run process-julia --setup
 git rev-parse HEAD
 ```
+
+If using the Setonix local configuration, append
+`--config configs/emission_julia.local.yaml` to the setup command.
 
 Preserve local changes before pulling. `configs/emission_julia.local.yaml` is
 ignored by Git; copy the example there and select it with `--config` for personal

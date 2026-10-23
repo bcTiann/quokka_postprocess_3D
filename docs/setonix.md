@@ -1,5 +1,9 @@
 # Setonix: process and plot with uv
 
+For the experimental Julia/Mera version on `codex/julia-experimental`, follow
+the [Julia installation and usage guide](../julia/README.md#setonix) in an
+independent checkout. The steps below describe the Python pipeline on `main`.
+
 Keep the repository, environment and generated results under `$MYSOFTWARE`.
 Run from the repository root. Bundled tables need no separate DESPOTIC installation.
 
