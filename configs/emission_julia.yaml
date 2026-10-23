@@ -1,0 +1,29 @@
+# Paths in YAML are relative to this file. CLI --dataset must be absolute.
+# Choose a new output directory for every run; existing results are preserved.
+dataset: /absolute/path/to/simulation/plt0000000
+jobname: my-run
+output: ../output/julia-experimental/my-run/plt0000000
+
+# Native 0-based half-open bounds; null selects the full axis. z stays complete.
+x_index_range: null
+y_index_range: null
+
+# One-time: uv run process-julia --setup
+# Julia itself must already be installed. A bare executable name uses PATH;
+# an executable path, like other YAML paths, starts at this config file.
+julia_executable: julia
+julia_depot: ../runtime/julia/depot
+assets: ../runtime/julia/assets
+
+# Direct shell execution uses one Julia thread by default.
+threads: 1
+batch_cells: 131072
+reader_cache_mib: 1024
+
+figure_formats: [png]
+figure_styles: [titled]
+image_downsample_factor: 1
+no_plot: false
+raw_luminosity: false
+# Large per-cell diagnostics are intended for small validation regions.
+save_cells: false

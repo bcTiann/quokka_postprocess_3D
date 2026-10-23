@@ -12,12 +12,14 @@ saved numerical products and PNG/PDF figures in their original directory structu
 The `codex/julia-experimental` branch provides Julia/Mera processing for one
 complete uniform-grid snapshot and the existing saved-product Python plotting,
 including job name and simulation time in titled figures. Keep it in a separate
-checkout and environment while validating a new physical case. See the
-[Julia local and Setonix installation guide](julia/README.md) for pinned
-dependencies, fixed-table export, a region smoke test, full-snapshot Slurm jobs
-and plot-only use. The [implementation guide](docs/julia_process.md) describes
-the numerical workflow and current input limits. The commands below continue
-to describe the Python pipeline.
+checkout and environment while validating a new physical case. Configure
+[configs/emission_julia.yaml](configs/emission_julia.yaml), initialize once with
+`uv run process-julia --setup`, then run `uv run process-julia`. The launcher
+uses the uv project's Python and supplies Julia's runtime paths and thread
+settings. See the [local and Setonix installation guide](julia/README.md) for
+pinned dependencies, a region smoke test and plot-only use. The
+[implementation guide](docs/julia_process.md) describes the numerical workflow
+and input limits. The commands below describe the Python pipeline.
 
 ## 1. Clone
 

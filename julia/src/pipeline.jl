@@ -113,7 +113,9 @@ function run_snapshot(; dataset, jobname, assets, output, x_range=nothing, y_ran
                       reader_cache_bytes=1024^3, python=default_python(),
                       make_plots=true, figure_formats=["png"],
                       figure_styles=["titled"], image_downsample_factor=1,
-                      raw_luminosity=false, save_cells=false)
+                      raw_luminosity=false, save_cells=false, launch_configuration=nothing)
+    launch_configuration === nothing || launch_configuration isa AbstractDict ||
+        error("Launch configuration must be a dictionary")
     jobname = checked_jobname(jobname)
     dataset = realpath(dataset)
     assets = realpath(assets)
@@ -238,6 +240,7 @@ function run_snapshot(; dataset, jobname, assets, output, x_range=nothing, y_ran
             "implementation" => "Julia/Mera streaming snapshot process", "schema_version" => 1,
             "full_snapshot" => shape == snapshot.original_shape,
             "dataset" => dataset, "jobname" => jobname, "snapshot_name" => basename(dataset),
+            "run_configuration" => launch_configuration,
             "physics" => model.meta, "identity" => identity,
             "x_index_range" => [first(selected_x) - 1, last(selected_x)],
             "y_index_range" => [first(selected_y) - 1, last(selected_y)],

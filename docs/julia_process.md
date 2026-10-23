@@ -10,7 +10,7 @@ fixed table compositions. A dataset name does not change abundances or scale
 metallicity automatically.
 
 For copyable local/Setonix installation, an independent experimental checkout,
-Slurm submission and saved-result transfer, start with
+YAML configuration and saved-result transfer, start with
 [julia/README.md](../julia/README.md). This document describes the implementation
 and numerical contract.
 
@@ -30,8 +30,8 @@ one layer, but staggered or overlapping z extents across boxes are rejected.
 Uniform resolution alone does not guarantee this supported file layout.
 
 Every selected x/y sightline includes the complete original z depth. Command-line
-ranges use 0-based half-open native indices. Omitting `--x` selects all x cells;
-omitting `--y` independently selects all y cells. Internally, Julia APIs use
+ranges use 0-based half-open native indices. Each omitted CLI axis retains its
+YAML range; a `null` range selects the full corresponding axis. Julia APIs use
 1-based inclusive ranges. Periodic x/y neighbours refer to the original box,
 including for a region; only the two physical z faces use one-sided velocity
 differences. Subdivision into numerical batches does not introduce new physical
@@ -41,67 +41,106 @@ boundaries.
 
 Use Julia 1.13.2 with the checked-in `Project.toml` and `Manifest.toml`. Mera is
 fixed to commit `db277419e05a45e8d4921fb5f3a0a4d15792cf7f`, which contains the
-Quokka frontend on `multicode`. Set `JULIA_DEPOT_PATH` when an installation's
-default package cache is unsuitable, for example on a cluster with home quota.
-Prepare the repository's Python environment with `uv sync --locked`; numerical figure
-preparation and rendering use the installed `quokka2s` package.
+Quokka frontend on `multicode`. Python numerical preparation and rendering use
+the repository's locked uv environment. The `process-julia` project entry point
+selects its current Python interpreter and passes the Julia depot, project,
+thread limits and Matplotlib cache directly to subprocesses; no shell exports
+or temporary configuration files are needed.
 
 From the repository root:
 
 ```bash
-julia --project=julia -e 'using Pkg; Pkg.instantiate()'
 uv sync --locked
-uv run python julia/export_tables.py --output /absolute/path/to/julia-assets
+uv run process-julia --setup
 ```
 
-The one-time exporter reads the fixed Cloudy, DESPOTIC and dust inputs without
-running either chemistry solver. It writes numeric-only `tables.npz` and
+`--setup` requires an installed Julia 1.13.2 selected by YAML. It instantiates
+and precompiles the checked-in Julia manifest and calls the one-time exporter
+if the configured assets are absent. Existing assets must match their recorded
+source inputs and numeric hash; conflicts are preserved and reported. Routine
+processing never performs Julia package installation automatically.
+
+The exporter reads the fixed Cloudy, DESPOTIC and dust inputs without running
+either chemistry solver. It writes numeric-only `tables.npz` and
 `physics.json`, containing axes, coefficients, missing/zero masks, line
 definitions, physical constants and input hashes. Original tables remain
-untouched. Use `--despotic`, `--cloudy` and `--dust` for explicit asset sources.
+untouched. The standalone `uv run python julia/export_tables.py --output PATH`
+also accepts `--despotic`, `--cloudy` and `--dust` for explicit asset sources.
 The Julia loader verifies the exported numeric asset hash before processing.
+Launcher-managed defaults stay under ignored `runtime/julia/`: `depot/`,
+`assets/` and `matplotlib/`. uv's project cache is `runtime/uv-cache/`; an
+existing `UV_CACHE_DIR` overrides that uv setting.
 
 ## Run one snapshot or region
 
-```bash
-julia --startup-file=no --project=julia --threads=4 julia/bin/process.jl \
-  --dataset /absolute/path/to/plt0655228 \
-  --jobname my-run-julia-validation \
-  --assets /absolute/path/to/julia-assets \
-  --output /absolute/path/to/new-julia-results \
-  --python /absolute/path/to/checkout/.venv/bin/python \
-  --format png pdf --style titled untitled
+Edit [`configs/emission_julia.yaml`](../configs/emission_julia.yaml):
+
+```yaml
+dataset: /absolute/path/to/run/plt0000000
+jobname: my-run-julia-validation
+output: ../output/julia-experimental/my-run/plt0000000-full-v1
+x_index_range: null
+y_index_range: null
+threads: 1
 ```
 
-This selects the full x/y domain. For a region, add `--x 64 68 --y 64 72`, or
-supply either axis alone. `--dataset` must be absolute after expanding `~`.
-`--jobname` is required and manually identifies the simulation run; it is not
-inferred from the snapshot path. `--output` is the exact destination, independent
-of that name. The Julia command does not load `configs/emission.yaml`.
-`--output` must not exist and must be outside the snapshot and asset directories.
-Existing completed and failed outputs are preserved. The command handles one
-snapshot; run-directory inventory, result reuse and checkpoint recovery are
-not implemented.
+Then run from the repository root:
 
-| Option | Meaning and default |
+```bash
+uv run process-julia --dry-run
+uv run process-julia
+```
+
+`--dry-run` reads and validates only the configuration, then prints resolved
+settings, the child environment overrides and argument vector. It does not
+access Julia, snapshots or assets or create directories. Normal execution uses
+the same settings; the selected YAML path/hash and effective configuration are
+retained in the report. Duplicate/unknown YAML keys and invalid types are
+rejected instead of being silently ignored.
+
+Precedence is CLI over YAML over built-in defaults. Relative YAML paths start
+at the YAML file; relative CLI paths start at the invoking directory. `~` is
+expanded, but shell variables in YAML are not. A bare `julia_executable: julia`
+uses PATH; a path with a slash is YAML-relative. Julia subprocesses run from
+the repository root, including when a local Juliaup directory override is used.
+
+This selects the full x/y domain when both YAML ranges are `null`. For a
+region, add `--x 64 68 --y 64 72`, supply either axis alone, or set the
+corresponding YAML pair. `--all-x` and `--all-y` independently clear a YAML
+selection. Every explicit `--dataset` must be absolute after `~` expansion and
+requires an explicit `--jobname`, even when YAML has a name. The job label is
+manually chosen and is never inferred from the snapshot path.
+
+`output` is the exact destination and must not exist or overlap the snapshot
+or assets. Existing completed and failed outputs are preserved; choose a fresh
+destination for another run. Changing dataset/jobname does not change `output`
+automatically: update all three fields or also pass `--output` for another case.
+This command handles one snapshot. Run discovery, result reuse and checkpoint
+recovery are not implemented. It reads the Julia YAML independently of Python's
+`configs/emission.yaml`.
+
+| YAML setting / CLI option | Meaning and default |
 |---|---|
-| `--jobname NAME` | Required simulation-run label saved for titled figures |
-| `--x START STOP`, `--y START STOP` | Independent native half-open ranges; omitted axes use their entire domain |
-| `--batch-cells N` | Target cells per emission batch; default `131072`, at least one selected x/y plane |
-| `--reader-cache-mib N` | Estimated retained reader-array budget in MiB; default `1024` |
-| `--threads N` | Product task count; defaults to Julia's thread count and cannot exceed it |
-| `--python PATH` | Python with this repository installed; defaults to repository `.venv/bin/python`, then `python3` |
-| `--no-plot` | Save raw and prepared numerical products; skip rendering only |
-| `--format png pdf` | One or both figure formats; default `png` |
-| `--style titled untitled` | One or both layouts; default `titled`; `untitled` is the paper layout |
-| `--image-downsample-factor N` | Prepare and select N×N summed image pixels; default `1`; must divide both selected image dimensions |
-| `--raw-luminosity` | Draw saved dL/dv instead of dΣL/dv for individual line spectra |
-| `--save-cells` | Write large per-batch verification arrays under `cells/`; disabled by default |
+| `dataset`, `jobname`, `output` / `--dataset`, `--jobname`, `--output` | Required input, manually selected simulation label and exact result directory |
+| `x_index_range`, `y_index_range` / `--x START STOP`, `--y START STOP` | Independent native half-open ranges; default `null` selects each whole axis |
+| `julia_executable` / `--julia-executable PATH` | Installed Julia 1.13.2; default `julia` on PATH |
+| `julia_depot`, `assets` / `--julia-depot`, `--assets` | Default repository `runtime/julia/depot` and `runtime/julia/assets` |
+| `batch_cells` / `--batch-cells N` | Target cells per emission batch; default `131072`, at least one selected x/y plane |
+| `reader_cache_mib` / `--reader-cache-mib N` | Estimated retained reader-array budget in MiB; default `1024` |
+| `threads` / `--threads N` | Julia worker and product task count; default `1`; BLAS remains single-threaded |
+| `no_plot` / `--no-plot`, `--plot` | Save raw and prepared numerical products with optional rendering; default `false` |
+| `figure_formats` / `--format png pdf` | One or both figure formats; default `[png]` |
+| `figure_styles` / `--style titled untitled` | One or both layouts; default `[titled]`; `untitled` is the paper layout |
+| `image_downsample_factor` / `--image-downsample-factor N` | Prepare and select N×N summed image pixels; default `1`; must divide both selected image dimensions |
+| `raw_luminosity` / `--raw-luminosity`, `--per-area` | Draw saved dL/dv instead of dΣL/dv for individual line spectra; default `false` |
+| `save_cells` / `--save-cells`, `--no-save-cells` | Large per-batch verification arrays under `cells/`; default `false` |
 
-The launch option `julia --threads=4` creates Julia's worker threads. A
-`--threads N` after `julia/bin/process.jl` selects how many product tasks use
-them. Normalized gas-phase and all-line overlays keep their established
-full-channel peak normalization regardless of `--raw-luminosity`.
+Normalized gas-phase and all-line overlays keep their established full-channel
+peak normalization regardless of `raw_luminosity`. The lower-level
+`julia/bin/process.jl --help` remains available for direct Julia callers; it
+accepts explicit resolved options and has no YAML parser. The uv launcher
+supplies `--python` automatically, creates the selected Julia thread pool, and
+passes the same task count to that script.
 
 The reader budget is **not an RSS cap**. Before field reads, the planner estimates
 its retained adjacent-layer fluid arrays, column boundaries, reverse columns,
@@ -209,7 +248,9 @@ not used by the standard figures.
 
 `report.json` records the job name, snapshot name, physical time in seconds,
 region, geometry, asset metadata, implementation identity, reader statistics,
-timing and independent conservation residuals.
+timing and independent conservation residuals. When launched through
+`process-julia`, `run_configuration` also records the YAML path/hash, resolved
+settings, selected Python and explicit child environment overrides.
 After raw arrays are saved, it has `raw_processing_complete=true`,
 `processing_complete=false` and `status="preparing"`. Successful preparation
 writes all required prepared arrays and their `preparation.json` manifest;

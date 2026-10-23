@@ -63,3 +63,7 @@
 
 # Local Julia runtime, package cache, and migration verification artifacts.
 /output/diagnostics/julia_process_20261022/
+
+# Experimental Julia results and personal machine/job configuration.
+/output/julia-experimental/
+/configs/emission_julia.local.yaml

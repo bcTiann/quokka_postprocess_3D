@@ -59,6 +59,10 @@ outputs are preserved; choose a new directory. z always spans the original box.
             end
             isempty(values) && error("$argument needs at least one value")
             options[argument[3:end]] = unique(values)
+        elseif argument == "--launch-record"
+            index < length(arguments) || error("Missing value for $argument")
+            options["launch-record"] = QuokkaProcess.JSON3.read(arguments[index + 1], Dict{String,Any})
+            index += 1
         elseif argument in ("--dataset", "--jobname", "--assets", "--output", "--python", integers...)
             index < length(arguments) || error("Missing value for $argument")
             value = arguments[index + 1]
@@ -91,6 +95,7 @@ outputs are preserved; choose a new directory. z always spans the original box.
         image_downsample_factor=options["image-downsample-factor"],
         raw_luminosity=options["raw-luminosity"],
         save_cells=options["save-cells"],
+        launch_configuration=get(options, "launch-record", nothing),
     )
 end
 

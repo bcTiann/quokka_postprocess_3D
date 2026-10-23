@@ -1,401 +1,319 @@
-# Experimental Julia process: installation and use
+# Experimental Julia process with uv and YAML
 
-The `codex/julia-experimental` branch adds a Julia/Mera processor for one Quokka
-snapshot and reuses this repository's Python numerical preparation and plotting.
-The Python commands on `main` remain available. Use a separate checkout,
-environment and result directory for the Julia experiment; the original
-simulation data can stay at its existing location.
+The `codex/julia-experimental` branch processes one Quokka snapshot with
+Julia/Mera and uses the existing Python numerical preparation and plotting.
+Use an independent checkout and choose a snapshot for validation. The original
+simulation data stays at its existing location.
 
-The environment is locked to **Julia 1.13.2** and Mera commit
-`db277419e05a45e8d4921fb5f3a0a4d15792cf7f`, which includes the Quokka frontend.
-Keep both `Project.toml` and `Manifest.toml`; use `Pkg.instantiate()`, not
-`Pkg.update()`, when installing this version. Python 3.11 and the repository's
-`uv.lock` are also required, including with `--no-plot`: that option skips
-rendering, while Python still prepares the saved numerical figure arrays.
-
-This guide provides local and Setonix deployment commands. Setonix installation
-and execution must be checked on the target machine; local validation does not
-establish cluster performance. For the physics, reader algorithm, array schema
-and complete option list, see [the implementation guide](../docs/julia_process.md).
-
-## 1. Obtain an independent checkout
-
-If the usual repository already exists on Setonix, create a worktree beside it:
+From the repository root, daily use is:
 
 ```bash
-cd "$MYSOFTWARE/quokka_postprocess_3D"
-git fetch origin
-git worktree add --track -b codex/julia-experimental \
-  "$MYSOFTWARE/quokka_postprocess_3D-julia" \
-  origin/codex/julia-experimental
-cd "$MYSOFTWARE/quokka_postprocess_3D-julia"
+uv run process-julia --dry-run
+uv run process-julia
 ```
 
-Run that creation command once. If the local branch already exists, inspect
-`git worktree list`; use its existing experimental worktree, or attach the
-unoccupied branch with `git worktree add PATH codex/julia-experimental`.
-Keep the original checkout on its existing branch. Worktrees share Git history,
-but each needs its own `.venv` because Python installs this checkout in editable
-mode.
+Both commands read [configs/emission_julia.yaml](../configs/emission_julia.yaml).
+Edit the snapshot, job name and output there; `--config PATH` selects another
+file. The launcher supplies the current uv Python, Julia project, package depot,
+thread settings and plotting cache. No environment activation, per-run exports,
+temporary configuration files or Slurm allocation is needed to start it.
 
-Alternatively, create a separate clone. On Setonix, run this from `$MYSOFTWARE`;
-locally, choose a normal project parent directory:
+The locked environments require **Python 3.11** and **Julia 1.13.2**. Mera is
+pinned to commit `db277419e05a45e8d4921fb5f3a0a4d15792cf7f`, including the Quokka
+frontend. Keep `uv.lock`, `julia/Project.toml` and `julia/Manifest.toml` together.
+The uv project manages Python; Julia's Pkg manages its locked dependencies.
+See [the implementation guide](../docs/julia_process.md) for the scientific
+definitions, native layout restrictions and saved-array schema.
+
+## Install an independent checkout
+
+Locally, choose a normal project parent directory. On Setonix, start under
+`$MYSOFTWARE` so the checkout, `.venv`, runtime and output stay outside home:
 
 ```bash
+cd "$MYSOFTWARE"  # Setonix only; choose your own parent locally.
 git clone --branch codex/julia-experimental \
   https://github.com/bcTiann/quokka_postprocess_3D.git \
   quokka_postprocess_3D-julia
 cd quokka_postprocess_3D-julia
-git branch --show-current
-git rev-parse HEAD
 ```
 
-Follow **either section 2 or section 3**, then export the assets in section 4.
-All processing commands below run from this experimental repository root.
+An existing repository can instead supply an independent worktree:
 
-## 2. Local macOS or Linux installation
+```bash
+git fetch origin
+git worktree add --track -b codex/julia-experimental \
+  ../quokka_postprocess_3D-julia origin/codex/julia-experimental
+```
 
-Install [Juliaup](https://github.com/JuliaLang/juliaup#installation) if it is not
-already available. Open a new terminal after the installer configures PATH,
-then return to this checkout:
+Run worktree creation once. If that branch already exists, use
+`git worktree list` to find its checkout, or attach the unoccupied local branch
+with `git worktree add PATH codex/julia-experimental`. Each checkout needs its
+own `.venv` because this project is installed in editable mode.
+
+Install [uv](https://docs.astral.sh/uv/getting-started/installation/) if needed,
+then use either the local or Setonix setup below. A C/C++ compiler and Git are
+needed to build the existing Python spectrum extension and dependencies.
+
+### Local macOS or Linux
+
+Install [Juliaup](https://github.com/JuliaLang/juliaup#installation) if needed:
 
 ```bash
 curl -fsSL https://install.julialang.org | sh
 ```
 
-Select the exact Julia version without changing the default for other projects:
+Open a new terminal after installation, return to the checkout, then select
+the pinned Julia for this directory without changing other projects:
 
 ```bash
 juliaup add 1.13.2
-export QPP_JULIA="$(julia +1.13.2 --startup-file=no -e 'print(joinpath(Sys.BINDIR, "julia"))')"
-"$QPP_JULIA" --version
-```
-
-Install [uv](https://docs.astral.sh/uv/getting-started/installation/) if needed,
-then install both locked environments. Building the Python Cython extension
-requires a C/C++ compiler (Xcode Command Line Tools on macOS, or the normal
-compiler/build tools on Linux).
-
-```bash
-export QPP_REPO="$PWD"
+juliaup override set 1.13.2
 uv sync --locked --python 3.11
-export JULIA_NUM_PRECOMPILE_TASKS=4
-export OPENBLAS_NUM_THREADS=1
-"$QPP_JULIA" --startup-file=no --project=julia \
-  -e 'using Pkg; Pkg.instantiate(); Pkg.precompile()'
-.venv/bin/python -c 'import quokka2s, numpy, matplotlib'
-"$QPP_JULIA" --startup-file=no --project=julia julia/bin/process.jl --help
-
-export QPP_ASSETS="$HOME/quokka-julia-assets-v1"
-export QPP_RESULTS="$HOME/quokka-julia-results"
-mkdir -p "$QPP_RESULTS"
+uv run process-julia --setup
 ```
 
-Juliaup chooses the binary for the local architecture. The local default Julia
-package cache is `~/.julia`; the Setonix instructions below move it outside home.
-The `QPP_*` exports are shell settings, so repeat them when opening a new terminal.
+The YAML's `julia_executable: julia` finds Julia on PATH. If Juliaup is not used,
+set `julia_executable` to the installed Julia 1.13.2 binary's absolute path.
 
-## 3. Setonix installation under `$MYSOFTWARE`
+### Setonix
 
-Use the Setonix **CPU** environment. Download and install Linux dependencies on
-Setonix; do not copy a macOS `.venv`, Julia binary, package cache or compiled
-libraries. The source checkout, lock files and numeric asset files are portable.
+Install Linux dependencies on Setonix; a macOS `.venv`, Julia binary or compiled
+package cache cannot be transferred. Source code, lock files and exported
+numeric tables are portable. All commands below start in the experimental
+checkout and run in the current shell.
 
-Create a small environment file outside Git. Source it in future shells and
-batch jobs; it sets the paths used by the rest of this guide:
+Use an existing uv installation, or install it once outside home:
 
 ```bash
-mkdir -p "$MYSOFTWARE/quokka-julia-runtime"
-cat > "$MYSOFTWARE/quokka-julia-runtime/environment.sh" <<'EOF'
-export QPP_REPO="$MYSOFTWARE/quokka_postprocess_3D-julia"
-export QPP_RUNTIME="$MYSOFTWARE/quokka-julia-runtime"
-export QPP_JULIA="$QPP_RUNTIME/julia-1.13.2/bin/julia"
-export QPP_ASSETS="$MYSOFTWARE/quokka-julia-assets-v1"
-export QPP_RESULTS="$MYSOFTWARE/quokka-julia-results"
-export JULIA_DEPOT_PATH="$QPP_RUNTIME/depot"
-export JULIA_NUM_PRECOMPILE_TASKS=4
-export UV_CACHE_DIR="$QPP_RUNTIME/uv-cache"
-export UV_PYTHON_INSTALL_DIR="$QPP_RUNTIME/python"
-export PATH="$MYSOFTWARE/uv/bin:$PATH"
-export MPLCONFIGDIR="$QPP_RUNTIME/matplotlib"
-export OPENBLAS_NUM_THREADS=1
-export OMP_NUM_THREADS=1
-EOF
-source "$MYSOFTWARE/quokka-julia-runtime/environment.sh"
-mkdir -p "$QPP_RUNTIME/downloads" "$QPP_RESULTS/logs" "$MPLCONFIGDIR"
+curl -LsSf https://astral.sh/uv/0.11.31/install.sh |
+  env UV_INSTALL_DIR="$MYSOFTWARE/uv/bin" sh
 ```
 
-Install the official **Linux x86_64** binary on Setonix CPU nodes. Check that
-`uname -m` prints `x86_64`. These URLs come from Julia's
-[official manual downloads](https://julialang.org/downloads/manual-downloads/),
-including its [1.13.2 SHA256 list](https://julialang-s3.julialang.org/bin/checksums/julia-1.13.2.sha256):
+Open a new terminal so the installer's PATH setup takes effect. Return to the
+checkout and install the locked Python environment. This branch's uv project
+uses `runtime/uv-cache/`, so the project cache also stays outside home without
+an export. An already configured `UV_CACHE_DIR` takes precedence.
+
+```bash
+module load python/3.11.6
+uv sync --locked --python "$(command -v python)"
+```
+
+If the site module changes, use `module spider python` to find an available
+Python 3.11 module. Keep its compiler/runtime available when rebuilding the
+environment. The launcher reuses the resulting uv Python automatically.
+
+Use an installed Julia 1.13.2 by putting its absolute executable path in YAML.
+Alternatively, install the official Linux x86_64 binary inside this checkout:
 
 ```bash
 uname -m
-cd "$QPP_RUNTIME/downloads"
+mkdir -p runtime/julia/downloads
+cd runtime/julia/downloads
 curl --fail --location --output julia-1.13.2-linux-x86_64.tar.gz \
   https://julialang-s3.julialang.org/bin/linux/x64/1.13/julia-1.13.2-linux-x86_64.tar.gz
 curl --fail --location --output julia-1.13.2.sha256 \
   https://julialang-s3.julialang.org/bin/checksums/julia-1.13.2.sha256
 sha256sum --check --ignore-missing julia-1.13.2.sha256
+tar -xzf julia-1.13.2-linux-x86_64.tar.gz -C ..
+cd ../../..
 ```
 
-Continue only after the checksum reports the Linux archive as `OK`. If Julia
-1.13.2 is already installed at this exact path, skip the download/extraction.
+Check that the architecture is `x86_64` and the checksum reports the Linux
+archive as `OK` before extracting. Downloads and checksums are from
+[Julia's official releases](https://julialang.org/downloads/manual-downloads/).
+In `configs/emission_julia.yaml`, set:
 
-```bash
-tar -xzf julia-1.13.2-linux-x86_64.tar.gz -C "$QPP_RUNTIME"
-"$QPP_JULIA" --version
+```yaml
+julia_executable: ../runtime/julia/julia-1.13.2/bin/julia
 ```
 
-Use an existing uv installation, or install it outside home:
+Then initialize the project:
 
 ```bash
-curl -LsSf https://astral.sh/uv/0.11.31/install.sh |
-  env UV_INSTALL_DIR="$MYSOFTWARE/uv/bin" sh
-export PATH="$MYSOFTWARE/uv/bin:$PATH"
+uv run process-julia --setup
 ```
 
-Install Python in this checkout, following the repository's existing
-[Setonix Python environment instructions](../docs/setonix.md#2-configure-the-environment):
+`--setup` checks the exact Julia version, instantiates and precompiles the
+checked-in manifest, and exports the repository's current fixed emission/dust
+tables if the configured assets are absent. Existing assets are checked against
+their source hashes and reused; conflicting assets are preserved and reported.
+This does not run Cloudy or DESPOTIC or change abundances. Setup needs network
+access; later processing reuses the installed environment.
 
-```bash
-cd "$QPP_REPO"
-module load python/3.11.6
-uv sync --locked --python "$(command -v python)"
-"$QPP_JULIA" --startup-file=no --project=julia \
-  -e 'using Pkg; Pkg.instantiate(); Pkg.precompile()'
-.venv/bin/python -c 'import quokka2s, numpy, matplotlib'
-"$QPP_JULIA" --startup-file=no --project=julia julia/bin/process.jl --help
+By default all launcher-managed files stay under ignored `runtime/julia/`:
+`depot/` for Julia packages, `assets/` for `tables.npz` and `physics.json`, and
+`matplotlib/` for the plotting cache. uv uses `runtime/uv-cache/`. No separate
+shell environment file is required. Setonix installation and execution still
+need verification on the target machine; local tests do not establish cluster
+performance.
+
+## Select inputs in YAML
+
+Edit [configs/emission_julia.yaml](../configs/emission_julia.yaml), for example:
+
+```yaml
+dataset: /absolute/path/to/run/plt0000000
+jobname: my-run-julia-validation
+output: ../output/julia-experimental/my-run/plt0000000-full-v1
+
+x_index_range: null
+y_index_range: null
+threads: 1
+figure_formats: [png]
+figure_styles: [titled]
 ```
 
-If that site Python module has changed, inspect `module spider python` and use
-an available Python 3.11 module consistently for installation and the batch job.
-A GCC/Clang-compatible compiler must be available for the Python extension.
-Dependency installation needs network access and can take several minutes;
-finish it before submitting processing jobs. Keep the same depot and environment
-paths in the job so the compute node can find the installed packages.
+`dataset` names one complete `plt` plus digits directory. A YAML dataset may
+be relative to the YAML file; an explicit `--dataset` override must be absolute.
+`jobname` is chosen manually, never inferred from the path. `output` is the
+exact destination and must be new, outside the snapshot and asset directories.
+The `output/julia-experimental/` subtree is ignored by Git. Choose a new output
+suffix after a failed or completed attempt; automatic reuse and restart are
+not implemented. Changing dataset/jobname does not update `output`
+automatically; change all three fields when selecting a new case.
 
-## 4. Export the existing fixed tables once
+All relative YAML paths start at the YAML file's directory. `~` is expanded;
+shell variables such as `$MYSOFTWARE` are not expanded inside YAML. A bare
+`julia_executable: julia` uses PATH; a path with a slash is YAML-relative.
+CLI path overrides are relative to the current shell directory, except that
+`--dataset` requires an absolute path. CLI values override YAML, then built-in
+defaults supply omitted settings. The resolved launch settings, YAML path and
+YAML hash are recorded in `report.json` under `run_configuration`.
 
-From the experimental checkout, with `QPP_ASSETS` set by section 2 or 3:
+Keep `x_index_range` and `y_index_range` at `null` for the full x/y box. An axis
+can independently use `[START, STOP]`, with 0-based included start and excluded
+stop, while every sightline retains the complete z depth. The launcher defaults
+to one Julia thread and a single BLAS thread; choose `threads` explicitly when
+comparing resource budgets. Other settings in the commented YAML control the
+retained-reader budget, emission batch size and figure selection.
+
+## Run a region, then the full snapshot
+
+Review the resolved configuration without accessing Julia, snapshots or assets:
 
 ```bash
-.venv/bin/python julia/export_tables.py --output "$QPP_ASSETS"
+uv run process-julia --dry-run
 ```
 
-The destination must be new. The exporter reads the repository's tracked
-`inputs/tables/despotic/interpolated.npz`,
-`inputs/tables/cloudy/emission.npz` and fixed Draine dust file. It writes
-`tables.npz` and `physics.json`, retaining source SHA256 hashes and the adopted
-abundances. It does not run Cloudy or DESPOTIC, rebuild the tables, or modify them.
-`--despotic PATH --cloudy PATH --dust PATH` can select explicit existing sources.
-
-When transferring an already exported asset directory, copy **both** files.
-The Julia loader checks `tables.npz` against the hash in `physics.json`; the
-processing report also records their identity. Preserve each asset version and
-use a new directory after an intentional table change. Do not overwrite assets
-while a calculation is running.
-
-## 5. Select a snapshot and run a small region first
-
-Choose a snapshot in a different physical state for the next validation.
-Set one **absolute snapshot path**, an explicit manually chosen job name, and
-a fresh output path. The input must be a `plt` plus digits snapshot directory,
-not its parent run directory. For example, replace the path below:
+Override x/y and output for a first small-region check:
 
 ```bash
-export QPP_DATASET=/absolute/path/to/run/plt0000000
-export QPP_JOBNAME=my-run-julia-validation
-export QPP_SNAPSHOT="$(basename "$QPP_DATASET")"
-export QPP_SMOKE="$QPP_RESULTS/$QPP_JOBNAME/$QPP_SNAPSHOT-smoke-v1"
+uv run process-julia --x 2 4 --y 2 4 \
+  --output output/julia-experimental/my-run/plt0000000-smoke-v1
 ```
 
-Locally, run:
+These ranges select four full z columns and need at least five native cells
+on each x/y axis for their surrounding halo. Choose valid interior indices for
+the selected snapshot. CLI axes override only their respective YAML axes.
+Small selections may still read large intersecting FAB blocks.
+
+For the full snapshot, keep both YAML ranges `null` and run:
 
 ```bash
-"$QPP_JULIA" --startup-file=no --project=julia --threads=4 julia/bin/process.jl \
-  --dataset "$QPP_DATASET" --jobname "$QPP_JOBNAME" \
-  --assets "$QPP_ASSETS" --output "$QPP_SMOKE" \
-  --python "$PWD/.venv/bin/python" \
-  --x 2 4 --y 2 4 --format png --style titled
+uv run process-julia
 ```
 
-On Setonix, use the batch script in section 6 with `--x 2 4 --y 2 4` appended
-for the first smoke run. Numerical processing belongs in a compute allocation.
-These ranges select four complete z columns; start indices are included and
-stop indices excluded. These interior example ranges require at least five
-cells along both x and y and avoid wrapping the periodic halo across the box.
-Choose valid indices for the selected snapshot. Omitting
-one axis independently selects that whole axis. A small region can still read
-large intersecting FAB blocks, so its I/O need not scale with its cell count.
-
-`--jobname` is required and is never inferred from the path. `--output` names
-the exact result directory; Julia does not automatically construct the Python
-job/snapshot hierarchy or read `configs/emission.yaml`. Titled plots identify
-the saved job name, snapshot name and actual simulation time in Myr. Untitled
-plots keep the manuscript layout.
-
-For a full local snapshot, choose a different output path and omit both ranges:
+For another saved configuration or explicit input selection:
 
 ```bash
-"$QPP_JULIA" --startup-file=no --project=julia --threads=4 julia/bin/process.jl \
-  --dataset "$QPP_DATASET" --jobname "$QPP_JOBNAME" \
-  --assets "$QPP_ASSETS" \
-  --output "$QPP_RESULTS/$QPP_JOBNAME/$QPP_SNAPSHOT-full-v1" \
-  --python "$PWD/.venv/bin/python" \
+uv run process-julia --config configs/my_julia_run.yaml
+uv run process-julia --dataset /absolute/path/to/other/plt0000000 \
+  --jobname other-run \
+  --output output/julia-experimental/other-run/plt0000000-v1
+```
+
+Every explicit `--dataset` requires an explicit `--jobname`. Python remains
+required with `--no-plot`: that option saves raw and prepared products and skips
+only rendering. `--format png pdf --style titled untitled` requests all 252
+standard figure files. Use `uv run process-julia --help` for accepted overrides.
+
+The command runs on the node where it is invoked and makes no scheduler
+request. Pawsey describes login nodes as the entry point for preparing and
+submitting work; choose an allocation for sustained workloads according to the
+[site guidance](https://pawsey.atlassian.net/wiki/spaces/US/pages/51925858/Connecting+to+a+Supercomputer).
+Slurm is optional for this entry point. Within an existing batch script, use
+the same checkout, Python module and command; set YAML `threads` to the assigned
+CPU count, or pass `--threads "$SLURM_CPUS_PER_TASK"`. No separate Julia command
+or environment file is needed.
+
+## Check completion and redraw
+
+Leave long runs to finish and inspect their log and the output directory's
+`status.json` and `report.json` afterwards. Redirect normal console output to a
+chosen log if desired:
+
+```bash
+uv run process-julia > julia-process.log 2>&1
+```
+
+A full result has `processing_complete: true` and `full_snapshot: true` in
+`report.json`. If plots were requested, check `plot_status: completed`.
+With `--no-plot`, plot status is `not_requested`; numerical preparation still
+finishes. `raw_processing_complete` alone is an intermediate state.
+
+Results contain `products.npz`, the reports, `prepared/`, and requested figure
+directories: `figures/` for untitled and `figures_titled/` for titled. There are
+63 figures per selected format/style. Titled plots use the saved job name,
+snapshot and actual simulation time in Myr; untitled plots use the paper layout.
+
+Render again from saved products:
+
+```bash
+uv run python julia/plot_results.py /absolute/path/to/result/prepared \
   --format png pdf --style titled untitled
 ```
 
-The output directory must not exist and must be outside the input snapshot
-and assets. A failed calculation is preserved; choose a new suffix to retry.
+For plotting on another machine, install this branch's Python environment and
+copy the whole `prepared/` directory, including `preparation.json` and
+`emission_report.json`. Plot checks saved-file hashes and reads saved job/time
+metadata. It needs no Julia installation, original snapshot, numeric table
+assets or raw `products.npz`.
 
-## 6. Run one snapshot in a Setonix CPU batch job
-
-Save this as `$QPP_RESULTS/run_snapshot.sbatch`. Replace `YOUR_PROJECT`,
-`QPP_DATASET` and `QPP_JOBNAME`. Start with a smoke run by appending the x/y
-options noted above, then submit a full run after checking its outputs.
-
-The example requests one Julia process with four threads, 16 GiB and 30 minutes.
-These are initial resources for validation, not measured Setonix requirements;
-increase memory/time for larger snapshots and compare thread counts later.
-The single-task launch follows Pawsey's
-[CPU batch-job guidance](https://pawsey.atlassian.net/wiki/spaces/US/pages/51927426/Example+Slurm+Batch+Scripts+for+Setonix+on+CPU+Compute+Nodes).
+Older saved results can acquire job/time title metadata without recalculating
+emission:
 
 ```bash
-#!/bin/bash --login
-#SBATCH --account=YOUR_PROJECT
-#SBATCH --partition=work
-#SBATCH --job-name=quokka-julia
-#SBATCH --nodes=1
-#SBATCH --ntasks=1
-#SBATCH --cpus-per-task=4
-#SBATCH --mem=16G
-#SBATCH --time=00:30:00
-
-set -euo pipefail
-source "$MYSOFTWARE/quokka-julia-runtime/environment.sh"
-module load python/3.11.6
-cd "$QPP_REPO"
-
-QPP_DATASET=/absolute/path/to/run/plt0000000
-QPP_JOBNAME=my-run-julia-validation
-QPP_SNAPSHOT="$(basename "$QPP_DATASET")"
-QPP_OUTPUT="$QPP_RESULTS/$QPP_JOBNAME/$QPP_SNAPSHOT-slurm-$SLURM_JOB_ID"
-
-# Save the checkout identity and launch settings in the Slurm log.
-git rev-parse HEAD
-git status --short
-"$QPP_JULIA" --version
-"$PWD/.venv/bin/python" --version
-printf 'dataset=%s\njobname=%s\noutput=%s\nthreads=%s\n' \
-  "$QPP_DATASET" "$QPP_JOBNAME" "$QPP_OUTPUT" "$SLURM_CPUS_PER_TASK"
-
-srun --nodes=1 --ntasks=1 --cpus-per-task="$SLURM_CPUS_PER_TASK" \
-  --distribution=block:block:block \
-  "$QPP_JULIA" --startup-file=no --project=julia \
-  --threads="$SLURM_CPUS_PER_TASK" julia/bin/process.jl \
-  --dataset "$QPP_DATASET" --jobname "$QPP_JOBNAME" \
-  --assets "$QPP_ASSETS" --output "$QPP_OUTPUT" \
-  --python "$PWD/.venv/bin/python" \
-  --format png pdf --style titled untitled
-```
-
-Submit from a shell with the environment file loaded:
-
-```bash
-mkdir -p "$QPP_RESULTS/logs"
-sbatch --output="$QPP_RESULTS/logs/julia-%j.log" \
-  --error="$QPP_RESULTS/logs/julia-%j.err" \
-  "$QPP_RESULTS/run_snapshot.sbatch"
-```
-
-The Slurm job ID makes each output directory new. Save the submitted script
-with the results when comparing runs. Leave a long run alone and inspect the
-log and reports after it finishes; continuous monitoring is unnecessary.
-`sacct -j JOB_ID --format=JobID,State,ExitCode,Elapsed,MaxRSS` provides scheduler
-status, including the `srun` job step. Its memory accounting differs from the
-Julia-only peak RSS in `report.json`, especially when Python subprocesses run.
-
-## 7. Check completion and redraw from saved results
-
-Open `status.json` and `report.json` in the exact output directory printed in
-the log. A successful full calculation has `processing_complete: true` and
-`full_snapshot: true` in the report. If plots were requested, also check
-`plot_status: completed`. With `--no-plot`, numerical preparation still finishes
-and the plot status is `not_requested`. `raw_processing_complete` alone is an
-intermediate state, not the completed prepared result.
-
-The output contains `products.npz`, the reports and `prepared/`. Standard plots
-are written under `figures/` (untitled) and `figures_titled/`. There are 63 figures
-per style and format, or 252 files with both formats and both styles.
-
-To render later on Setonix or locally:
-
-```bash
-.venv/bin/python julia/plot_results.py /absolute/path/to/result/prepared \
-  --output /absolute/path/to/result/figures \
-  --format png pdf --style titled untitled
-```
-
-For local plotting, install the branch's Python environment and copy the whole
-`prepared/` directory, including `preparation.json` and `emission_report.json`.
-No Julia runtime, original snapshot, table assets or raw `products.npz` is needed
-for plot-only use. The command verifies saved-file hashes and uses saved job/time
-metadata; it never reopens the snapshot. Do not edit prepared arrays or metadata
-by hand.
-
-Results prepared before job/time metadata was added can be upgraded from the
-saved raw result without recalculating emission:
-
-```bash
-.venv/bin/python julia/prepare_results.py /absolute/path/to/old-result \
+uv run python julia/prepare_results.py /absolute/path/to/old-result \
   --jobname my-run-julia-validation
 ```
 
-A conflicting saved job name is rejected. If an older diagnostic report did
-not store physical time, the title says `time = unavailable`; it is not inferred
-from the snapshot number. New snapshot processing saves time automatically.
+A conflicting saved job name is rejected. Missing physical time is displayed
+as unavailable; it is not inferred from the snapshot number.
 
-## 8. Limits, validation and updates
+## Supported inputs and updates
 
-The current reader supports uniform, level-0, three-dimensional Cartesian
-snapshots with cubic cells, stored temperature, positive metadata unit factors,
-and FAB boxes forming aligned complete z layers. Non-cubic domains are allowed.
-AMR, staggered z-layer layouts, temperature reconstruction, whole-run discovery
-and numerical checkpoint restart are not implemented. Mera's broader capabilities
-do not automatically extend this processor's supported inputs.
+The current reader supports uniform level-0 Cartesian 3D snapshots with cubic
+cells, stored temperature, positive metadata unit factors, and FAB boxes
+forming aligned complete z layers. Non-cubic domains are allowed. AMR,
+staggered z-layer layouts, temperature reconstruction, run-directory discovery
+and numerical checkpoint restart are not implemented.
 
-The default retained-reader budget is 1,024 MiB (`--reader-cache-mib`); it is
-not a total memory cap. Runtime, Mera temporaries, emission/product arrays and
-Python need additional memory. `--batch-cells` defaults to 131,072 and must fit
-at least one selected x/y plane. A larger snapshot may require both values to
-be increased after reviewing the reader's plan/error.
+`reader_cache_mib: 1024` is a retained-array budget, not a total memory cap.
+Mera temporaries, Julia, emission/product arrays and Python need additional
+memory. `batch_cells: 131072` must fit one complete selected x/y plane. Review
+the reader's plan/error before increasing these for larger inputs.
 
-Before adopting a new physical case, compare it with the Python pipeline using
-the same snapshot, region and fixed assets. Inspect missing/zero masks, counts,
-mass and luminosity conservation, images, spectral profiles and moments. A
-completed report checks internal consistency; it is not by itself an independent
-cross-implementation validation. Local speed measurements are not a Setonix
-benchmark.
+For a different physical state, compare Python and Julia on the same snapshot,
+region and fixed tables. Check missing/zero masks, counts, conservation, images,
+spectra and moments. A completed internal report is not an independent
+cross-implementation validation.
 
-Update the experimental deployment only while no job uses that checkout:
+Update only while no run uses the checkout:
 
 ```bash
-cd "$QPP_REPO"
 git status --short
 git pull --ff-only origin codex/julia-experimental
 uv sync --locked
-"$QPP_JULIA" --startup-file=no --project=julia \
-  -e 'using Pkg; Pkg.instantiate(); Pkg.precompile()'
+uv run process-julia --setup
 git rev-parse HEAD
 ```
 
-Use `cd` to the local experimental checkout if `QPP_REPO` is not set. Preserve
-local changes before pulling. The experimental branch should receive reviewed
-`main` changes through normal merges; deployment machines should pull the tested
-experimental branch, rather than merging `main` into an active calculation.
-The processor checks source identity at the beginning and end, so code or asset
-changes during a run cause failure. Keep the commit, settings, logs and reports
-with each validation. The external result paths in this guide keep personal
-validation data outside public Git commits.
+Preserve local changes before pulling. `configs/emission_julia.local.yaml` is
+ignored by Git; copy the example there and select it with `--config` for personal
+machine paths and run settings. Retain it with the validation results. Use reviewed
+merges to bring `main` into the experimental branch; processing detects source
+or asset changes during a run. Preserve the commit, effective settings, log and
+reports for each comparison. Run-specific validation outputs stay outside
+public commits.

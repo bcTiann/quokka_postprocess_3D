@@ -15,7 +15,7 @@ commands.
 `pyproject.toml` declares dependencies; `uv.lock` records the resolved versions
 and source identities. uv creates `.venv` with `uv sync` and selects it for
 `uv run`. Sync automatically installs `quokka2s` in editable mode from `src/`
-and registers `process` and `plot`. No `PYTHONPATH` export or manual
+and registers `process`, `plot` and `process-julia`. No `PYTHONPATH` export or manual
 package installation is needed. The repository remains the source of bundled
 tables and configuration; this workflow uses an editable checkout, not a
 standalone wheel with embedded input data. The default dependencies support
@@ -33,7 +33,7 @@ products. Plot reads saved arrays without importing this processing extension.
 
 | Directory | Contents | In Git? |
 |---|---|---|
-| `configs/` | Shared `emission.yaml` for process/plot and `table_input_survey.yaml` for job surveys; paths are relative to their YAML file | Yes |
+| `configs/` | Shared `emission.yaml` for Python process/plot, `emission_julia.yaml` for the Julia launcher and `table_input_survey.yaml` for job surveys; paths are relative to their YAML file | Yes |
 | `src/quokka2s/` | Reusable calculations and process/plot entry points | Yes |
 | `julia/` | Independent Julia/Mera streaming snapshot processor, pinned environment, asset exporter, saved-product preparation and standard renderer entry point | Yes |
 | `tools/cloudy/` | Build radiation inputs, run Cloudy, package its emission table | Yes |
@@ -44,12 +44,21 @@ products. Plot reads saved arrays without importing this processing extension.
 | `vendor/` | Pinned external source, dust table, molecular data and their notes | Yes |
 | `inputs/snapshots/` | User-provided QUOKKA snapshots | No |
 | `inputs/tables/` | Cloudy `emission.npz`, DESPOTIC `interpolated.npz`, and their previous `emission_old.npz` / `interpolated_old.npz` | Yes; raw tables and other build files stay local |
-| `output/` | Processed numerical products and figures, including the Setonix results | Yes |
-| `runtime/` | Cloudy build parameters, `.inc` exports, raw outputs and logs | No |
+| `output/` | Processed numerical products and figures, including the Setonix results; Julia experiments under `output/julia-experimental/` stay local | Yes, except ignored diagnostics and Julia experiments |
+| `runtime/` | Local build/runtime files; `runtime/julia/` holds the Julia package depot, exported assets and plotting cache | No |
 
 ## Julia entry points and data ownership
 
-[`julia/bin/process.jl`](../julia/bin/process.jl) calls
+`uv run process-julia` starts
+[`src/quokka2s/process_julia.py`](../src/quokka2s/process_julia.py). It resolves
+[`configs/emission_julia.yaml`](../configs/emission_julia.yaml) and CLI
+overrides, selects the uv Python, and sets Julia's project, depot and worker
+environment without shell exports. `--setup` installs the locked Julia
+dependencies and prepares verified fixed-table assets; `--dry-run` prints the
+effective settings without reading Julia, snapshot or assets. The launch
+configuration is retained with the numerical report.
+
+The launcher invokes [`julia/bin/process.jl`](../julia/bin/process.jl), which calls
 [`run_snapshot()`](../julia/src/pipeline.jl). It selects all x/y cells by default;
 `--x` and `--y` independently restrict native indices while z retains the
 complete original sightlines. `reader.jl` reads Mera geometry and units;

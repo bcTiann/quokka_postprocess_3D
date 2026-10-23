@@ -5,9 +5,12 @@ implementation processes one full snapshot or selected x/y region, prepares save
 numerical products, and reuses the standard renderers. Its
 [reading and usage guide](julia_process.md) describes the streaming reader,
 complete-column physics, memory budget, completion states and command options.
-The Julia command calls `run_snapshot()` in `julia/src/pipeline.jl`; numerical
-completion includes `prepare_results.py`, and `plot_results.py` then reads only
-`prepared/`. The retained `run_region()` API is a separate in-memory diagnostic.
+`uv run process-julia` reads `configs/emission_julia.yaml` through
+`src/quokka2s/process_julia.py`, which selects the locked Julia project and the
+uv Python before invoking `julia/bin/process.jl`. That calls `run_snapshot()` in
+`julia/src/pipeline.jl`; numerical completion includes `prepare_results.py`, and
+`plot_results.py` then reads only `prepared/`. The retained `run_region()` API is
+a separate in-memory diagnostic.
 
 Start at `main()` near the bottom of [process_snapshot.py](../src/quokka2s/process_snapshot.py).
 Read what each call receives and returns before opening the function itself.

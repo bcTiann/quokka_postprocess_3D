@@ -27,6 +27,7 @@ dependencies = [
 
 [project.scripts]
 process = "quokka2s.process_snapshot:main"
+process-julia = "quokka2s.process_julia:main"
 plot = "quokka2s.plot_emission_results:main"
 
 [tool.setuptools.packages.find]
@@ -39,6 +40,7 @@ sources = ["src/quokka2s/products/_gaussian_fractions.pyx"]
 extra-compile-args = ["-O3", "-fno-fast-math", "-ffp-contract=off"]
 
 [tool.uv]
+cache-dir = "runtime/uv-cache"
 # Editing the native source must rebuild the editable extension on uv sync/run.
 cache-keys = [
     { file = "pyproject.toml" },
