@@ -191,6 +191,17 @@ smaller than `Nx_selected * Ny_selected`.
    order, and prepares the existing renderer schema. Optional rendering then
    reads only `prepared/` through `plot_results.py`.
 
+The spectral kernel shares each Gaussian probability across lines with identical
+thermal widths and both dust states. `gaussian_channel_range` omits only channels
+whose two edge arguments are on the same already-saturated `product_erf` tail
+(both at or below -8, or both at or above +8). It searches using the original
+Float64 quotient rather than a rounded inverse velocity bound. Retained channels
+keep their original arithmetic and accumulation order; this introduces no
+finite-width physical cutoff. The innermost line updates omit repeated bounds
+checks after the accumulator's shapes and task-owned line indices establish the
+valid ranges. Changes to those construction invariants must preserve this safety
+contract.
+
 The density conversion is `nH = rho * X_H / mH` in cm⁻³ using the exported
 constants. For a cell at z index k, the two shielding columns are
 `N_minus = sum(j <= k, nH[j] * dz)` and

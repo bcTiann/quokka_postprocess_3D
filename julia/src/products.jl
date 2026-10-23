@@ -101,6 +101,49 @@ rounded to +/-1 in Float64. This is not a finite-sigma physical truncation.
     return erf(argument)
 end
 
+"""Keep channels whose two erf arguments are not on the same saturated tail.
+
+`edges` are increasing velocities [km/s]; `denominator` is sqrt(2) times
+the thermal width [km/s]. Search the original Float64 quotient, since
+inverting the threshold as velocity +/- 8 * denominator can round differently.
+Only exactly zero contributions from `product_erf` are omitted.
+"""
+function gaussian_channel_range(edges, velocity, denominator)
+    channel_count = length(edges) - 1
+    isfinite(denominator) && denominator > 0.0 || return 1:channel_count
+    first_channel = 1
+    last_channel = channel_count
+
+    if (first(edges) - velocity) / denominator <= -8.0
+        lower = 1
+        upper = length(edges) + 1
+        while lower + 1 < upper
+            middle = lower + (upper - lower) ÷ 2
+            if (edges[middle] - velocity) / denominator <= -8.0
+                lower = middle
+            else
+                upper = middle
+            end
+        end
+        first_channel = lower
+    end
+
+    if (last(edges) - velocity) / denominator >= 8.0
+        lower = 0
+        upper = length(edges)
+        while lower + 1 < upper
+            middle = lower + (upper - lower) ÷ 2
+            if (edges[middle] - velocity) / denominator >= 8.0
+                upper = middle
+            else
+                lower = middle
+            end
+        end
+        last_channel = upper - 1
+    end
+    return first_channel:last_channel
+end
+
 """Fuse Gaussian channel probabilities with all same-width line luminosities.
 
 Each task owns its spectra and scratch. A cell's two dust states and lines
@@ -130,13 +173,17 @@ function add_cell_spectra!(
             end
         end
         denominator = sqrt(2.0) * widths[first_line]
-        previous = product_erf((edges[1] - velocity) / denominator)
-        for channel in 1:length(edges)-1
+        channels = gaussian_channel_range(edges, velocity, denominator)
+        isempty(channels) && continue
+        previous = product_erf((edges[first(channels)] - velocity) / denominator)
+        for channel in channels
             current = product_erf((edges[channel + 1] - velocity) / denominator)
             fraction_per_kms = 0.5 * (current - previous) / (edges[channel + 1] - edges[channel])
             previous = current
             fraction_per_kms == 0.0 && continue
-            for position in 1:shared_count
+            # Product shapes are checked before accumulation; task-owned scratch
+            # contains only line indices from the validated luminosity matrix.
+            @inbounds for position in 1:shared_count
                 line = shared[position]
                 spectra[channel, line, 1, branch] += fraction_per_kms * luminosity[line, 1]
                 spectra[channel, line, 2, branch] += fraction_per_kms * luminosity[line, 2]
