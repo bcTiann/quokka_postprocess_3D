@@ -279,6 +279,45 @@ Omitted settings use the same defaults shown in the shared YAML:
 | `chunk_workers` | Concurrent query batches within the loaded slab | 8 |
 | `spectral_workers` | Spectral-integration threads per query batch | 3 |
 
+### Spectral integration
+
+`spectral_method` selects the numerical channel-integration algorithm, separately
+from the execution settings above. Its default is `exact`, which evaluates the
+Gaussian bin integrals with SciPy `erf`. To select the compiled one-dimensional
+linear lookup approximation explicitly:
+
+```bash
+uv run process --jobname sigma13-lut --spectral-method linear-lut
+```
+
+The equivalent YAML setting is:
+
+```yaml
+spectral_method: linear-lut
+```
+
+The CLI option overrides the YAML for that invocation only;
+`--spectral-method exact` explicitly selects the default method. For a run directory, the selected
+method applies to every snapshot in that invocation. Plot reads the saved
+products and does not choose or recalculate the spectral method.
+
+The lookup table contains `erf` values from 0 to 8 with spacing `1/4096` and
+uses odd symmetry for negative arguments. Linear interpolation and reciprocal
+coordinate arithmetic introduce numerical approximation. The physical widths,
+units, per-line availability, dust states, 400-bin window and reduction/merge
+order remain unchanged; no additional tail cutoff or flux renormalization is
+applied. Nondefault numerical error policies and unaligned channel boundaries
+retain the direct NumPy/SciPy coefficient path. See the
+[method reference](emission_method.md#saved-products-and-figures).
+
+The effective method is stored in `run_configuration` and the spectral report,
+along with the lookup parameters. Reuse requires that setting to match: exact
+and lookup results cannot substitute for each other. Use a distinct `jobname`
+or `results_dir` for a comparison; existing products are preserved. Measure
+runtime and spectral error on the intended input before selecting a method.
+
+### Memory, concurrency and progress
+
 Emission processing internally shares native fields across up to four adjacent
 selected slabs. This leaves `slab_nx`, batch order and numerical products
 unchanged. The shared converted fields retain at most 3 GiB of value arrays;

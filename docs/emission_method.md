@@ -111,6 +111,23 @@ over channel boundaries. Luminosity outside that window is recorded rather
 than moved into edge channels. Each line and dust state has one integrated
 spectrum. Cold/hot contributions are retained separately.
 
+The default `spectral_method: exact` evaluates the analytic bin integrals with
+SciPy's double-precision `erf`. The optional `linear-lut` method approximates
+that same function with a shared one-dimensional lookup table. It tabulates
+`erf(x)` for nonnegative `x` from 0 to 8 at spacing `1/4096`, uses odd symmetry
+for negative arguments, and linearly interpolates the two bin-boundary values.
+The compiled kernel multiplies each edge offset by the precomputed reciprocal
+of `sqrt(2) * sigma`. It retains the existing float64 saturation at `|x| >= 8`;
+it adds no 5-sigma cutoff or window-flux renormalization.
+
+`linear-lut` changes numerical channel values through interpolation and
+rounding. It preserves the adopted cell temperatures, emitter masses, Doppler
+factor, minimum thermal width, dust states, per-line missingness, dense
+luminosity reduction and ordered merges. Images, gas-phase products and full
+Gaussian moments retain their original calculations. The report records the
+selected method and lookup parameters. See the [usage settings](usage.md#spectral-integration)
+for explicit selection and result-reuse rules.
+
 Two dispersions are saved: `line_sigma_window_kms` uses the saved channels;
 `line_sigma_full_kms` includes each available cell's complete Gaussian. The
 full value is calculated from cell luminosity L, LOS velocity v and the same

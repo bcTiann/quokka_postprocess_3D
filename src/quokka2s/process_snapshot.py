@@ -15,6 +15,7 @@ import time
 from quokka2s.physics.cell_emission import CellEmissionCalculator
 from quokka2s.run_settings import (
     ProcessSettings,
+    SPECTRAL_METHODS,
     add_plot_arguments,
     add_run_selection_arguments,
     load_plot_config,
@@ -83,6 +84,7 @@ def process_parallel_batches(
             snapshot=snapshot,
             line_keys=emission_calculator.line_keys,
             spectral_workers=config.spectral_workers,
+            spectral_method=config.spectral_method,
         )
         accumulate_batch(
             cells=cells,
@@ -339,7 +341,8 @@ def print_run_settings(config, config_path: Path) -> None:
     print(f'Numerical output: {config.output_dir}', flush=True)
     print(
         f'Execution: slab_nx={config.slab_nx}; query_chunk={config.query_chunk:,}; '
-        f'chunk_workers={config.chunk_workers}; spectral_workers={config.spectral_workers}',
+        f'chunk_workers={config.chunk_workers}; spectral_workers={config.spectral_workers}; '
+        f'spectral_method={config.spectral_method}',
         flush=True,
     )
 
@@ -359,6 +362,7 @@ def run_one_snapshot(config: ProcessSettings, config_path: Path) -> None:
         snapshot=snapshot,
         line_keys=emission_calculator.line_keys,
         spectral_workers=config.spectral_workers,
+        spectral_method=config.spectral_method,
     )
     began = time.monotonic()
     write_status(
@@ -441,6 +445,8 @@ def main(argv=None):
     --no-plot saves numerical products only. Plot choices otherwise use the same
     YAML and format/title flags as plot. Each invocation freezes its inventory;
     completed matching products are reused and conflicting output is preserved.
+    --spectral-method explicitly overrides the YAML exact/linear-lut algorithm.
+    Exact integration remains the default when neither selects a method.
     """
     parser = argparse.ArgumentParser(
         prog="process",
@@ -448,6 +454,12 @@ def main(argv=None):
     )
     add_run_selection_arguments(parser)
     add_plot_arguments(parser)
+    parser.add_argument(
+        "--spectral-method",
+        choices=SPECTRAL_METHODS,
+        default=None,
+        help="Override YAML spectral_method: exact erf or approximate linear-lut",
+    )
     parser.add_argument(
         "--no-plot",
         action="store_true",
@@ -463,6 +475,7 @@ def main(argv=None):
             jobname=args.jobname,
             x_index_range=args.x_index_range,
             y_index_range=args.y_index_range,
+            spectral_method=args.spectral_method,
         )
         plot_defaults = None
         if not args.no_plot:

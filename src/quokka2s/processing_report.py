@@ -88,6 +88,7 @@ def build_processing_report(
             'query_chunk': config.query_chunk,
             'chunk_workers': config.chunk_workers,
             'spectral_workers_per_chunk': config.spectral_workers,
+            'spectral_method': config.spectral_method,
         },
         # Integrated luminosities, dispersions and query clipping counts.
         'intrinsic_luminosity_erg_s': products.intrinsic_luminosity_erg_s.tolist(),

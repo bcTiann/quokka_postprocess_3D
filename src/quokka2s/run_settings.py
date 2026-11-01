@@ -54,6 +54,8 @@ class ProcessSettings:
     Each concurrent batch can use spectral_workers integration threads:
     chunk_workers=8 and spectral_workers=3 allow at most 24 spectral tasks.
     Index ranges are [start, stop), or None for the full native axis.
+    spectral_method selects direct erf integration or approximate linear lookup;
+    the default exact method retains the existing numerical prescription.
     """
 
     dataset: Path
@@ -70,6 +72,7 @@ class ProcessSettings:
     max_slabs: int | None = None
     x_index_range: tuple[int, int] | None = None
     y_index_range: tuple[int, int] | None = None
+    spectral_method: str = "exact"
 
 
 @dataclass(frozen=True)
@@ -111,6 +114,7 @@ _PLOT_DEFAULTS = {
 }
 _FIGURE_FORMATS = ("png", "pdf")
 _FIGURE_STYLES = ("untitled", "titled")
+SPECTRAL_METHODS = ("exact", "linear-lut")
 _ALLOWED_SETTINGS = (
     _RUN_REQUIRED_SETTINGS
     | set(_PROCESS_DEFAULTS)
@@ -376,6 +380,7 @@ def load_process_config(
     jobname: str | None = None,
     x_index_range: list[int] | None = None,
     y_index_range: list[int] | None = None,
+    spectral_method: str | None = None,
 ) -> ProcessSettings:
     """Read processing settings and derive the selected processed/ directory.
 
@@ -384,6 +389,7 @@ def load_process_config(
     omitted axes use the full extent. The z axis always remains complete.
     Plot options in the shared file are accepted but not used by process.
     Explicit overrides replace only their matching YAML settings for this run.
+    spectral_method overrides the YAML algorithm only when explicitly supplied.
     A CLI dataset must be absolute and accompanied by an explicit jobname.
     """
     config_path, supplied = _read_mapping(path)
@@ -394,6 +400,7 @@ def load_process_config(
         jobname=jobname,
         x_index_range=x_index_range,
         y_index_range=y_index_range,
+        spectral_method=spectral_method,
     )
 
 
@@ -404,6 +411,7 @@ def load_process_configs(
     jobname: str | None = None,
     x_index_range: list[int] | None = None,
     y_index_range: list[int] | None = None,
+    spectral_method: str | None = None,
 ) -> list[ProcessSettings]:
     """Select one snapshot or the direct plt+digits children of a run directory.
 
@@ -412,6 +420,7 @@ def load_process_configs(
     it is not treated as an empty run. All snapshots share the selected x/y
     ranges, output job and execution settings. An explicit dataset requires an
     explicit jobname. Directory discovery never reads cell data.
+    An explicit spectral_method applies to every selected snapshot.
     """
     config_path, supplied = _read_mapping(path)
     selected = _process_settings(
@@ -421,6 +430,7 @@ def load_process_configs(
         jobname=jobname,
         x_index_range=x_index_range,
         y_index_range=y_index_range,
+        spectral_method=spectral_method,
     )
     if is_snapshot_name(selected.snapshot_name) or (selected.dataset / "Header").is_file():
         return [selected]
@@ -437,6 +447,7 @@ def load_process_configs(
             jobname=selected.jobname,
             x_index_range=x_index_range,
             y_index_range=y_index_range,
+            spectral_method=spectral_method,
         )
         if config.output_dir.resolve().is_relative_to(selected.dataset):
             raise ValueError("results_dir must be outside the input run directory")
@@ -452,6 +463,7 @@ def _process_settings(
     jobname: str | None,
     x_index_range: list[int] | None,
     y_index_range: list[int] | None,
+    spectral_method: str | None,
 ) -> ProcessSettings:
     """Validate one snapshot's paths, index ranges and calculation settings."""
     run = read_run_selection(
@@ -473,6 +485,13 @@ def _process_settings(
         values[name] = _path_value(name, values[name], config_path.parent)
     for name in _PROCESS_INTEGERS:
         values[name] = _positive_int(name, values[name], nullable=name == "max_slabs")
+    if spectral_method is not None:
+        values["spectral_method"] = spectral_method
+    if (
+        type(values["spectral_method"]) is not str
+        or values["spectral_method"] not in SPECTRAL_METHODS
+    ):
+        raise ValueError(f"spectral_method must be one of {', '.join(SPECTRAL_METHODS)}")
     if values["query_chunk"] > 1000000:
         raise ValueError("query_chunk must be at most 1000000 cells")
     return ProcessSettings(

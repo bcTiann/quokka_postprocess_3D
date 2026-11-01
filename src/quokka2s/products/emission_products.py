@@ -83,7 +83,7 @@ class EmissionOutputs:
 class EmissionProducts:
     """Running image/spectrum/phase sums; never retains individual cell arrays."""
 
-    def __init__(self, snapshot, line_keys, spectral_workers):
+    def __init__(self, snapshot, line_keys, spectral_workers, *, spectral_method="exact"):
         """Create image, spectrum and gas-phase accumulators for one run.
 
         Parameters
@@ -95,6 +95,8 @@ class EmissionProducts:
             From CellEmissionCalculator.line_keys; fixes the line order of every accumulator.
         spectral_workers : int
             Thread count for Gaussian channel integration within each batch.
+        spectral_method : {"exact", "linear-lut"}, optional
+            Direct erf integration or the explicitly selected linear lookup.
 
         Notes
         -----
@@ -127,6 +129,7 @@ class EmissionProducts:
             line_keys=self.line_keys,
             velocity_edges_kms=velocity_edges_kms,
             workers=spectral_workers,
+            spectral_method=spectral_method,
         )
         self.phases = GasPhaseVelocityAccumulator(velocity_edges_kms)
         self.counts = {

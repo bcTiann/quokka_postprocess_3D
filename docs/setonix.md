@@ -3,6 +3,12 @@
 Keep the repository, environment and generated results under `$MYSOFTWARE`.
 Run from the repository root. Bundled tables need no separate DESPOTIC installation.
 
+Pawsey's [login-node guidance](https://pawsey.atlassian.net/wiki/spaces/US/pages/51926034/How%2Bto%2Blog%2Binto%2BSetonix)
+reserves the shared login nodes for access and preparation. Use them for SSH,
+Git updates, file editing and lightweight header inspection. Run processing,
+plotting and other computational workloads inside a Slurm compute-node
+allocation. The processing commands below assume that allocation is active.
+
 ## 1. Clone
 
 ```bash
@@ -87,6 +93,8 @@ Coverage is snapshot-dependent; see
 
 ## 4. Process
 
+From a compute node in the allocation:
+
 ```bash
 uv run process --x 64 66 --y 64 66
 ```
@@ -105,6 +113,21 @@ product-integrity checks; incomplete, conflicting or legacy `processed/`
 directories are reported without being overwritten. Legacy results remain
 drawable with plot. Choose a fresh results root for a separate calculation;
 see the [reuse rules](usage.md#completed-result-reuse).
+
+The default spectral method is direct `erf` integration. To test the optional
+compiled one-dimensional lookup approximation, select it explicitly and use
+a separate output group:
+
+```bash
+uv run process --jobname sigma50-lut --spectral-method linear-lut --no-plot
+```
+
+This keeps the configured dataset and x/y selection. Use
+`--spectral-method exact` for the direct method. Both methods read the original snapshot without
+modifying it; results stay in the selected SOFTWARE output group. The chosen
+method is saved in the report and must match for process reuse. Lookup changes
+channel values slightly through interpolation; see
+[spectral integration](usage.md#spectral-integration) before comparing results.
 
 To process the run's direct `plt` plus digits directories, in numeric order:
 
@@ -213,11 +236,17 @@ are not needed. See the [README](../README.md) for local setup and the
 
 ## 6. Commit code and results
 
-`output/` is tracked by Git, including numerical arrays and figures. On Setonix,
-commit and push the intended code, configuration and output files normally:
+The repository can track selected numerical arrays and figures under `output/`.
+Review the working tree and stage only intended source, configuration and
+published product paths with `git add PATH`. Keep personal validation outputs,
+local tests and comparison records in ignored directories; do not stage the
+whole `output/` tree.
 
 ```bash
-git add src configs/emission.yaml output
+git status --short
+git diff --stat
+# After staging the selected paths:
+git diff --cached --stat
 git commit -m "Update code and results"
 git push origin main
 ```

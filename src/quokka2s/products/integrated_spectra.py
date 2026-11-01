@@ -1,8 +1,8 @@
-"""Streaming LOS spectra using the existing Gaussian channel integrals.
+"""Streaming LOS spectra from exact or tabulated Gaussian channel integrals.
 
 This module receives each named line's emissivities and gas temperature,
 selects its available cells, and accumulates both dust states. It does not
-select a chemistry model, interpolate tables, or apply transfer.
+select a chemistry model, interpolate emissivity tables, or apply transfer.
 """
 from __future__ import annotations
 
@@ -16,7 +16,16 @@ from scipy.special import geterr as scipy_geterr
 from quokka2s.constants import ATOMIC_MASS_UNIT_G, BOLTZMANN_ERG_K, SPEED_OF_LIGHT_KMS
 from quokka2s.line_definitions import LINE_DEFINITIONS
 from quokka2s.products import DUST_STATES, REGIME_KEYS
-from quokka2s.products._gaussian_fractions import fill_channel_fractions
+from quokka2s.products._gaussian_fractions import (
+    fill_channel_fractions,
+    fill_channel_fractions_linear_lut,
+)
+from quokka2s.products.gaussian_lookup import (
+    LINEAR_ERF_ARGUMENT_MAXIMUM,
+    LINEAR_ERF_ARGUMENT_STEP,
+    LINEAR_ERF_NODE_COUNT,
+    LINEAR_ERF_VALUES,
+)
 from quokka2s.products.line_velocity_moments import (
     LineVelocityMoments,
     MINIMUM_GAUSSIAN_WIDTH_KMS,
@@ -39,6 +48,7 @@ def accumulate_velocity_spectra(
     *,
     cell_chunk: int = DEFAULT_SPECTRAL_CELL_CHUNK,
     workers: int = 1,
+    spectral_method: str = "exact",
 ) -> np.ndarray:
     """Integrate each cell's Gaussian over channel edges and sum dL/dv.
 
@@ -53,6 +63,9 @@ def accumulate_velocity_spectra(
         Increasing, uniformly spaced channel edges [km/s].
     cell_chunk, workers : int, optional
         Maximum cells per kernel chunk and number of integration threads.
+    spectral_method : {"exact", "linear-lut"}, optional
+        Exact SciPy erf coefficients, or approximate one-dimensional linear
+        lookup coefficients. Both retain the same ordered luminosity reduction.
 
     Returns
     -------
@@ -61,7 +74,10 @@ def accumulate_velocity_spectra(
 
     Notes
     -----
-    Each Gaussian is integrated analytically over the velocity-channel edges.
+    Exact mode integrates each Gaussian analytically over channel edges.
+    Linear-lut mode approximates erf on the same boundaries using spacing
+    1/4096 and reciprocal widths. Custom NumPy/SciPy error policies and
+    unaligned boundaries retain the original exact NumPy/SciPy path.
     Several lines with identical widths share one Gaussian evaluation. The
     1 cm/s minimum width is retained; flux outside the window is not restored.
 
@@ -69,6 +85,8 @@ def accumulate_velocity_spectra(
     --------
     profile = accumulate_velocity_spectra(velocity, sigma, cell_light, edges)
     """
+    if spectral_method not in ("exact", "linear-lut"):
+        raise ValueError(f"Unknown spectral_method: {spectral_method!r}")
     velocity = np.asarray(velocity_kms, dtype=float).reshape(-1)
     thermal = np.asarray(thermal_width_kms, dtype=float).reshape(-1)
     luminosity = np.asarray(luminosity_matrix, dtype=float)
@@ -120,6 +138,8 @@ def accumulate_velocity_spectra(
                 if category != "memory"
             )
         )
+        if use_fused_kernel and spectral_method == "linear-lut":
+            inverse_denominator = np.reciprocal(denominator)
         # Returned partials must be independent of worker scratch: a later task
         # can start before executor.map consumes this task's result.
         partial = np.zeros(output_shape, dtype=float)
@@ -127,7 +147,16 @@ def accumulate_velocity_spectra(
             channel1 = min(channel0 + channel_chunk, output_shape[0])
             edges = velocity_edges_kms[channel0:channel1 + 1]
             fractions = scratch.fractions[:channel1 - channel0]
-            if use_fused_kernel:
+            if use_fused_kernel and spectral_method == "linear-lut":
+                fill_channel_fractions_linear_lut(
+                    edges=edges,
+                    centers=centers,
+                    inverse_denominator=inverse_denominator,
+                    previous=scratch.previous,
+                    fractions=fractions,
+                    values=LINEAR_ERF_VALUES,
+                )
+            elif use_fused_kernel:
                 fill_channel_fractions(
                     edges=edges,
                     centers=centers,
@@ -175,17 +204,23 @@ class IntegratedSpectra:
         *,
         workers=1,
         cell_chunk=DEFAULT_SPECTRAL_CELL_CHUNK,
+        spectral_method="exact",
     ):
         """Create empty profiles on the run's fixed velocity-channel grid.
 
         line_keys follows CellEmissionCalculator.line_keys. Channel edges are
         (K + 1,) [km/s]; workers and cell_chunk bound Gaussian integration.
+        spectral_method selects exact or linear-lut channel coefficients;
+        complete Gaussian moments retain their original cell calculation.
         Example: ten lines and 400 channels give dL_dv.shape == (2, 10, 2, 400).
         """
+        if spectral_method not in ("exact", "linear-lut"):
+            raise ValueError(f"Unknown spectral_method: {spectral_method!r}")
         self.line_keys = tuple(line_keys)
         self.velocity_edges_kms = np.asarray(velocity_edges_kms, dtype=float).copy()
         self.workers = int(workers)
         self.cell_chunk = int(cell_chunk)
+        self.spectral_method = spectral_method
         profile_shape = (2, len(self.line_keys), 2, self.velocity_edges_kms.size - 1)
         self.dL_dv = np.zeros(profile_shape)
         self.input_luminosity = np.zeros(profile_shape[:3])
@@ -328,6 +363,7 @@ class IntegratedSpectra:
                 velocity_edges_kms=self.velocity_edges_kms,
                 cell_chunk=self.cell_chunk,
                 workers=self.workers,
+                spectral_method=self.spectral_method,
             )
             profiles[:, :, branch_index] = branch_profiles
             counts[:, branch_index] = np.count_nonzero(branch_cells)
@@ -340,6 +376,8 @@ class IntegratedSpectra:
 
     def merge(self, other):
         """Add a completed worker batch in the caller's chosen input order."""
+        if self.spectral_method != other.spectral_method:
+            raise ValueError("Cannot merge spectra calculated with different spectral methods")
         self.dL_dv += other.dL_dv
         self.input_luminosity += other.input_luminosity
         self.cell_counts += other.cell_counts
@@ -469,9 +507,25 @@ class IntegratedSpectra:
                 "velocity_channels": int(self.velocity_edges_kms.size - 1),
                 "cell_counts_by_regime": self.cell_counts.tolist(),
                 "profile": "analytic Gaussian integral over channel edges; existing Doppler width convention",
+                "spectral_method": self.spectral_method,
                 "transfer": "none added; supplied emissivities are summed as epsilon times cell volume",
                 "lines": {},
             }
+            if self.spectral_method == "linear-lut":
+                dust_report["profile"] = (
+                    "Gaussian channel integral using one-dimensional linear erf lookup; "
+                    "existing Doppler width convention"
+                )
+                dust_report["lookup"] = {
+                    "function": "erf((edge-center)/(sqrt(2)*sigma)) with odd symmetry",
+                    "interpolation": "linear",
+                    "argument_step": LINEAR_ERF_ARGUMENT_STEP,
+                    "absolute_argument_maximum": LINEAR_ERF_ARGUMENT_MAXIMUM,
+                    "nonnegative_nodes": LINEAR_ERF_NODE_COUNT,
+                    "coordinate_arithmetic": "difference times reciprocal denominator",
+                    "tail_rule": "existing +/-8 erf saturation; no additional cutoff",
+                    "fallback": "exact NumPy/SciPy for custom error policies or unaligned boundaries",
+                }
             for line_index, line_key in enumerate(self.line_keys):
                 line_report = {
                     "total": make_luminosity_summary(
@@ -495,7 +549,7 @@ class IntegratedSpectra:
 
 def calculate_branch_spectra_and_moments(
     *, line_keys, masses_g, velocity_kms, temperature_K, luminosity_by_dust,
-    velocity_edges_kms, cell_chunk, workers,
+    velocity_edges_kms, cell_chunk, workers, spectral_method="exact",
 ):
     """Share one thermal Gaussian calculation across lines and dust states.
 
@@ -547,6 +601,7 @@ def calculate_branch_spectra_and_moments(
             velocity_edges_kms=velocity_edges_kms,
             cell_chunk=cell_chunk,
             workers=workers,
+            spectral_method=spectral_method,
         )
         group_size = len(shared_lines)
         for dust_index in range(2):
