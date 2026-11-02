@@ -91,6 +91,8 @@ def build_processing_report(
             'query_chunk': config.query_chunk,
             'chunk_workers': config.chunk_workers,
             'spectral_workers_per_chunk': config.spectral_workers,
+            'field_cache_slabs': config.field_cache_slabs,
+            'field_cache_gib': config.field_cache_gib,
             'spectral_method': config.spectral_method,
         },
         # Integrated luminosities, dispersions and query clipping counts.

@@ -56,6 +56,8 @@ class ProcessSettings:
     Index ranges are [start, stop), or None for the full native axis.
     spectral_method selects direct erf integration or approximate linear lookup;
     the default exact method retains the existing numerical prescription.
+    field_cache_slabs limits adjacent shared reads, while field_cache_gib limits
+    retained converted field arrays in GiB; neither is a total process RSS limit.
     """
 
     dataset: Path
@@ -73,6 +75,8 @@ class ProcessSettings:
     x_index_range: tuple[int, int] | None = None
     y_index_range: tuple[int, int] | None = None
     spectral_method: str = "exact"
+    field_cache_slabs: int = 4
+    field_cache_gib: int = 3
 
 
 @dataclass(frozen=True)
@@ -96,7 +100,10 @@ class PlotSettings:
 
 _RUN_REQUIRED_SETTINGS = {"dataset", "jobname", "results_dir"}
 _PROCESS_TABLE_PATHS = ("despotic_table", "cloudy_table", "dust_opacity_table")
-_PROCESS_INTEGERS = ("slab_nx", "query_chunk", "chunk_workers", "spectral_workers", "max_slabs")
+_PROCESS_INTEGERS = (
+    "slab_nx", "query_chunk", "chunk_workers", "spectral_workers", "max_slabs",
+    "field_cache_slabs", "field_cache_gib",
+)
 _REGION_INDEX_RANGES = ("x_index_range", "y_index_range")
 _PROCESS_DEFAULTS = {
     field.name: field.default

@@ -9,7 +9,7 @@ if TYPE_CHECKING:
 
 
 # Five float64, unit-aware XYZ value arrays; this is not a process RSS limit.
-MAX_CACHED_SLAB_FIELD_BYTES = 3 * 1024**3
+DEFAULT_MAX_CACHED_SLAB_FIELD_BYTES = 3 * 1024**3
 
 
 class SlabFieldCache:
@@ -18,6 +18,7 @@ class SlabFieldCache:
     Windows and selected_y_range are global half-open original-box indices.
     Every group retains original z and periodic x/y neighbours. Only the owner
     thread may read; batch workers receive the existing copied SlabArrays.
+    max_cached_bytes limits retained converted values, not total process RSS.
     """
 
     def __init__(
@@ -27,13 +28,17 @@ class SlabFieldCache:
         selected_slabs,
         selected_y_range: tuple[int, int],
         slabs_per_read: int,
+        max_cached_bytes: int = DEFAULT_MAX_CACHED_SLAB_FIELD_BYTES,
     ):
         if type(slabs_per_read) is not int or slabs_per_read < 1:
             raise ValueError('slabs_per_read must be a positive integer')
+        if type(max_cached_bytes) is not int or max_cached_bytes < 1:
+            raise ValueError('max_cached_bytes must be a positive integer')
         self._native_reader = native_reader
         self._windows = tuple(tuple(window) for window in selected_slabs)
         self._y_range = tuple(selected_y_range)
         self._slabs_per_read = slabs_per_read
+        self._max_cached_bytes = max_cached_bytes
         self._owner_thread = threading.get_ident()
         self._next_index = 0
         self._cached_fields = None
@@ -67,7 +72,7 @@ class SlabFieldCache:
         while stop_index > self._next_index + 1:
             group_stop = self._windows[stop_index - 1][1]
             cached_bytes = (group_stop - group_start + 2) * self._field_bytes_per_x_layer
-            if cached_bytes <= MAX_CACHED_SLAB_FIELD_BYTES:
+            if cached_bytes <= self._max_cached_bytes:
                 break
             stop_index -= 1
         return stop_index
@@ -108,8 +113,11 @@ class SlabFieldCache:
                 y_stop=y_stop,
             )
             actual_cached_bytes = sum(value.nbytes for value in fields.values() if value.ndim == 3)
-            if actual_cached_bytes > MAX_CACHED_SLAB_FIELD_BYTES:
-                raise MemoryError('Actual slab field cache exceeds its 3 GiB value limit')
+            if actual_cached_bytes > self._max_cached_bytes:
+                raise MemoryError(
+                    f'Actual slab field cache uses {actual_cached_bytes} bytes, '
+                    f'exceeding max_cached_bytes={self._max_cached_bytes}'
+                )
             for value in fields.values():
                 if value.ndim == 3:
                     value.flags.writeable = False

@@ -278,6 +278,8 @@ Omitted settings use the same defaults shown in the shared YAML:
 | `query_chunk` | Maximum cells in one table-query batch | 131,072 |
 | `chunk_workers` | Concurrent query batches within the loaded slab | 8 |
 | `spectral_workers` | Spectral-integration threads per query batch | 3 |
+| `field_cache_slabs` | Maximum adjacent slabs sharing converted native fields | 4 |
+| `field_cache_gib` | Maximum retained converted field arrays, in GiB | 3 |
 
 ### Spectral integration
 
@@ -318,13 +320,20 @@ runtime and spectral error on the intended input before selecting a method.
 
 ### Memory, concurrency and progress
 
-Emission processing internally shares native fields across up to four adjacent
-selected slabs. This leaves `slab_nx`, batch order and numerical products
-unchanged. The shared converted fields retain at most 3 GiB of value arrays;
-this is separate from total process RSS, address-space limits and any
-cache-inclusive user memory quota. Smaller groups or a direct single-slab read
-are used when the selected geometry would exceed that value limit. Only actual
-selected windows are grouped, including a diagnostic `max_slabs` selection.
+Emission processing shares native fields across up to `field_cache_slabs`
+adjacent selected slabs, retaining at most `field_cache_gib` GiB of converted
+field arrays. Both YAML settings require positive integers; omitted settings
+retain the existing defaults of four slabs and 3 GiB. This leaves `slab_nx`,
+batch order and numerical products unchanged. Smaller groups or a direct
+single-slab read are used when the selected geometry would exceed that value
+limit. Only actual selected windows are grouped, including `max_slabs`.
+
+The field-array limit is separate from total process RSS, address-space limits
+and any cache-inclusive user memory quota. Loading buffers, unit conversions,
+derived slab arrays and batch workers add memory beyond the retained cache.
+Increasing only `field_cache_slabs` cannot enlarge a group beyond the byte
+budget. Both effective settings are saved in `run_configuration` and `execution`;
+measure field-reading time and peak RSS together when comparing cache sizes.
 
 The worker counts multiply: this configuration permits up to 8 × 3 spectral
 threads. Reading slabs remains sequential. More workers do not necessarily
@@ -352,8 +361,9 @@ read can include grouped field-cache prefetch, so its read/derive duration is
 not a pure disk-I/O measurement. Read/derive is also partitioned into field
 retrieval (native/cache reads and unit conversion), foreground column,
 shielding column, velocity gradient, and core preparation/other. The last
-category includes copying core fields, flattening and observer overhead.
-These five wall-time categories do not overlap; repeated core-preparation
+category includes read-call setup/finalization, copying core fields and flattening.
+Progress logging overhead is distributed across the observed stages. These five
+wall-time categories do not overlap; repeated core-preparation
 segments are added together. `emission_report.json` stores their totals and
 each slab's measurements under `processing_timings`. Its
 `columns_total_seconds` adds foreground and shielding columns and is a subtotal,

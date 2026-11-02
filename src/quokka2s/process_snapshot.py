@@ -291,7 +291,8 @@ def process_snapshot(config, snapshot, emission_calculator, products, began):
     with snapshot.native_reader.reuse_slab_fields(
         selected_slabs=selected_slabs,
         selected_y_range=snapshot.xy_region['y'],
-        slabs_per_read=4,
+        slabs_per_read=config.field_cache_slabs,
+        max_cached_bytes=config.field_cache_gib * 1024**3,
     ):
         with ThreadPoolExecutor(max_workers=config.chunk_workers) as executor:
             for slab_number, window in enumerate(selected_slabs, start=1):
@@ -370,6 +371,7 @@ def print_run_settings(config, config_path: Path) -> None:
     print(
         f'Execution: slab_nx={config.slab_nx}; query_chunk={config.query_chunk:,}; '
         f'chunk_workers={config.chunk_workers}; spectral_workers={config.spectral_workers}; '
+        f'field_cache_slabs={config.field_cache_slabs}; field_cache_gib={config.field_cache_gib}; '
         f'spectral_method={config.spectral_method}',
         flush=True,
     )

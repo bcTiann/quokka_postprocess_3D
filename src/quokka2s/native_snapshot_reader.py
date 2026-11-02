@@ -19,7 +19,7 @@ from typing import BinaryIO
 import numpy as np
 from unyt import unyt_array
 
-from .slab_field_cache import SlabFieldCache
+from .slab_field_cache import DEFAULT_MAX_CACHED_SLAB_FIELD_BYTES, SlabFieldCache
 
 
 NATIVE_FIELD_NAMES = (
@@ -216,12 +216,15 @@ class NativeSnapshotReader:
         selected_slabs,
         selected_y_range: tuple[int, int],
         slabs_per_read: int = 4,
+        max_cached_bytes: int = DEFAULT_MAX_CACHED_SLAB_FIELD_BYTES,
     ):
         """Reuse bounded native fields for the actual ordered process windows.
 
         Global half-open windows include any max_slabs truncation. Each group
         keeps original z and periodic x/y neighbours. Outside this context the
         reader retains no value cache. Empty selections perform no payload reads.
+        max_cached_bytes limits retained converted arrays; loading temporaries,
+        derived slab arrays and batch workers are outside this byte budget.
         """
         if self._active_slab_field_cache is not None:
             raise RuntimeError('Native slab field reuse contexts cannot be nested')
@@ -230,6 +233,7 @@ class NativeSnapshotReader:
             selected_slabs=selected_slabs,
             selected_y_range=selected_y_range,
             slabs_per_read=slabs_per_read,
+            max_cached_bytes=max_cached_bytes,
         )
         self._active_slab_field_cache = cache
         try:
