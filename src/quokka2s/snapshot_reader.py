@@ -1,6 +1,7 @@
 """Read native snapshot slabs and expose unit-converted cell batches."""
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from functools import cached_property
 
@@ -112,7 +113,13 @@ class Snapshot:
         """Cache native metadata; process contexts may retain bounded fields."""
         return NativeSnapshotReader(dataset=self.dataset)
 
-    def read_slab(self, x_start: int, x_stop: int) -> SlabArrays:
+    def read_slab(
+        self,
+        x_start: int,
+        x_stop: int,
+        *,
+        on_stage: Callable[[str], None] | None = None,
+    ) -> SlabArrays:
         """Read selected x/y cells and periodic neighbours, then derive fields.
 
         Parameters
@@ -120,6 +127,9 @@ class Snapshot:
         x_start, x_stop : int
             Global x bounds, with x_stop excluded. For example, 0:8 selects the
             first eight x layers. Neighbour reads are handled inside this function.
+        on_stage : callable, optional
+            Receives each stage name immediately before its work starts. This
+            observation hook does not inspect or retain numerical arrays.
 
         Returns
         -------
@@ -141,6 +151,7 @@ class Snapshot:
             x_stop=x_stop,
             y_start=y_start,
             y_stop=y_stop,
+            on_stage=on_stage,
         )
 
     def read_column_tile(
@@ -150,6 +161,7 @@ class Snapshot:
         x_stop: int,
         y_start: int,
         y_stop: int,
+        on_stage: Callable[[str], None] | None = None,
     ) -> SlabArrays:
         """Read an x/y rectangle, keeping complete z columns and periodic halos.
 
@@ -161,16 +173,23 @@ class Snapshot:
 
         Example: on a (512, 512, 4096) grid, x=0:512 and y=0:8 returns
         a (512, 8, 4096) core after discarding its neighbour layers.
+        on_stage observes field_reading, core_preparation_other,
+        foreground_column, shielding_column and velocity_gradient. Field reading
+        includes cache filling and unit conversion; core preparation occurs twice.
         """
         # 1. Copy selected cells plus one periodic neighbour on each x/y side.
         # Example: x=0:8 reads [255, 0, ..., 7, 8]; y=0:1 reads [255, 0, 1].
         # All z cells remain present so neither column calculation is truncated.
+        if on_stage is not None:
+            on_stage('field_reading')
         fields = self.native_reader.read_slab_fields(
             x_start=x_start,
             x_stop=x_stop,
             y_start=y_start,
             y_stop=y_stop,
         )
+        if on_stage is not None:
+            on_stage('core_preparation_other')
         core = (slice(1, -1), slice(1, -1), slice(None))
 
         # 2. Copy the core density, temperature and LOS velocity without halos.
@@ -182,12 +201,16 @@ class Snapshot:
         )
 
         # 3. Calculate the column to the observer at the outer -z face.
+        if on_stage is not None:
+            on_stage('foreground_column')
         foreground_column = calculate_dust_foreground_column(
             snapshot=self,
             density_g_cm3=density,
         )
 
         # 4. Calculate the harmonic mean of the +z and -z columns.
+        if on_stage is not None:
+            on_stage('shielding_column')
         shielding_column = calculate_shielding_column(
             fields=fields,
             core=core,
@@ -195,12 +218,16 @@ class Snapshot:
 
         # 5. Calculate dV/dr using neighbouring cells, then retain core.
         # This includes neighbours across the periodic x/y boundaries.
+        if on_stage is not None:
+            on_stage('velocity_gradient')
         velocity_gradient = calculate_core_velocity_gradient(
             fields=fields,
             core=core,
         )
 
         # Core arrays own their data; discard loaded fields and neighbour cells.
+        if on_stage is not None:
+            on_stage('core_preparation_other')
         del fields
 
         # 6. Flatten each field: (8, 64, 2048) -> (1048576,) for y=80:144.

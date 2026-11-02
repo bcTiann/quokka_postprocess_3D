@@ -12,6 +12,15 @@ from threading import Event, Lock, Thread
 from time import monotonic
 
 
+READ_STAGE_LABELS = {
+    'field_reading': 'field reading (native/cache + unit conversion)',
+    'foreground_column': 'foreground column',
+    'shielding_column': 'shielding column',
+    'velocity_gradient': 'velocity gradient',
+    'core_preparation_other': 'core preparation / other',
+}
+
+
 class SlabProgress:
     """Console progress for one slab, including time spent waiting on workers.
 
@@ -48,8 +57,12 @@ class SlabProgress:
         self.merged_batches = 0
         self.merged_cells = 0
         self.read_started = self.clock()
+        self.read_stage = 'core_preparation_other'
+        self.read_stage_started = self.read_started
+        self.read_stage_seconds = {stage: 0.0 for stage in READ_STAGE_LABELS}
         self.compute_started = None
         self.read_seconds = None
+        self.compute_seconds = None
         self.last_merge_report = None
         self.logger = logging.getLogger('quokka2s.process.progress')
 
@@ -80,11 +93,12 @@ class SlabProgress:
                 self.logger.error('%s | interrupted by %s; no completion reported',
                                   self.label, exception_type.__name__)
             elif self.compute_started is not None and self.merged_batches == self.total_batches:
+                self.compute_seconds = self.clock() - self.compute_started
                 self.logger.info(
                     '%s | complete | read/derive %.1fs | compute + ordered merge %.1fs',
                     self.label,
                     self.read_seconds,
-                    self.clock() - self.compute_started,
+                    self.compute_seconds,
                 )
             else:
                 self.logger.warning('%s | ended with %d/%d batches completed',
@@ -95,15 +109,45 @@ class SlabProgress:
             self.logger.setLevel(self.previous_level)
             self.logger.propagate = self.previous_propagate
 
+    def set_read_stage(self, stage: str):
+        """Partition read_slab wall time at an observed numerical stage boundary.
+
+        Repeated core-preparation segments accumulate under the same key. The
+        initial/final call overhead is included there; all five stages together
+        cover read/derive time without overlap, including progress-report overhead.
+        """
+        if stage not in READ_STAGE_LABELS:
+            raise ValueError(f'Unknown slab read stage: {stage}')
+        now = self.clock()
+        with self.lock:
+            if self.compute_started is not None:
+                raise ValueError('Cannot change read stage after reading is complete')
+            self.read_stage_seconds[self.read_stage] += now - self.read_stage_started
+            self.read_stage = stage
+            self.read_stage_started = now
+        self.logger.info('%s | starting %s', self.label, READ_STAGE_LABELS[stage])
+
     def reading_complete(self):
         """Mark completion of read_slab, including its derived fields/cache work."""
         now = self.clock()
         with self.lock:
+            self.read_stage_seconds[self.read_stage] += now - self.read_stage_started
             self.read_seconds = now - self.read_started
             self.compute_started = now
+            stages = self.read_stage_seconds.copy()
         self.logger.info(
             '%s | read/derive finished in %.1fs | %d batches, up to %d concurrent',
             self.label, self.read_seconds, self.total_batches, self.workers,
+        )
+        self.logger.info(
+            '%s | read/derive stages | field reading %.3fs | foreground column %.3fs | '
+            'shielding column %.3fs | velocity gradient %.3fs | core/other %.3fs',
+            self.label,
+            stages['field_reading'],
+            stages['foreground_column'],
+            stages['shielding_column'],
+            stages['velocity_gradient'],
+            stages['core_preparation_other'],
         )
 
     def start_batch(self, batch_number: int):
@@ -147,13 +191,15 @@ class SlabProgress:
             compute_started = self.compute_started
             merged_batches = self.merged_batches
             merged_cells = self.merged_cells
+            read_stage = self.read_stage
+            read_stage_started = self.read_stage_started
             active = {number: dict(state) for number, state in self.active_batches.items()}
         now = self.clock()
         if compute_started is None:
             self.logger.info(
-                '%s | reading fields + deriving NH and dV/dr | elapsed %.1fs '
-                '(may include grouped field-cache prefetch)',
-                self.label, now - self.read_started,
+                '%s | %s | stage elapsed %.1fs | read/derive elapsed %.1fs',
+                self.label, READ_STAGE_LABELS[read_stage],
+                now - read_stage_started, now - self.read_started,
             )
             return
         self.logger.info(

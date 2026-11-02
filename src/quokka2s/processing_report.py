@@ -26,7 +26,7 @@ from quokka2s.products.emission_products import VELOCITY_CHANNELS
 
 def build_processing_report(
     *, config, snapshot, emission_calculator, products, outputs, metadata,
-    image_conservation, began,
+    image_conservation, began, processing_timings=None,
 ) -> dict:
     """Describe the saved results, physical settings and numerical checks.
 
@@ -35,6 +35,9 @@ def build_processing_report(
     Returns the JSON-ready contents of emission_report.json. elapsed_seconds
     runs from began to report construction, before saving; final status.json
     includes saving time. Luminosities are erg/s and dispersions km/s.
+    processing_timings optionally holds the process loop's per-slab and total
+    wall seconds. Its five read-stage totals do not overlap; the columns total
+    is a subtotal, and field reading includes cache fills and unit conversion.
     """
     from quokka2s.physics import settings as cfg
 
@@ -166,6 +169,8 @@ def build_processing_report(
         },
         'elapsed_seconds': time.monotonic() - began,
     }
+    if processing_timings is not None:
+        result['processing_timings'] = processing_timings
     return result
 
 

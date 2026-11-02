@@ -25,7 +25,7 @@ from quokka2s.processing_inputs import load_processing_inputs
 from quokka2s.result_files import write_emission_results, write_status
 from quokka2s.result_metadata import ResultMetadata
 from quokka2s.processing_report import build_processing_report
-from quokka2s.process_progress import SlabProgress
+from quokka2s.process_progress import READ_STAGE_LABELS, SlabProgress
 from quokka2s.process_reuse import processing_input_identity, reuse_completed_results
 from quokka2s.products.emission_products import EmissionProducts
 from quokka2s.snapshot_reader import slab_windows
@@ -206,6 +206,7 @@ def process_one_slab(
     slab = snapshot.read_slab(
         x_start=x_start,
         x_stop=x_stop,
+        on_stage=progress.set_read_stage if progress is not None else None,
     )
     if progress is not None:
         progress.reading_complete()
@@ -272,6 +273,8 @@ def process_snapshot(config, snapshot, emission_calculator, products, began):
 
     config supplies slab/batch sizes, workers, and max_slabs. snapshot supplies
     grid geometry and read_slab(); emission_calculator holds the shared readers.
+    Returns per-slab and total wall timings; the five read stages partition
+    read/derive time, and columns_total_seconds is their two-column subtotal.
     products accumulates sums in place; began is the time.monotonic() run start.
     Final product checks and saving happen in main()."""
     # 1. Select index windows only; no simulation fields are loaded yet.
@@ -279,6 +282,7 @@ def process_snapshot(config, snapshot, emission_calculator, products, began):
     total_slabs = len(selected_slabs)  # Full run: 32 slabs for Nx=256, slab_nx=8.
     total_cells = count_cells_in_slabs(snapshot, selected_slabs)  # Full run: 134,217,728.
     print(f'Processing plan: {total_cells:,} cells; slab count: {total_slabs}.', flush=True)
+    slab_timings = []
     y_start, y_stop = snapshot.xy_region['y']
     z_stop = snapshot.shape[2]
 
@@ -316,6 +320,13 @@ def process_snapshot(config, snapshot, emission_calculator, products, began):
                         executor=executor,
                         progress=progress,
                     )
+                slab_timings.append({
+                    'slab_number': slab_number,
+                    'x_index_range': list(window),
+                    'read_stage_seconds': progress.read_stage_seconds.copy(),
+                    'read_derive_seconds': progress.read_seconds,
+                    'compute_and_ordered_merge_seconds': progress.compute_seconds,
+                })
 
                 # 4. Report a finished slab (1/32, 2/32, ...) before reading the next.
                 report_snapshot_progress(
@@ -326,6 +337,23 @@ def process_snapshot(config, snapshot, emission_calculator, products, began):
                     total_slabs=total_slabs,
                     total_cells=total_cells,
                 )
+
+    read_stage_totals = {
+        stage: sum(record['read_stage_seconds'][stage] for record in slab_timings)
+        for stage in READ_STAGE_LABELS
+    }
+    return {
+        'read_stage_labels': READ_STAGE_LABELS.copy(),
+        'read_stage_totals_seconds': read_stage_totals,
+        'columns_total_seconds': (
+            read_stage_totals['foreground_column'] + read_stage_totals['shielding_column']
+        ),
+        'read_derive_total_seconds': sum(record['read_derive_seconds'] for record in slab_timings),
+        'compute_and_ordered_merge_total_seconds': sum(
+            record['compute_and_ordered_merge_seconds'] for record in slab_timings
+        ),
+        'slabs': slab_timings,
+    }
 
 
 def print_run_settings(config, config_path: Path) -> None:
@@ -373,7 +401,7 @@ def run_one_snapshot(config: ProcessSettings, config_path: Path) -> None:
     )
     try:
         stage = "processing cells"
-        process_snapshot(
+        processing_timings = process_snapshot(
             config=config,
             snapshot=snapshot,
             emission_calculator=emission_calculator,
@@ -402,6 +430,7 @@ def run_one_snapshot(config: ProcessSettings, config_path: Path) -> None:
             metadata=metadata,
             image_conservation=image_conservation,
             began=began,
+            processing_timings=processing_timings,
         )
         if processing_input_identity(config=config) != input_identity:
             raise ValueError("Processing inputs or source files changed during calculation")

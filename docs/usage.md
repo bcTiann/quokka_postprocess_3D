@@ -349,7 +349,17 @@ Gaussian spectra, gas phases or accounting. A computed parallel batch waiting
 for an earlier batch is labelled separately; completion advances only after its
 ordered merge. Serial batches advance after direct accumulation. The first
 read can include grouped field-cache prefetch, so its read/derive duration is
-not a pure disk-I/O measurement. Per-slab compute/merge durations are wall time;
+not a pure disk-I/O measurement. Read/derive is also partitioned into field
+retrieval (native/cache reads and unit conversion), foreground column,
+shielding column, velocity gradient, and core preparation/other. The last
+category includes copying core fields, flattening and observer overhead.
+These five wall-time categories do not overlap; repeated core-preparation
+segments are added together. `emission_report.json` stores their totals and
+each slab's measurements under `processing_timings`. Its
+`columns_total_seconds` adds foreground and shielding columns and is a subtotal,
+not an additional stage. These measurements cover the processing loop; input
+setup and final checks/saving remain outside them.
+Per-slab compute/merge durations are wall time;
 concurrent worker stage durations must not be added as wall-time fractions.
 This display uses Python's standard logging library and needs no extra install.
 
