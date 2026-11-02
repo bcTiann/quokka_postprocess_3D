@@ -1,7 +1,8 @@
 # quokka2s — QUOKKA emission post-processing
 
-Process one QUOKKA snapshot or a run directory, drawing emission-line images
-and spectra after each snapshot is saved. On Setonix, use the short
+Process one QUOKKA snapshot or a run directory by preparing a temporary
+z-contiguous copy, calculating emission products, then drawing images and
+spectra from the saved arrays. On Setonix, use the short
 [Setonix guide](docs/setonix.md).
 
 Setonix results are tracked in [output/](output/). A normal clone includes the
@@ -78,9 +79,25 @@ uv run process
 ```
 
 This uses the YAML settings and draws figures after saving each snapshot's
-numerical products. For a small setup test, run
+numerical products. Before cell calculations, process reads the original plt
+without modifying it and writes five temporary z-contiguous `.npy` fields beside
+the selected `processed/` directory. It then reads bounded groups from those
+files, derives complete-z columns and velocity gradients, and calculates the
+images and spectra. The working copy is removed when that snapshot's processing
+context exits, including after a calculation failure. Batch runs finish and
+release one snapshot's working copy before starting the next.
+
+Conversion holds one float64 field in memory at a time: `8 × Nx × Ny × Nz`
+bytes. Its five files need about `40 × Nx × Ny × Nz` bytes of temporary space on the
+results filesystem, in addition to saved products. For a `512 × 512 × 4096`
+snapshot this is 8 GiB per conversion buffer and about 40 GiB on disk. Group
+buffers, derived fields and concurrent calculations add to process memory.
+
+To limit the emission calculation to a small x/y region, run
 `uv run process --x 64 66 --y 64 66`: x/y indices 64 and 65, with complete z
-columns. Ranges include the start and exclude the stop. Each supplied CLI axis
+columns. A new regional calculation still converts the complete snapshot first;
+the region does not reduce conversion time, its full-field memory buffer or
+temporary disk space. Ranges include the start and exclude the stop. Each supplied CLI axis
 overrides its YAML range; omitted axes keep their YAML settings.
 
 Process prints each slab's x/y/z bounds and completed batches. During long
@@ -90,7 +107,8 @@ It reads the snapshot and tables without modifying them, and saves under
 `results_dir/jobname/snapshot_name/processed/`. Explicit x/y ranges add, for
 example, `region_x64-66_y64-66/` before `processed/`. A full box has no region
 folder. Complete results with matching settings and saved input/source identity
-are reused after product-integrity checks; incomplete, conflicting or legacy
+are reused after product-integrity checks, before input loading or conversion;
+the deleted working copy is not needed for reuse. Incomplete, conflicting or legacy
 `processed/` directories are reported without being overwritten. Legacy results
 remain drawable with plot. Use a fresh results root for a separate calculation;
 see the [reuse rules](docs/usage.md#completed-result-reuse).
@@ -194,6 +212,12 @@ option supplied, the YAML dataset and group are used. Tables, workers and output
 root continue to come from YAML. Single-snapshot plot uses only the dataset
 folder name to locate saved products; the original simulation is not needed.
 Process records its effective settings in `emission_report.json`.
+The process defaults are eight x cells per slab, 131,072 cells per batch,
+16 concurrent batches, one spectral worker per batch, and up to 16 slabs sharing
+at most 12 GiB of converted field arrays. Gaussian integration uses the fused
+one-dimensional `linear-lut` method by default; `--spectral-method exact` selects
+the analytic erf path explicitly. See the [processing settings](docs/usage.md#processing-settings)
+for the numerical distinction and timing fields.
 
 [Detailed usage](docs/usage.md) · [Methods](docs/emission_method.md) ·
 [Code guide](docs/code_walkthrough.md) · [Repository layout](docs/repository_layout.md)

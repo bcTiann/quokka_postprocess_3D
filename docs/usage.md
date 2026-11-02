@@ -124,7 +124,8 @@ direct subdirectories named `plt` plus digits, sorts them by numeric suffix,
 and fixes the list before processing begins. It does not recurse or watch for
 new snapshots. Each snapshot keeps its own output directory.
 Complete results with matching source identity and exact saved calculation
-settings are reused after product-integrity checks. Incomplete, conflicting or
+settings are reused after product-integrity checks, before loading inputs or
+preparing the temporary z-contiguous fields. Incomplete, conflicting or
 legacy `processed/` directories are reported without being overwritten. Choose
 another results root for a separate calculation of the same job, snapshot and
 region selection; the [reuse rules](#completed-result-reuse) explain the checks.
@@ -261,6 +262,10 @@ are additive report fields; numerical array formats and scientific calculations
 are unchanged. Table hashes govern reuse of a saved result, while physical
 compatibility checks for loading a table remain unchanged.
 
+Reuse does not require a z-contiguous working copy. That copy is derived from
+the original snapshot and removed after processing; its random temporary path
+is not part of the persistent result identity.
+
 Older results without `input_identity` are preserved and rejected for automatic
 process reuse. They can still be drawn using `plot` or `plot --all`, which only
 need their saved numerical products. Changed, incomplete or corrupt results are
@@ -276,57 +281,93 @@ Omitted settings use the same defaults shown in the shared YAML:
 |---|---|---|
 | `slab_nx` | Number of x cells read per slab, retaining selected y and full z | 8 |
 | `query_chunk` | Maximum cells in one table-query batch | 131,072 |
-| `chunk_workers` | Concurrent query batches within the loaded slab | 8 |
-| `spectral_workers` | Spectral-integration threads per query batch | 3 |
-| `field_cache_slabs` | Maximum adjacent slabs sharing converted native fields | 4 |
-| `field_cache_gib` | Maximum retained converted field arrays, in GiB | 3 |
+| `chunk_workers` | Concurrent query batches within the loaded slab | 16 |
+| `spectral_workers` | Spectral-integration threads per query batch | 1 |
+| `field_cache_slabs` | Maximum adjacent slabs sharing converted field arrays | 16 |
+| `field_cache_gib` | Maximum retained converted field arrays, in GiB | 12 |
+
+### Temporary z-contiguous fields
+
+Every new `process` calculation first converts the snapshot's density,
+temperature and three momentum-density fields into five float64 `.npy` arrays.
+Each array has the original `(Nx, Ny, Nz)` shape in C order, so every z sightline
+is contiguous. Conversion reads each original block into its physical position
+in one full-field RAM buffer, writes that field sequentially, and releases the
+buffer before starting the next field. Original plotfiles are read-only.
+yt still supplies their original geometry and units; `dataset` continues to
+name the original plt rather than one of the temporary files.
+
+The working directory is created as `.zfields-*/fields` beside the selected
+`processed/` directory, on the results filesystem. It is private to one snapshot
+calculation and removed when its processing context exits normally or by
+exception. Batch processing releases it before the next snapshot. There is no
+separate conversion command or alternate process reader to select. The plot
+command reads only saved numerical arrays and does not need this directory.
+
+Reserve about `40 × Nx × Ny × Nz` bytes of temporary results-disk space, plus
+file headers, the manifest and final products. Conversion needs one `8 × Nx × Ny × Nz` byte field
+buffer in RAM, plus the current native block and runtime overhead. For a
+`512 × 512 × 4096` snapshot these are about 40 GiB of temporary disk space and
+an 8 GiB field buffer. Later group buffers and workers have their own memory
+costs; the full process RSS is not limited to one conversion buffer.
+
+The converted fields cover the complete snapshot even when `--x`, `--y` or
+`max_slabs` limit the subsequent calculation. A small region reduces emission
+work, but does not reduce this preprocessing cost. Matching completed products
+are checked for reuse first, so an already completed calculation does not
+rebuild the temporary fields. Other snapshot-survey and auxiliary commands
+retain their own input-reading interfaces.
 
 ### Spectral integration
 
 `spectral_method` selects the numerical channel-integration algorithm, separately
-from the execution settings above. Its default is `exact`, which evaluates the
-Gaussian bin integrals with SciPy `erf`. To select the compiled one-dimensional
-linear lookup approximation explicitly:
+from the execution settings above. The process default is `linear-lut`, a compiled
+one-dimensional lookup with fused coefficient evaluation and luminosity
+accumulation. To select analytic Gaussian bin integrals using SciPy `erf`:
 
 ```bash
-uv run process --jobname sigma13-lut --spectral-method linear-lut
+uv run process --jobname sigma13-exact --spectral-method exact
 ```
 
 The equivalent YAML setting is:
 
 ```yaml
-spectral_method: linear-lut
+spectral_method: exact
 ```
 
 The CLI option overrides the YAML for that invocation only;
-`--spectral-method exact` explicitly selects the default method. For a run directory, the selected
-method applies to every snapshot in that invocation. Plot reads the saved
+`--spectral-method linear-lut` explicitly selects the default method. For a run
+directory, the selected method applies to every snapshot in that invocation. Plot reads the saved
 products and does not choose or recalculate the spectral method.
 
 The lookup table contains `erf` values from 0 to 8 with spacing `1/4096` and
 uses odd symmetry for negative arguments. Linear interpolation and reciprocal
 coordinate arithmetic introduce numerical approximation. The physical widths,
-units, per-line availability, dust states, 400-bin window and reduction/merge
+units, per-line availability, dust states, 400-bin window and chunk/batch merge
 order remain unchanged; no additional tail cutoff or flux renormalization is
-applied. Nondefault numerical error policies and unaligned channel boundaries
-retain the direct NumPy/SciPy coefficient path. See the
+applied. The fused kernel skips only zero contributions whose erf endpoints
+are already on the same saturated plateau. Kernel chunks still contain at most
+8,192 cells, channels are tiled in groups of 64, and partials retain their
+original merge order. Floating-point accumulation can differ in its last bits
+from older coefficient-matrix reductions. Nondefault numerical error policies
+and unaligned channel boundaries retain the direct NumPy/SciPy coefficient path. See the
 [method reference](emission_method.md#saved-products-and-figures).
 
 The effective method is stored in `run_configuration` and the spectral report,
 along with the lookup parameters. Reuse requires that setting to match: exact
 and lookup results cannot substitute for each other. Use a distinct `jobname`
-or `results_dir` for a comparison; existing products are preserved. Measure
-runtime and spectral error on the intended input before selecting a method.
+or `results_dir` when explicitly selecting a different method; existing products
+are preserved.
 
 ### Memory, concurrency and progress
 
-Emission processing shares native fields across up to `field_cache_slabs`
+Emission processing shares converted fields across up to `field_cache_slabs`
 adjacent selected slabs, retaining at most `field_cache_gib` GiB of converted
 field arrays. Both YAML settings require positive integers; omitted settings
-retain the existing defaults of four slabs and 3 GiB. This leaves `slab_nx`,
-batch order and numerical products unchanged. Smaller groups or a direct
-single-slab read are used when the selected geometry would exceed that value
-limit. Only actual selected windows are grouped, including `max_slabs`.
+use 16 slabs and 12 GiB. This leaves `slab_nx`, batch order and numerical products
+unchanged. Smaller groups or a single-slab read from the z-contiguous fields
+are used when the selected geometry would exceed that value limit. Only actual
+selected windows are grouped, including `max_slabs`.
 
 The field-array limit is separate from total process RSS, address-space limits
 and any cache-inclusive user memory quota. Loading buffers, unit conversions,
@@ -335,15 +376,17 @@ Increasing only `field_cache_slabs` cannot enlarge a group beyond the byte
 budget. Both effective settings are saved in `run_configuration` and `execution`;
 measure field-reading time and peak RSS together when comparing cache sizes.
 
-The worker counts multiply: this configuration permits up to 8 × 3 spectral
-threads. Reading slabs remains sequential. More workers do not necessarily
-make a complete run faster; select them using end-to-end timing and memory
+The default runs up to 16 batches from the same loaded slab concurrently, each
+with one spectral worker. Worker counts multiply when changed. Conversion and
+group reading remain sequential. More workers do not necessarily make a
+complete run faster; select them using end-to-end timing and memory
 measurements. `max_slabs: 1` in a separate YAML makes a labelled partial
 run for debugging. Omit it to finish the selected region or full snapshot.
 
 The terminal prints the selected job, snapshot path, output path, native grid,
 cell widths, and selected region before processing. It identifies each table
-as it loads. Each slab prints separate reading and emission-calculation
+as it loads, then reports conversion progress for each field and its native
+blocks. Each slab prints separate reading and emission-calculation
 messages with the slab's core x/y/z bounds, followed by percentage, elapsed time,
 and ETA. Bounds are native half-open index ranges and do not include gradient
 neighbours. Result construction,
@@ -359,16 +402,28 @@ for an earlier batch is labelled separately; completion advances only after its
 ordered merge. Serial batches advance after direct accumulation. The first
 read can include grouped field-cache prefetch, so its read/derive duration is
 not a pure disk-I/O measurement. Read/derive is also partitioned into field
-retrieval (native/cache reads and unit conversion), foreground column,
-shielding column, velocity gradient, and core preparation/other. The last
+retrieval (z-contiguous field/group-cache reads and unit conversion), foreground
+column, shielding column, velocity gradient, and core preparation/other. The last
 category includes read-call setup/finalization, copying core fields and flattening.
 Progress logging overhead is distributed across the observed stages. These five
 wall-time categories do not overlap; repeated core-preparation
 segments are added together. `emission_report.json` stores their totals and
 each slab's measurements under `processing_timings`. Its
 `columns_total_seconds` adds foreground and shielding columns and is a subtotal,
-not an additional stage. These measurements cover the processing loop; input
-setup and final checks/saving remain outside them.
+not an additional stage. The read/derive and compute/merge categories cover
+the cell-processing loop; they do not include conversion. Input loading and
+conversion are recorded separately as `processing_timings.input_loading_seconds`
+and `processing_timings.z_conversion_seconds`. The report's
+`field_preprocessing` section records the method, shape, fields, layout, file
+bytes and temporary-retention policy.
+
+The slab progress elapsed time and ETA start after preprocessing and estimate
+only the cell calculation. `emission_report.json.elapsed_seconds` runs through
+report construction; it does not include the subsequent saving or working-copy
+cleanup. The final `status.json.elapsed_seconds` includes initial identity/input
+loading, conversion, calculation, checks, saving and cleanup. Use this final
+status duration for the per-snapshot numerical process; CLI startup and run
+discovery precede this timer.
 Per-slab compute/merge durations are wall time;
 concurrent worker stage durations must not be added as wall-time fractions.
 This display uses Python's standard logging library and needs no extra install.
@@ -390,6 +445,8 @@ reference snapshot). An omitted or `null` axis uses its full extent; z always sp
 the original box. No cell averaging is performed. Gradients use neighbours
 from the original simulation, and both shielding and dust columns use the
 complete original z column.
+The selected region applies to the numerical products and grouped reads after
+conversion; preparation still writes all five complete snapshot fields.
 
 Run both commands with the same YAML:
 
@@ -455,9 +512,11 @@ missing emission. A zero total luminosity gives a `null` fraction. This diagnost
 does not exclude high-temperature cells or change their emission. Older results
 do not contain this section; plotting does not require it.
 
-Processing reads one x slab at a time, queries table batches within it, and
-adds their luminosities to the image and spectrum arrays. It discards the
-cell arrays after each slab. No full-snapshot emissivity cube is saved.
+After temporary conversion, processing reads bounded groups of z-contiguous
+fields, selects one x slab at a time from the group, queries table batches within
+it, and adds their luminosities to the image and spectrum arrays. It discards
+core-cell arrays after each slab and releases each group when no longer needed.
+No full-snapshot emissivity cube is saved.
 Before saving, it also prepares per-area spectra, peak-normalized line/gas
 profiles, gas-channel centres, image display masks and colour limits. Raw arrays and both
 full/window moments remain available alongside these fields.

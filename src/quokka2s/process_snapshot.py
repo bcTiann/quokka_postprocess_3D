@@ -21,7 +21,10 @@ from quokka2s.run_settings import (
     load_plot_config,
     load_process_configs,
 )
-from quokka2s.processing_inputs import load_processing_inputs
+from quokka2s.processing_inputs import (
+    load_processing_inputs,
+    prepare_z_contiguous_snapshot,
+)
 from quokka2s.result_files import write_emission_results, write_status
 from quokka2s.result_metadata import ResultMetadata
 from quokka2s.processing_report import build_processing_report
@@ -239,12 +242,13 @@ def process_one_slab(
 
 
 def report_snapshot_progress(config, products, began, completed_slabs,
-                             total_slabs, total_cells):
+                             total_slabs, total_cells, status_began=None):
     """Print progress and write status.json after a finished slab.
 
     total_slabs and total_cells cover the selected run, including max_slabs.
     products.counts['all'] counts visited cells, including excluded cells.
-    began is the run's time.monotonic() start, used for elapsed seconds and ETA."""
+    began starts cell calculation for the ETA. status_began optionally includes
+    input loading and conversion in the persistent total elapsed time."""
     completed_cells = products.counts['all']  # 4,194,304 after the first slab.
     elapsed_seconds = time.monotonic() - began
     progress_fraction = completed_cells / total_cells  # 1/32 in this example.
@@ -254,7 +258,7 @@ def report_snapshot_progress(config, products, began, completed_slabs,
     write_status(
         output_dir=config.output_dir,
         counts=products.counts,
-        began=began,
+        began=began if status_began is None else status_began,
         state='running',
         completed_slabs=completed_slabs,
         progress_percent=round(100 * progress_fraction, 1),
@@ -268,14 +272,15 @@ def report_snapshot_progress(config, products, began, completed_slabs,
     )
 
 
-def process_snapshot(config, snapshot, emission_calculator, products, began):
+def process_snapshot(config, snapshot, emission_calculator, products, began, *, status_began=None):
     """Read, accumulate, and release one slab at a time.
 
     config supplies slab/batch sizes, workers, and max_slabs. snapshot supplies
     grid geometry and read_slab(); emission_calculator holds the shared readers.
     Returns per-slab and total wall timings; the five read stages partition
     read/derive time, and columns_total_seconds is their two-column subtotal.
-    products accumulates sums in place; began is the time.monotonic() run start.
+    products accumulates sums in place; began starts cell calculation for ETA.
+    status_began, when supplied, starts the full conversion-plus-process run.
     Final product checks and saving happen in main()."""
     # 1. Select index windows only; no simulation fields are loaded yet.
     selected_slabs = select_slabs_to_process(config, snapshot)
@@ -334,6 +339,7 @@ def process_snapshot(config, snapshot, emission_calculator, products, began):
                     config=config,
                     products=products,
                     began=began,
+                    status_began=status_began,
                     completed_slabs=slab_number,
                     total_slabs=total_slabs,
                     total_cells=total_cells,
@@ -381,12 +387,14 @@ def run_one_snapshot(config: ProcessSettings, config_path: Path) -> None:
     """Calculate, check and save one snapshot's numerical products without drawing.
 
     config owns resolved paths and one native x/y selection. All accumulators,
-    snapshot fields and lookup readers stay local to this call and are released
-    before the next snapshot or plotting step.
+    snapshot fields and lookup readers stay local to this call. The temporary
+    z-contiguous copy is removed before the next snapshot or plotting step.
     """
     print_run_settings(config=config, config_path=config_path)
+    began = time.monotonic()
     input_identity = processing_input_identity(config=config)
     snapshot, emission_calculator = load_processing_inputs(config)
+    input_loading_seconds = time.monotonic() - began
     print('Outputs: allocating image, spectrum and gas-phase accumulators...', flush=True)
     products = EmissionProducts(
         snapshot=snapshot,
@@ -394,7 +402,6 @@ def run_one_snapshot(config: ProcessSettings, config_path: Path) -> None:
         spectral_workers=config.spectral_workers,
         spectral_method=config.spectral_method,
     )
-    began = time.monotonic()
     write_status(
         output_dir=config.output_dir,
         counts=products.counts,
@@ -402,48 +409,74 @@ def run_one_snapshot(config: ProcessSettings, config_path: Path) -> None:
         state='running',
     )
     try:
-        stage = "processing cells"
-        processing_timings = process_snapshot(
-            config=config,
+        stage = 'preparing z-contiguous fields'
+        with prepare_z_contiguous_snapshot(
             snapshot=snapshot,
-            emission_calculator=emission_calculator,
-            products=products,
-            began=began,
-        )
-        stage = "building results"
-        print('Outputs: building image, spectrum and gas-phase results...', flush=True)
-        outputs = products.build_outputs()
-        metadata = ResultMetadata.from_processing_inputs(
-            snapshot=snapshot,
-            emission_calculator=emission_calculator,
-        )
-        outputs.add_metadata(metadata=metadata)
-        stage = "checking results"
-        print('Outputs: checking luminosity conservation and cell accounting...', flush=True)
-        image_conservation = products.check_outputs(outputs)
-        stage = "building report"
-        print('Outputs: preparing the processing report...', flush=True)
-        report = build_processing_report(
-            config=config,
-            snapshot=snapshot,
-            emission_calculator=emission_calculator,
-            products=products,
-            outputs=outputs,
-            metadata=metadata,
-            image_conservation=image_conservation,
-            began=began,
-            processing_timings=processing_timings,
-        )
-        if processing_input_identity(config=config) != input_identity:
-            raise ValueError("Processing inputs or source files changed during calculation")
-        report["input_identity"] = input_identity
-        stage = "saving results"
-        print(f'Outputs: saving numerical products and report to: {config.output_dir}', flush=True)
-        write_emission_results(
-            directory=config.output_dir,
-            outputs=outputs,
-            report=report,
-        )
+            work_directory=config.output_dir.parent,
+            source_identity=input_identity['snapshot_files'],
+        ) as (prepared_snapshot, preprocessing):
+            stage = 'processing cells'
+            calculation_began = time.monotonic()
+            processing_timings = process_snapshot(
+                config=config,
+                snapshot=prepared_snapshot,
+                emission_calculator=emission_calculator,
+                products=products,
+                began=calculation_began,
+                status_began=began,
+            )
+            processing_timings['input_loading_seconds'] = input_loading_seconds
+            processing_timings['z_conversion_seconds'] = preprocessing['preprocessing_seconds']
+            stage = 'building results'
+            print('Outputs: building image, spectrum and gas-phase results...', flush=True)
+            outputs = products.build_outputs()
+            metadata = ResultMetadata.from_processing_inputs(
+                snapshot=prepared_snapshot,
+                emission_calculator=emission_calculator,
+            )
+            outputs.add_metadata(metadata=metadata)
+            stage = 'checking results'
+            print('Outputs: checking luminosity conservation and cell accounting...', flush=True)
+            image_conservation = products.check_outputs(outputs)
+            stage = 'building report'
+            print('Outputs: preparing the processing report...', flush=True)
+            report = build_processing_report(
+                config=config,
+                snapshot=prepared_snapshot,
+                emission_calculator=emission_calculator,
+                products=products,
+                outputs=outputs,
+                metadata=metadata,
+                image_conservation=image_conservation,
+                began=began,
+                processing_timings=processing_timings,
+            )
+            cache_identity = preprocessing['identity']
+            report['field_preprocessing'] = {
+                'method': 'z-contiguous-copy',
+                'seconds': preprocessing['preprocessing_seconds'],
+                'shape': cache_identity['shape'],
+                'fields': list(cache_identity['fields']),
+                'stored_dtype': cache_identity['stored_dtype'],
+                'layout': cache_identity['layout'],
+                'cache_file_bytes': sum(
+                    record['size_bytes']
+                    for record in cache_identity['fields'].values()
+                ),
+                'retention': 'temporary; removed when snapshot processing exits',
+            }
+            if processing_input_identity(config=config) != input_identity:
+                raise ValueError('Processing inputs or source files changed during calculation')
+            report['input_identity'] = input_identity
+            stage = 'saving results'
+            print(f'Outputs: saving numerical products and report to: {config.output_dir}', flush=True)
+            write_emission_results(
+                directory=config.output_dir,
+                outputs=outputs,
+                report=report,
+            )
+        # All field maps and the owned working copy are gone before completion
+        # or plotting. Persistent result reuse needs only the original inputs.
         write_status(
             output_dir=config.output_dir,
             counts=products.counts,
@@ -477,7 +510,7 @@ def main(argv=None):
     YAML and format/title flags as plot. Each invocation freezes its inventory;
     completed matching products are reused and conflicting output is preserved.
     --spectral-method explicitly overrides the YAML exact/linear-lut algorithm.
-    Exact integration remains the default when neither selects a method.
+    Tabulated linear integration is the default; exact remains an explicit option.
     """
     parser = argparse.ArgumentParser(
         prog="process",

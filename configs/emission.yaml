@@ -28,8 +28,14 @@ y_index_range: null
 
 # Processing: cells per query batch, concurrent batches, threads per batch.
 query_chunk: 131072
-chunk_workers: 8
-spectral_workers: 3 
+chunk_workers: 16
+spectral_workers: 1
+slab_nx: 8
+field_cache_slabs: 16
+field_cache_gib: 12
+spectral_method: linear-lut
+# Process always prepares a temporary z-contiguous copy beside these results.
+# It removes that copy after each snapshot, including failed calculations.
 
 # Plotting: PNG with titles by default; CLI flags override each selection.
 figure_formats: [png]

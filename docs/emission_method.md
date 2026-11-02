@@ -96,12 +96,24 @@ Processing saves intrinsic and attenuated native-resolution LOS-z luminosity
 images, integrated spectra, and gas-phase velocity distributions. By default
 these cover the full box. Optional native x/y index ranges select a region with
 the original full z depth; gradients still use original-box neighbours, and
-column densities still use complete z columns. The native reader uses yt's
-uniform-grid metadata to copy selected x/y cells with one wrapped neighbour
-on each side. Sparse block selections use read-only NumPy maps; selections
-covering all block y/z rows use contiguous temporary field buffers. Maps and
-buffers are discarded after copying; cached file metadata retains no numerical
-payloads or open maps. The six copied core-slab arrays retain the density,
+column densities still use complete z columns. Each new process calculation
+first writes five temporary z-contiguous float64 arrays containing the original
+density, temperature and momentum-density fields. The original plotfile remains
+read-only. Conversion preserves physical XYZ coordinates and raw native units;
+only storage order changes. It prepares complete fields even for a selected
+x/y region. One full field is buffered and written at a time.
+
+Processing then copies selected x/y cells and one wrapped neighbour on each
+side from those files, retaining complete z sightlines. The existing native
+unit conversion still derives velocities by dividing native momentum density
+by native density before conversion to declared gas units. Bounded groups of
+converted density, temperature and velocity arrays are shared across adjacent
+slabs. File maps are closed after each compact copy; core fields and derived
+arrays have the same definitions as before. The private working files beside
+the selected results are removed when the per-snapshot processing context
+exits, including on calculation failure. Complete saved products can be reused
+without rebuilding them, and plot reads no working files or raw snapshots.
+The six copied core-slab arrays retain the density,
 temperature, column, gradient and velocity definitions and units listed in the
 [code walkthrough](code_walkthrough.md). All products accumulate only selected
 cells, and surface-luminosity spectra use the selected projected area.
@@ -111,19 +123,31 @@ over channel boundaries. Luminosity outside that window is recorded rather
 than moved into edge channels. Each line and dust state has one integrated
 spectrum. Cold/hot contributions are retained separately.
 
-The default `spectral_method: exact` evaluates the analytic bin integrals with
-SciPy's double-precision `erf`. The optional `linear-lut` method approximates
-that same function with a shared one-dimensional lookup table. It tabulates
+The process default `spectral_method: linear-lut` approximates analytic bin
+integrals with a shared one-dimensional lookup table and fuses coefficient
+evaluation with luminosity accumulation. It tabulates
 `erf(x)` for nonnegative `x` from 0 to 8 at spacing `1/4096`, uses odd symmetry
 for negative arguments, and linearly interpolates the two bin-boundary values.
 The compiled kernel multiplies each edge offset by the precomputed reciprocal
 of `sqrt(2) * sigma`. It retains the existing float64 saturation at `|x| >= 8`;
-it adds no 5-sigma cutoff or window-flux renormalization.
+it adds no 5-sigma cutoff or window-flux renormalization. For finite nonnegative
+luminosities, bins whose erf endpoints are already the same saturated value
+have zero contribution and are skipped. Other input values retain dense
+lookup accumulation and its NaN propagation.
+
+`spectral_method: exact`, or `--spectral-method exact`, explicitly selects
+analytic bin integrals using SciPy's double-precision `erf`. Nondefault
+NumPy/SciPy error policies and unaligned boundaries retain the direct
+NumPy/SciPy coefficient path.
 
 `linear-lut` changes numerical channel values through interpolation and
 rounding. It preserves the adopted cell temperatures, emitter masses, Doppler
-factor, minimum thermal width, dust states, per-line missingness, dense
-luminosity reduction and ordered merges. Images, gas-phase products and full
+factor, minimum thermal width, dust states and per-line missingness. The fused
+kernel retains original cell order within fixed 8,192-cell chunks and 64-bin
+channel tiles, and chunk and batch results keep their ordered merges.
+Fused luminosity accumulation can differ in its
+last floating-point bits from older coefficient-matrix reductions. Images,
+gas-phase products and full
 Gaussian moments retain their original calculations. The report records the
 selected method and lookup parameters. See the [usage settings](usage.md#spectral-integration)
 for explicit selection and result-reuse rules.

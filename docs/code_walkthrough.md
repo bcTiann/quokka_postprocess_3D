@@ -10,6 +10,14 @@ uv run process
 uv run plot
 ```
 
+Before calculating cells, process converts the original snapshot's five raw
+fields into temporary z-contiguous `.npy` arrays. It assembles and writes one
+complete field at a time. The copy lives beside the numerical output, outside
+the read-only snapshot, and is removed when that snapshot finishes or fails.
+For a 512 x 512 x 4096 box this needs about 8 GiB for one conversion buffer and
+40 GiB of temporary disk space. A selected x/y region still prepares the whole
+snapshot. Completed-result reuse happens first and creates no working copy.
+
 From the repository root, both read the default `configs/emission.yaml`.
 Use `--config PATH` to select another file. Each runs directly;
 there is no shared dispatcher. `process --no-plot` saves numerical products
@@ -111,6 +119,7 @@ The package has five purpose-specific folders:
 | Reuse completed results | `process_reuse.reuse_completed_results()` | Complete, intact products with exact matching configuration and input/source identity, or a clear preserved-output error |
 | Open inputs | `processing_inputs.load_processing_inputs(config)` | `snapshot`, `emission_calculator` |
 | Create output arrays | `EmissionProducts(...)` | Initially empty image, spectrum, and gas-phase accumulators |
+| Prepare fields | `processing_inputs.prepare_z_contiguous_snapshot()` | Scoped z-contiguous files and a prepared snapshot using their raw values |
 | Process cells | `process_snapshot()` | The accumulated numerical results |
 | Build outputs | `products.build_outputs()` | Image, spectrum and gas-phase arrays and summaries |
 | Add interpretation | `ResultMetadata.from_processing_inputs()` then `outputs.add_metadata()` | Selected pixel coordinates, region and ordered dust metadata |
@@ -153,8 +162,10 @@ The objects group related variables; they are not extra copies of the snapshot:
   describe the original box. `processing_shape`, `processing_cell_count`,
   `processing_area_cm2`, and `processing_xy_origin` describe the selected region.
   `snapshot.native_reader` caches file locations and units from yt metadata.
-  During processing, its scoped field cache shares converted native fields
-  across up to four adjacent selected slabs. Outside that context it retains
+  Process uses a prepared snapshot whose `field_reader` reads the temporary
+  z-contiguous arrays. The original snapshot remains available to utilities
+  that read native blocks directly. During processing, the scoped field cache
+  shares converted fields across up to 16 adjacent selected slabs. Outside that context it retains
   no numerical payloads or open maps. `snapshot.read_slab()` still copies the
   current core fields and derives the same six slab arrays.
 - `emission_calculator` is a `CellEmissionCalculator`. It holds the DESPOTIC
@@ -255,16 +266,39 @@ for x_start, x_stop in slab_windows(
 For a selected region, pass its global x bounds instead. The last window may be
 shorter than `slab_nx`; neighbour selection still belongs to `read_slab()`.
 
+Process first enters `prepare_z_contiguous_snapshot()`. Its
+[z_contiguous_cache.py](../src/quokka2s/z_contiguous_cache.py) converter fills
+one complete float64 XYZ array from the native blocks and writes it in C order,
+then releases that field before preparing the next. The five disk fields are
+density, temperature and the three momentum densities. `ZContiguousReader`
+maps one file read-only, copies the requested x/y indices and full z columns,
+and closes the map. It does not scan and scatter native blocks during slab
+reads. The inherited unit conversion turns momenta into velocities exactly as
+before. Metadata and the original input identity still come from the plt.
+
 Process opens `native_reader.reuse_slab_fields()` around the actual selected
 slab windows, after applying `max_slabs`.
-[slab_field_cache.py](../src/quokka2s/slab_field_cache.py) groups up to four
+[slab_field_cache.py](../src/quokka2s/slab_field_cache.py) groups up to 16
 adjacent windows and reads their combined x range once, including the original
 periodic x/y neighbours and full z. Each slab receives a read-only view into
 five converted density, temperature and velocity arrays; batches receive only
 the usual six copied core arrays. The cache belongs to the reading thread.
-Its 3 GiB limit counts retained field values, not total process memory.
+Its 12 GiB limit counts retained field values, not total process memory.
 Groups shrink when needed; an unshared single window uses the direct reader.
 The context releases retained values on completion or an exception.
+
+The default full 512 x 512 x 4096 run has four groups of 128 core x cells.
+Each group includes one x/y neighbour on either side: five arrays of
+130 x 514 x 4096 values, about 10.2 GiB. Each of its 16 slabs has eight core
+x cells. Slab batches remain read-only array views; 16 workers handle batches
+of 131072 cells, with one spectral thread per batch. Results merge in original
+batch order. No temporary cache path enters completed-result reuse identity.
+
+The report records input loading and `z_conversion_seconds` separately from
+field reading, columns, gradients and calculation. `field_preprocessing`
+describes the temporary format and byte count. Status elapsed time includes
+loading, conversion, calculation, saving and cleanup; the cell ETA starts
+after conversion so preprocessing does not inflate its remaining-cell estimate.
 
 Read `read_slab()` from top to bottom as these steps:
 

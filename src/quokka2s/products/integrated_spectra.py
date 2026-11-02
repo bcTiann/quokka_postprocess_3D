@@ -17,8 +17,8 @@ from quokka2s.constants import ATOMIC_MASS_UNIT_G, BOLTZMANN_ERG_K, SPEED_OF_LIG
 from quokka2s.line_definitions import LINE_DEFINITIONS
 from quokka2s.products import DUST_STATES, REGIME_KEYS
 from quokka2s.products._gaussian_fractions import (
+    accumulate_lookup_channels,
     fill_channel_fractions,
-    fill_channel_fractions_linear_lut,
 )
 from quokka2s.products.gaussian_lookup import (
     LINEAR_ERF_ARGUMENT_MAXIMUM,
@@ -65,7 +65,8 @@ def accumulate_velocity_spectra(
         Maximum cells per kernel chunk and number of integration threads.
     spectral_method : {"exact", "linear-lut"}, optional
         Exact SciPy erf coefficients, or approximate one-dimensional linear
-        lookup coefficients. Both retain the same ordered luminosity reduction.
+        lookup with fused ascending-cell luminosity accumulation. Chunk and
+        batch partials retain the same ordered merges.
 
     Returns
     -------
@@ -108,7 +109,7 @@ def accumulate_velocity_spectra(
         cell1 = min(cell0 + cell_chunk, velocity.size)
         cell_count = cell1 - cell0
         centers = velocity[cell0:cell1]
-        values = luminosity[cell0:cell1]
+        chunk_luminosity = luminosity[cell0:cell1]
         sigma = np.maximum(
             thermal[cell0:cell1],
             MINIMUM_GAUSSIAN_WIDTH_KMS,
@@ -117,10 +118,6 @@ def accumulate_velocity_spectra(
         if getattr(scratch, "cell_count", None) != cell_count:
             # Exact cell counts keep the short final chunk C-contiguous too.
             scratch.previous = np.empty(shape=(cell_count,), dtype=float)
-            scratch.fractions = np.empty(
-                shape=(channel_chunk, cell_count),
-                dtype=float,
-            )
             scratch.cell_count = cell_count
         error_policies = scipy_geterr()
         numpy_error_policies = np.geterr()
@@ -140,23 +137,38 @@ def accumulate_velocity_spectra(
         )
         if use_fused_kernel and spectral_method == "linear-lut":
             inverse_denominator = np.reciprocal(denominator)
+            if not hasattr(scratch, "channel_luminosity"):
+                scratch.channel_luminosity = np.empty(
+                    shape=(channel_chunk, output_shape[1]),
+                    dtype=float,
+                )
+        elif getattr(scratch, "fraction_cell_count", None) != cell_count:
+            scratch.fractions = np.empty(
+                shape=(channel_chunk, cell_count),
+                dtype=float,
+            )
+            scratch.fraction_cell_count = cell_count
         # Returned partials must be independent of worker scratch: a later task
         # can start before executor.map consumes this task's result.
         partial = np.zeros(output_shape, dtype=float)
         for channel0 in range(0, output_shape[0], channel_chunk):
             channel1 = min(channel0 + channel_chunk, output_shape[0])
             edges = velocity_edges_kms[channel0:channel1 + 1]
-            fractions = scratch.fractions[:channel1 - channel0]
             if use_fused_kernel and spectral_method == "linear-lut":
-                fill_channel_fractions_linear_lut(
+                channel_luminosity = scratch.channel_luminosity[:channel1 - channel0]
+                accumulate_lookup_channels(
                     edges=edges,
                     centers=centers,
                     inverse_denominator=inverse_denominator,
+                    luminosity=chunk_luminosity,
                     previous=scratch.previous,
-                    fractions=fractions,
+                    channel_luminosity=channel_luminosity,
                     values=LINEAR_ERF_VALUES,
                 )
-            elif use_fused_kernel:
+                partial[channel0:channel1] = channel_luminosity / delta_v
+                continue
+            fractions = scratch.fractions[:channel1 - channel0]
+            if use_fused_kernel:
                 fill_channel_fractions(
                     edges=edges,
                     centers=centers,
@@ -173,7 +185,7 @@ def accumulate_velocity_spectra(
                 np.subtract(erf_edges[1:], erf_edges[:-1], out=fractions)
                 fractions *= 0.5
             partial[channel0:channel1] = np.einsum(
-                "kc,cm->km", fractions, values, optimize=False,
+                "kc,cm->km", fractions, chunk_luminosity, optimize=False,
             ) / delta_v
         return partial
 

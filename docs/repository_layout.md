@@ -1,9 +1,10 @@
 # Repository directories and reading order
 
-The repository has one current emission workflow. Process reads the snapshot
-and fixed lookup tables, saves products, then invokes plot by default; plot
-reads only the saved numerical products. Table-building
-tools and additional paper figures have their own commands.
+The Python production workflow prepares temporary z-contiguous copies of the
+five snapshot fields, calculates and saves products, then invokes plot by
+default. Each snapshot's working copy is removed before plotting or the next
+snapshot. Plot reads only saved numerical products. Table-building tools and
+additional paper figures have their own commands.
 
 `pyproject.toml` declares dependencies; `uv.lock` records the resolved versions
 and source identities. uv creates `.venv` with `uv sync` and selects it for
@@ -36,7 +37,7 @@ products. Plot reads saved arrays without importing this processing extension.
 | `vendor/` | Pinned external source, dust table, molecular data and their notes | Yes |
 | `inputs/snapshots/` | User-provided QUOKKA snapshots | No |
 | `inputs/tables/` | Cloudy `emission.npz`, DESPOTIC `interpolated.npz`, and their previous `emission_old.npz` / `interpolated_old.npz` | Yes; raw tables and other build files stay local |
-| `output/` | Processed numerical products and figures, including the Setonix results | Yes |
+| `output/` | Processed numerical products and figures, including the Setonix results; diagnostics and temporary field copies remain local | Results only |
 | `runtime/` | Cloudy build parameters, `.inc` exports, raw outputs and logs | No |
 
 ## Start reading the current pipeline
@@ -48,19 +49,23 @@ products. Plot reads saved arrays without importing this processing extension.
 2. [process_snapshot.py](../src/quokka2s/process_snapshot.py): select one snapshot
    or a run inventory, read inputs, process slabs, build/check/save results,
    then draw each saved result unless `--no-plot` is selected.
-3. [snapshot_reader.py](../src/quokka2s/snapshot_reader.py): derive six copied
-   core arrays from one slab. [native_snapshot_reader.py](../src/quokka2s/native_snapshot_reader.py)
-   uses yt block/file metadata to copy selected x/y cells plus one periodic
-   neighbour on each side, keeping full z. Full-x, partial-y/z selections read
-   contiguous y bands in each z plane. Full-y/z selections read temporary field
-   buffers; other selections use read-only NumPy maps. It caches metadata.
+3. [processing_inputs.py](../src/quokka2s/processing_inputs.py) scopes a temporary
+   [z_contiguous_cache.py](../src/quokka2s/z_contiguous_cache.py) copy beside the
+   output. Conversion uses [native_snapshot_reader.py](../src/quokka2s/native_snapshot_reader.py)
+   to assemble one full raw field at a time, then writes five z-contiguous
+   float64 `.npy` files. Process uses their reader for numerical values;
+   original plt metadata supplies geometry and units. Native reading remains
+   available to independent table and figure-preparation utilities.
+   [snapshot_reader.py](../src/quokka2s/snapshot_reader.py) derives the same six
+   core arrays from a slab, preserving periodic x/y neighbours and complete z.
    During process, [slab_field_cache.py](../src/quokka2s/slab_field_cache.py)
-   shares five converted halo-field arrays among up to four adjacent selected
-   slabs, under a 3 GiB retained-value limit. The reading thread owns this scoped
+   shares five converted halo-field arrays among up to 16 adjacent selected
+   slabs, under a 12 GiB retained-value limit. The reading thread owns this scoped
    cache; each slab still derives its six copied core arrays in the same order.
    Groups shrink to fit, an unshared slab uses the direct reader, and the
    context releases retained values on success or failure. It retains no open
-   maps or full-snapshot field arrays.
+   maps or full-snapshot field arrays. The outer preparation context removes
+   its owned disk copy on success or failure; result reuse does not need it.
    `slab_windows(x_start=..., x_stop=..., slab_nx=...)` yields global core bounds;
    `slab.iter_batches(batch_size=...)` yields native cell views. Consume batches
    before releasing the slab: a retained view keeps its underlying arrays alive.

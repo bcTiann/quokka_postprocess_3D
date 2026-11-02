@@ -1,6 +1,11 @@
 """Load run inputs: a native snapshot, two emission tables, and dust opacity."""
 from __future__ import annotations
 
+from contextlib import contextmanager
+from dataclasses import replace
+from pathlib import Path
+from tempfile import TemporaryDirectory
+
 from quokka2s.cloudy.lookup import CloudyLookup
 from quokka2s.cloudy.cell_fields import CloudyCellReader
 from quokka2s.despotic.cell_fields import DespoticCellReader
@@ -15,6 +20,7 @@ from quokka2s.snapshot_reader import Snapshot
 from quokka2s.despotic.table_files import load_table
 from quokka2s.despotic.lookup import DespoticLookup
 from quokka2s.despotic.snapshot_domain import validate_table_domain
+from quokka2s.z_contiguous_cache import prepare_z_contiguous_cache, ZContiguousReader
 
 
 def load_processing_inputs(config):
@@ -41,6 +47,31 @@ def load_processing_inputs(config):
     config.output_dir.mkdir(parents=True, exist_ok=False)
     print('Inputs ready.', flush=True)
     return snapshot, emission_calculator
+
+
+@contextmanager
+def prepare_z_contiguous_snapshot(*, snapshot: Snapshot, work_directory: Path, source_identity: dict):
+    """Yield a prepared snapshot and delete its owned copy when processing exits.
+
+    The work directory is the selected result's parent, never the source plt or
+    a capacity-limited system temporary directory. Only this context's unique
+    temporary directory is removed. Geometry, units and physical axes stay the
+    same; standalone input-loading callers retain their original native reader.
+    """
+    with TemporaryDirectory(prefix='.zfields-', dir=work_directory) as temporary_directory:
+        cache_directory = Path(temporary_directory) / 'fields'
+        native_reader = snapshot.native_reader
+        preparation = prepare_z_contiguous_cache(
+            native_reader=native_reader,
+            cache_directory=cache_directory,
+            source_identity=source_identity,
+        )
+        field_reader = ZContiguousReader(
+            native_reader=native_reader,
+            cache_directory=cache_directory,
+        )
+        prepared_snapshot = replace(snapshot, field_reader=field_reader)
+        yield prepared_snapshot, preparation
 
 
 def print_snapshot_summary(snapshot: Snapshot) -> None:

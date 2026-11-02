@@ -51,11 +51,11 @@ class ProcessSettings:
 
     Paths are absolute. Slab/query sizes count cells; workers count threads.
     Omitted execution settings use the same defaults as the shipped YAML.
-    Each concurrent batch can use spectral_workers integration threads:
-    chunk_workers=8 and spectral_workers=3 allow at most 24 spectral tasks.
+    Each concurrent batch can use spectral_workers integration threads.
+    Defaults use 16 concurrent batches and one integration thread per batch.
     Index ranges are [start, stop), or None for the full native axis.
     spectral_method selects direct erf integration or approximate linear lookup;
-    the default exact method retains the existing numerical prescription.
+    the default linear-lut method uses the adopted tabulated Gaussian kernel.
     field_cache_slabs limits adjacent shared reads, while field_cache_gib limits
     retained converted field arrays in GiB; neither is a total process RSS limit.
     """
@@ -69,14 +69,14 @@ class ProcessSettings:
     dust_opacity_table: Path = DEFAULT_DRAINE_TABLE
     slab_nx: int = 8
     query_chunk: int = 131_072
-    chunk_workers: int = 8
-    spectral_workers: int = 3
+    chunk_workers: int = 16
+    spectral_workers: int = 1
     max_slabs: int | None = None
     x_index_range: tuple[int, int] | None = None
     y_index_range: tuple[int, int] | None = None
-    spectral_method: str = "exact"
-    field_cache_slabs: int = 4
-    field_cache_gib: int = 3
+    spectral_method: str = "linear-lut"
+    field_cache_slabs: int = 16
+    field_cache_gib: int = 12
 
 
 @dataclass(frozen=True)

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import cached_property
 
 import numpy as np
@@ -24,6 +24,9 @@ class Snapshot:
     xy_region : dict, optional
         Native cell-index bounds, e.g. {'x': (64, 128), 'y': (80, 144)}.
         Stops are excluded; omitted axes span the original box. z is always full.
+    field_reader : NativeSnapshotReader, optional
+        Prepared raw-field source. Process supplies its z-contiguous copy;
+        standalone snapshot utilities use the original native reader.
 
     Geometry properties are calculated from this dataset, so callers do not
     repeat its shape, cell widths, or volume in the constructor.
@@ -33,6 +36,7 @@ class Snapshot:
 
     dataset: object
     xy_region: dict | None = None
+    field_reader: NativeSnapshotReader | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self):
         """Resolve the selected x/y bounds once, without changing native geometry."""
@@ -111,6 +115,8 @@ class Snapshot:
     @cached_property
     def native_reader(self) -> NativeSnapshotReader:
         """Cache native metadata; process contexts may retain bounded fields."""
+        if self.field_reader is not None:
+            return self.field_reader
         return NativeSnapshotReader(dataset=self.dataset)
 
     def read_slab(

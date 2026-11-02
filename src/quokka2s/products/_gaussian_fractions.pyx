@@ -1,12 +1,13 @@
 # cython: language_level=3, boundscheck=False, wraparound=False, initializedcheck=False, cdivision=True
-"""Fill Gaussian channel fractions without retaining a channel-edge matrix.
+"""Fill exact Gaussian fractions or accumulate tabulated channel luminosity.
 
-The Python caller owns all buffers and the luminosity reduction. SciPy's typed
-erf is the same real-double implementation used by scipy.special.erf.
+The Python caller owns all buffers, cell chunks and ordered chunk merges.
+SciPy's typed erf matches scipy.special.erf. The linear lookup path fuses
+coefficient evaluation with ascending-cell luminosity accumulation.
 """
 
 from scipy.special.cython_special cimport erf
-from libc.math cimport fabs
+from libc.math cimport fabs, isfinite
 
 
 cdef inline double saturated_erf(double argument) noexcept nogil:
@@ -90,48 +91,185 @@ cdef inline double linear_lookup_erf(
     return result
 
 
-def fill_channel_fractions_linear_lut(
+cdef void accumulate_dense_lookup_channels(
     const double[:] edges,
     const double[::1] centers,
     const double[::1] inverse_denominator,
+    const double[:, :] luminosity,
     double[::1] previous,
-    double[:, ::1] fractions,
+    double[:, ::1] channel_luminosity,
     const double[::1] values,
-):
-    """Approximate channel fractions with a one-dimensional linear erf lookup.
-
-    Shapes match fill_channel_fractions(); inverse_denominator contains
-    1/(sqrt(2)*max(sigma, 1e-5 km/s)) [1/(km/s)]. values is the read-only
-    32769-node erf table on [0,8], with argument spacing 1/4096.
-    Reciprocal multiplication and interpolation change floating-point results;
-    the existing +/-8 saturation and caller's luminosity reduction are retained.
-    """
-    cdef Py_ssize_t channel_count = fractions.shape[0]
-    cdef Py_ssize_t cell_count = fractions.shape[1]
+) noexcept nogil:
+    """Retain every multiply for nonfinite or negative input luminosities."""
+    cdef Py_ssize_t channel_count = channel_luminosity.shape[0]
+    cdef Py_ssize_t profile_count = channel_luminosity.shape[1]
+    cdef Py_ssize_t cell_count = centers.shape[0]
     cdef Py_ssize_t channel
     cdef Py_ssize_t cell
+    cdef Py_ssize_t profile
     cdef double difference
     cdef double argument
-    cdef double edge
     cdef double current
-    if edges.shape[0] != channel_count + 1:
-        raise ValueError("edges must have one more entry than channel rows")
-    if centers.shape[0] != cell_count or inverse_denominator.shape[0] != cell_count:
-        raise ValueError("centers and inverse_denominator must match the cell columns")
-    if previous.shape[0] != cell_count:
-        raise ValueError("previous scratch must match the cell columns")
-    if values.shape[0] != 32769:
-        raise ValueError("linear erf lookup requires 32769 nodes on [0,8]")
-    with nogil:
+    cdef double edge
+    cdef double fraction
+    cdef double weighted_luminosity
+    for cell in range(cell_count):
+        difference = edges[0] - centers[cell]
+        argument = difference * inverse_denominator[cell]
+        previous[cell] = linear_lookup_erf(argument, values)
+    for channel in range(channel_count):
+        for profile in range(profile_count):
+            channel_luminosity[channel, profile] = 0.0
+        edge = edges[channel + 1]
         for cell in range(cell_count):
-            difference = edges[0] - centers[cell]
+            difference = edge - centers[cell]
             argument = difference * inverse_denominator[cell]
-            previous[cell] = linear_lookup_erf(argument, values)
-        for channel in range(channel_count):
-            edge = edges[channel + 1]
+            current = linear_lookup_erf(argument, values)
+            fraction = (current - previous[cell]) * 0.5
+            previous[cell] = current
+            for profile in range(profile_count):
+                weighted_luminosity = fraction * luminosity[cell, profile]
+                channel_luminosity[channel, profile] = (
+                    channel_luminosity[channel, profile] + weighted_luminosity
+                )
+
+
+def accumulate_lookup_channels(
+    const double[:] edges,
+    const double[::1] centers,
+    const double[::1] inverse_denominator,
+    const double[:, :] luminosity,
+    double[::1] previous,
+    double[:, ::1] channel_luminosity,
+    const double[::1] values,
+):
+    """Write (K,M) channel luminosities without a (K,R) fraction matrix.
+
+    edges is (K+1,) [km/s], centers is (R,) [km/s], inverse_denominator is
+    (R,) [1/(km/s)], and luminosity is (R,M) [erg/s], with its C/Fortran
+    strides retained. Output is C-contiguous (K,M) [erg/s]; previous is
+    caller-owned (R,) terminal-erf scratch. The immutable lookup has 32769
+    nodes on [0, 8]. The caller divides by channel width and merges chunks.
+
+    Finite nonnegative luminosities permit skipping bins whose erf endpoints
+    are already the same +/-1 plateau. No additional tail cutoff is applied.
+    Each retained bin accumulates cells in their original order. Other inputs
+    use the dense reduction, including zero multiplies and NaN propagation.
+    """
+    cdef Py_ssize_t channel_count = channel_luminosity.shape[0]
+    cdef Py_ssize_t profile_count = channel_luminosity.shape[1]
+    cdef Py_ssize_t cell_count = centers.shape[0]
+    cdef Py_ssize_t channel
+    cdef Py_ssize_t cell
+    cdef Py_ssize_t profile
+    cdef Py_ssize_t first_channel
+    cdef Py_ssize_t stop_channel
+    cdef Py_ssize_t low
+    cdef Py_ssize_t high
+    cdef Py_ssize_t middle
+    cdef double difference
+    cdef double argument
+    cdef double first_argument
+    cdef double last_argument
+    cdef double previous_value
+    cdef double current
+    cdef double fraction
+    cdef double weighted_luminosity
+    cdef bint safe = True
+    if edges.shape[0] != channel_count + 1:
+        raise ValueError("edges must have one more entry than output channels")
+    if inverse_denominator.shape[0] != cell_count or previous.shape[0] != cell_count:
+        raise ValueError("Gaussian widths and scratch must match the cell count")
+    if luminosity.shape[0] != cell_count or luminosity.shape[1] != profile_count:
+        raise ValueError("Luminosity must match the original cell/profile layout")
+    if values.shape[0] != 32769:
+        raise ValueError("The production linear lookup requires 32769 nodes")
+
+    with nogil:
+        for channel in range(channel_count + 1):
+            if not isfinite(edges[channel]):
+                safe = False
+                break
+            if channel > 0 and edges[channel] <= edges[channel - 1]:
+                safe = False
+                break
+        if safe:
             for cell in range(cell_count):
-                difference = edge - centers[cell]
+                if not isfinite(centers[cell]) or not isfinite(inverse_denominator[cell]) or inverse_denominator[cell] <= 0.0:
+                    safe = False
+                    break
+                for profile in range(profile_count):
+                    if not isfinite(luminosity[cell, profile]) or luminosity[cell, profile] < 0.0:
+                        safe = False
+                        break
+                if not safe:
+                    break
+        if not safe or channel_count == 0:
+            accumulate_dense_lookup_channels(
+                edges,
+                centers,
+                inverse_denominator,
+                luminosity,
+                previous,
+                channel_luminosity,
+                values,
+            )
+        else:
+            for channel in range(channel_count):
+                for profile in range(profile_count):
+                    channel_luminosity[channel, profile] = 0.0
+            for cell in range(cell_count):
+                difference = edges[0] - centers[cell]
+                first_argument = difference * inverse_denominator[cell]
+                difference = edges[channel_count] - centers[cell]
+                last_argument = difference * inverse_denominator[cell]
+                previous[cell] = linear_lookup_erf(last_argument, values)
+                if first_argument >= 8.0 or last_argument <= -8.0:
+                    continue
+
+                first_channel = 0
+                if first_argument <= -8.0:
+                    # Use actual boundary arithmetic, retaining one guard bin.
+                    low = 0
+                    high = channel_count
+                    while low < high:
+                        middle = (low + high) // 2
+                        difference = edges[middle] - centers[cell]
+                        argument = difference * inverse_denominator[cell]
+                        if argument <= -8.0:
+                            low = middle + 1
+                        else:
+                            high = middle
+                    first_channel = low - 2
+                    if first_channel < 0:
+                        first_channel = 0
+                stop_channel = channel_count
+                if last_argument >= 8.0:
+                    low = 0
+                    high = channel_count
+                    while low < high:
+                        middle = (low + high) // 2
+                        difference = edges[middle] - centers[cell]
+                        argument = difference * inverse_denominator[cell]
+                        if argument < 8.0:
+                            low = middle + 1
+                        else:
+                            high = middle
+                    stop_channel = low + 1
+                    if stop_channel > channel_count:
+                        stop_channel = channel_count
+
+                difference = edges[first_channel] - centers[cell]
                 argument = difference * inverse_denominator[cell]
-                current = linear_lookup_erf(argument, values)
-                fractions[channel, cell] = (current - previous[cell]) * 0.5
-                previous[cell] = current
+                previous_value = linear_lookup_erf(argument, values)
+                for channel in range(first_channel, stop_channel):
+                    difference = edges[channel + 1] - centers[cell]
+                    argument = difference * inverse_denominator[cell]
+                    current = linear_lookup_erf(argument, values)
+                    fraction = (current - previous_value) * 0.5
+                    previous_value = current
+                    for profile in range(profile_count):
+                        weighted_luminosity = fraction * luminosity[cell, profile]
+                        channel_luminosity[channel, profile] = (
+                            channel_luminosity[channel, profile] + weighted_luminosity
+                        )
