@@ -55,9 +55,12 @@ with available CO/DESPOTIC results. Cold CIII/CIV have zero light, so their stor
 QUOKKA temperature has no spectral effect. A DESPOTIC temperature above 3000 K
 does not move a cell into the hot QUOKKA branch.
 
-DESPOTIC uses SciPy `RegularGridInterpolator` on logarithmic coordinates and
-interpolates the stored field values directly. Cloudy also uses
-`RegularGridInterpolator`: its coefficient is interpolated in logarithm
+DESPOTIC interpolates stored field values directly on logarithmic coordinates,
+with the adopted SciPy `RegularGridInterpolator` semantics. The process loader
+reads its seven required fields while full table tools retain their complete
+loader. Common finite/uniform queries use the equivalent native trilinear
+kernels; retained reference paths handle the original special policies.
+Cloudy coefficients are interpolated in logarithm
 unless a valid zero corner has non-negligible interpolation weight, when
 that line/query uses the coefficient itself. Its attenuation lookup coordinate
 is bounded by the table; this does not replace the cell's physical column.
@@ -96,23 +99,24 @@ Processing saves intrinsic and attenuated native-resolution LOS-z luminosity
 images, integrated spectra, and gas-phase velocity distributions. By default
 these cover the full box. Optional native x/y index ranges select a region with
 the original full z depth; gradients still use original-box neighbours, and
-column densities still use complete z columns. Each new process calculation
-first writes five temporary z-contiguous float64 arrays containing the original
-density, temperature and momentum-density fields. The original plotfile remains
-read-only. Conversion preserves physical XYZ coordinates and raw native units;
-only storage order changes. It prepares complete fields even for a selected
-x/y region. One full field is buffered and written at a time.
+column densities still use complete z columns. Original snapshots are read-only.
+With null `prepared_z_fields`, process prepares five temporary C-order XYZ
+float64 copies of raw density, temperature and momentum densities, preserving
+native coordinates/units and buffering one complete field at a time. An explicit
+absolute cache path is validated and only read; process never creates,
+overwrites or deletes a file there. Its optional metadata sidecar contains
+geometry, units and native block descriptors only. Metadata is restored inside
+input loading, or yt opens the original snapshot if no sidecar is present.
+Only an owned temporary cache is removed when processing finishes or fails.
 
-Processing then copies selected x/y cells and one wrapped neighbour on each
-side from those files, retaining complete z sightlines. The existing native
-unit conversion still derives velocities by dividing native momentum density
-by native density before conversion to declared gas units. Bounded groups of
-converted density, temperature and velocity arrays are shared across adjacent
-slabs. File maps are closed after each compact copy; core fields and derived
-arrays have the same definitions as before. The private working files beside
-the selected results are removed when the per-snapshot processing context
-exits, including on calculation failure. Complete saved products can be reused
-without rebuilding them, and plot reads no working files or raw snapshots.
+The bounded eager reader reads current core x cells and periodic x neighbours
+with native full y and complete z, then closes its five field streams. A fused
+native pass derives selected complete columns with original unit-conversion
+order and momentum/density division, fills six core arrays and releases raw
+slab fields. It preserves original periodic x/y gradient neighbours and
+one-sided outer-z differences. This route uses no persistent mmap or grouped
+multi-slab field cache. Plot reads only saved products.
+
 The six copied core-slab arrays retain the density,
 temperature, column, gradient and velocity definitions and units listed in the
 [code walkthrough](code_walkthrough.md). All products accumulate only selected
@@ -123,34 +127,72 @@ over channel boundaries. Luminosity outside that window is recorded rather
 than moved into edge channels. Each line and dust state has one integrated
 spectrum. Cold/hot contributions are retained separately.
 
-The process default `spectral_method: linear-lut` approximates analytic bin
-integrals with a shared one-dimensional lookup table and fuses coefficient
-evaluation with luminosity accumulation. It tabulates
-`erf(x)` for nonnegative `x` from 0 to 8 at spacing `1/4096`, uses odd symmetry
-for negative arguments, and linearly interpolates the two bin-boundary values.
-The compiled kernel multiplies each edge offset by the precomputed reciprocal
-of `sqrt(2) * sigma`. It retains the existing float64 saturation at `|x| >= 8`;
-it adds no 5-sigma cutoff or window-flux renormalization. For finite nonnegative
-luminosities, bins whose erf endpoints are already the same saturated value
-have zero contribution and are skipped. Other input values retain dense
-lookup accumulation and its NaN propagation.
+The process default `spectral_method: histogram-2d` represents each emitting
+cell on a bounded grid in mean velocity `mu` and `ln(sigma)`. Bilinear corner
+weights distribute that cell's own luminosity to four neighboring nodes.
+Narrow/broad sigma bands retain different mean-velocity resolutions. All
+emitting Gaussians must fit the configured grid; values outside it raise rather
+than clip, disappear or use a 1D fallback. Intrinsic/attenuated and cold/hot
+accounts remain separate. Only identical physical widths share geometry.
 
-`spectral_method: exact`, or `--spectral-method exact`, explicitly selects
-analytic bin integrals using SciPy's double-precision `erf`. Nondefault
-NumPy/SciPy error policies and unaligned boundaries retain the direct
-NumPy/SciPy coefficient path.
+Sparse batch increments merge in the original input batch/group order into
+40 node accounts (two dust states, ten lines, two temperature branches).
+A single standard-normal prefix table is prepared before process timing.
+Its dimensionless grid is [-5,5] at spacing 1/128. Stable analytic fine-cell
+areas are cumulatively summed from zero; online channel queries use only
+linear interpolation and differences. Each node uses `z=(v-mu)/sigma`;
+adjacent channels reuse their shared cumulative boundary. The same table
+handles different finite mu and positive sigma without rebuilding a mu/sigma
+integral template. The preceding two-dimensional luminosity histogram remains
+bounded and still requires emitting cells to fit its configured grid. Node
+Gaussians truncate outside `mu +/- 5*sigma` without renormalization. Final
+expansion reuses a node's probabilities across all its luminosity accounts. Independent
+channel rows may run concurrently while each keeps ascending node/profile and
+original block/band accumulation order.
 
-`linear-lut` changes numerical channel values through interpolation and
-rounding. It preserves the adopted cell temperatures, emitter masses, Doppler
-factor, minimum thermal width, dust states and per-line missingness. The fused
-kernel retains original cell order within fixed 8,192-cell chunks and 64-bin
-channel tiles, and chunk and batch results keep their ordered merges.
-Fused luminosity accumulation can differ in its
-last floating-point bits from older coefficient-matrix reductions. Images,
-gas-phase products and full
-Gaussian moments retain their original calculations. The report records the
-selected method and lookup parameters. See the [usage settings](usage.md#spectral-integration)
-for explicit selection and result-reuse rules.
+The runtime arithmetic gate compares native FMA/separate-multiply-add choices
+against an independent NumPy contraction of the same prefix-table
+coefficients using exact bytes, including partial and full original blocks.
+Its signature binds the actual loaded prefix binary, NumPy dispatch, table,
+channel edges, histogram geometry and observed team. If no arithmetic mode
+matches, preparation raises rather than silently selecting another method.
+The bounded two-dimensional physical approximation remains unchanged.
+
+Four luminosity accounts distinguish actual captured channel light, exact
+outside-window light, exact within-window light removed by the five-sigma node
+cutoff, and the signed lookup-window residual. Thus:
+
+```text
+input = captured + outside + truncated_inside - signed_lookup_residual
+signed_lookup_residual = captured - exact_clipped_window
+```
+
+The tail accounts apply to histogram-node Gaussians, not an independent
+cell-selection cut. No luminosity threshold drops cells. Full cell Gaussian
+moments remain untruncated. Grid interpolation changes channel values; the
+report records the adopted grid, cutoff, arithmetic gate, accounts and actual
+native teams, preserving per-line missingness and physical widths/masses.
+
+Explicit `spectral_method: exact` uses SciPy's double-precision erf, and
+`linear-lut` retains the one-dimensional erf table on [0,8] at spacing 1/4096
+with odd symmetry and its original handling of boundaries/error policies.
+These methods are references, never the 2D default or automatic fallback.
+The [usage settings](usage.md#spectral-integration) describe selection and reuse.
+
+The bounded reader uses five I/O streams followed by up to 32 complete-column
+derivation tasks in the same pool. Up to 16 batch workers then calculate
+emission/products. Main node merging uses four verified OpenMP workers and
+final channel expansion eight when supported, otherwise serial one; those
+phases do not multiply into a nested per-cell worker count. Thirteen extensions
+build normally; Linux verifies compiler/runtime OpenMP support and macOS uses
+serial kernels. Explicit unsupported native teams raise.
+
+Gaussian table/geometry/synthetic-gate preparation and actual z-copy conversion
+are separately measured outside process elapsed time. Input identity, metadata
+construction/restoration, physical table loading, cache validation, every
+payload/derived/emission/product operation, checks, save and cleanup remain
+inside final `status.json.elapsed_seconds`. The report is assembled before its
+own save, so its elapsed time ends earlier. Plotting is a later separate step.
 
 Two dispersions are saved: `line_sigma_window_kms` uses the saved channels;
 `line_sigma_full_kms` includes each available cell's complete Gaussian. The

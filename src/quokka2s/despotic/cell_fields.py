@@ -295,20 +295,17 @@ class DespoticCellReader:
             )
 
         cold_queries = queries.select(selected_cells=cold_cells_to_query)
-        cii_luminosity_per_H = self.lookup.line_field(
-            species='C+',
-            field_name='lumPerH',
+        cii_and_hydrogen = self.lookup.cii_and_hydrogen_abundances(
             queries=cold_queries,
         )
-        number_densities = self.lookup.number_densities(
-            species=('e-', 'H+', 'H'),
-            queries=cold_queries,
+        hydrogen_density_cm3 = cold_queries.hydrogen_density_cm3.reshape(
+            cold_queries.query_shape,
         )
         return DespoticColdFields(
-            cii_luminosity_per_H=cii_luminosity_per_H,
-            electron_density_cm3=number_densities['e-'],
-            ionized_hydrogen_density_cm3=number_densities['H+'],
-            neutral_hydrogen_density_cm3=number_densities['H'],
+            cii_luminosity_per_H=cii_and_hydrogen[..., 0],
+            electron_density_cm3=hydrogen_density_cm3 * cii_and_hydrogen[..., 1],
+            ionized_hydrogen_density_cm3=hydrogen_density_cm3 * cii_and_hydrogen[..., 2],
+            neutral_hydrogen_density_cm3=hydrogen_density_cm3 * cii_and_hydrogen[..., 3],
         )
 
     def restore_batch_positions(

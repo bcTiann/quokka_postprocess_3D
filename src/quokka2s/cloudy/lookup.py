@@ -9,6 +9,7 @@ from pathlib import Path
 
 import numpy as np
 from scipy.interpolate import RegularGridInterpolator
+from ._trilinear import fused_interpolation_sums
 
 from quokka2s.cloudy.table_definition import EXPECTED_AXIS_ORDER
 from quokka2s.physics.composition import reject_superseded_composition
@@ -265,7 +266,7 @@ class CloudyLookup:
 
         Move the line axis to the final dimension as a view, so each query
         evaluates all L emissivity_per_nH2 [erg cm^3/s] together. The finite-log
-        array preserves historical sentinels, e.g. -99 for a zero emissivity_per_nH2.
+        array preserves finite zero sentinels, e.g. -99 for emissivity_per_nH2=0.
         Stores two interpolators on self and returns None.
         """
         axes = [self.log_NH_attenuation, self.log_nH, self.log_T]
@@ -277,8 +278,8 @@ class CloudyLookup:
             method="linear",
             bounds_error=True,
         )
-        # Retain finite historical zero sentinels (e.g. -99) exactly as the
-        # previous sampler did. Only non-finite log placeholders become zero;
+        # Retain finite zero sentinels (e.g. -99). Only non-finite log
+        # placeholders become zero;
         # the explicit support checks below select the physical output branch.
         finite_log = np.where(
             np.isfinite(self.log_emissivity_per_nH2),
@@ -291,6 +292,50 @@ class CloudyLookup:
             method="linear",
             bounds_error=True,
         )
+        # The main batch query reuses its prepared brackets in the fused
+        # kernel. Strict diagnostic/sample APIs retain their SciPy sampler.
+        # A trailing contiguous line axis makes every corner's line values
+        # adjacent; these owned immutable tables are shared by batch threads.
+        self._native_linear = np.array(
+            np.moveaxis(self.emissivity_per_nH2, source=0, destination=-1),
+            order="C",
+            copy=True,
+        )
+        self._native_logarithmic = np.array(
+            np.moveaxis(finite_log, source=0, destination=-1),
+            order="C",
+            copy=True,
+        )
+        self._native_zero = np.ascontiguousarray(
+            np.moveaxis(self.zero_emission_table_nodes, source=0, destination=-1),
+            dtype=np.uint8,
+        )
+        self._native_lines_with_zero = np.any(
+            self.zero_emission_table_nodes,
+            axis=(1, 2, 3),
+        ).astype(np.uint8)
+        self._native_shared_failures = len(self.line_keys) > 0 and all(
+            np.array_equal(mask, self.failed_table_nodes[0])
+            for mask in self.failed_table_nodes
+        )
+        failure_values = (
+            self.failed_table_nodes[:1]
+            if self._native_shared_failures
+            else self.failed_table_nodes
+        )
+        self._native_failure = np.ascontiguousarray(
+            np.moveaxis(failure_values, source=0, destination=-1),
+            dtype=np.uint8,
+        )
+        self._native_has_failures = bool(np.any(self.failed_table_nodes))
+        for values in (
+            self._native_linear,
+            self._native_logarithmic,
+            self._native_zero,
+            self._native_lines_with_zero,
+            self._native_failure,
+        ):
+            values.flags.writeable = False
 
     @property
     def attenuation_column_bounds_cm2(self) -> tuple[float, float]:
@@ -412,10 +457,55 @@ class CloudyLookup:
             hydrogen_density_cm3=hydrogen_density_cm3,
             shielding_NH_cm2=shielding_NH_cm2,
         )
-        nodes = self.inspect_interpolation_nodes(coordinates=coordinates)
-        return self.interpolate_available_emissivity_per_nH2(
-            coordinates=coordinates,
-            nodes=nodes,
+        # NumPy ufunc error policies are observable API behavior. Preserve the
+        # NumPy sampler whenever a caller requests a custom policy.
+        default_error_policy = {
+            "divide": "warn",
+            "over": "warn",
+            "under": "ignore",
+            "invalid": "warn",
+        }
+        if np.geterr() != default_error_policy:
+            nodes = self.inspect_interpolation_nodes(coordinates=coordinates)
+            return self.interpolate_available_emissivity_per_nH2(
+                coordinates=coordinates,
+                nodes=nodes,
+            )
+        # Geometry is prepared once. The native pass keeps support inspection
+        # and branch sums together, including the existing failed-query skip.
+        brackets = coordinates.brackets
+        linear_sum, logarithmic_sum, zero_flags, failed_flags = fused_interpolation_sums(
+            column_lower=brackets[0][0],
+            density_lower=brackets[1][0],
+            temperature_lower=brackets[2][0],
+            column_fraction=brackets[0][2],
+            density_fraction=brackets[1][2],
+            temperature_fraction=brackets[2][2],
+            linear_table=self._native_linear,
+            logarithmic_table=self._native_logarithmic,
+            zero_table=self._native_zero,
+            failure_table=self._native_failure,
+            lines_with_zero=self._native_lines_with_zero,
+            has_failures=self._native_has_failures,
+            touch_epsilon=TOUCH_EPS,
+        )
+        zero_support = zero_flags.view(np.bool_).T
+        failed_queries = failed_flags.view(np.bool_)
+        # Unused native log sums are zero for failed/all-zero queries. After
+        # one power pass, restore physical zeros and unavailable-query NaNs.
+        emissivity_per_nH2 = np.power(10.0, logarithmic_sum.T)
+        np.copyto(emissivity_per_nH2, linear_sum.T, where=zero_support)
+        emissivity_per_nH2[:, failed_queries] = np.nan
+        output_shape = (len(self.line_keys), *coordinates.shape)
+        return CloudyQueryResult(
+            emissivity_per_nH2=emissivity_per_nH2.reshape(output_shape),
+            attenuation_column_below_table=coordinates.below_column.reshape(
+                coordinates.shape,
+            ),
+            attenuation_column_above_table=coordinates.above_column.reshape(
+                coordinates.shape,
+            ),
+            failed_queries=failed_queries.reshape(coordinates.shape),
         )
 
     def sample(
@@ -461,7 +551,7 @@ class CloudyLookup:
         """Inspect the eight 3D corners once for all requested lines.
 
         coordinates comes from prepare_interpolation_coordinates(). Keep the
-        historical corner order and multiplication order for reproducible sums.
+        lexicographic corner order and multiplication order for reproducible sums.
         A zero corner matters individually above TOUCH_EPS; failed weights are
         summed first, then compared with that threshold.
         """

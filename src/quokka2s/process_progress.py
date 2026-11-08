@@ -13,6 +13,7 @@ from time import monotonic
 
 
 READ_STAGE_LABELS = {
+    'fused_derivation': 'fused units, foreground/shielding columns and velocity gradient',
     'field_reading': 'field reading (native/cache + unit conversion)',
     'foreground_column': 'foreground column',
     'shielding_column': 'shielding column',

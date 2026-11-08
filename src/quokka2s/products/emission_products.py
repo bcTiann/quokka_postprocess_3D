@@ -19,14 +19,11 @@ from quokka2s.physics.gas_fields import mixed_gas_temperature_K
 from quokka2s.products.cold_despotic_luminosity import ColdGasLuminosityByDespoticTemperature
 from quokka2s.products.integrated_spectra import IntegratedSpectra, check_spectrum_luminosity
 from quokka2s.products.gas_phase_velocity import GasPhaseVelocityAccumulator, check_phase_accounting
+from quokka2s.products.velocity_grid import velocity_channel_edges_kms
 from quokka2s.products.line_luminosity_images import (
     LineLuminosityImageAccumulator,
     check_image_luminosity,
 )
-
-VELOCITY_RANGE_KMS = 200.
-VELOCITY_CHANNELS = 400
-
 
 @dataclass
 class EmissionOutputs:
@@ -83,7 +80,9 @@ class EmissionOutputs:
 class EmissionProducts:
     """Running image/spectrum/phase sums; never retains individual cell arrays."""
 
-    def __init__(self, snapshot, line_keys, spectral_workers, *, spectral_method="exact"):
+    def __init__(self, snapshot, line_keys, spectral_workers, *,
+                 spectral_method="histogram-2d", histogram_engine=None,
+                 histogram_partial=False, histogram_merge_threads=None):
         """Create image, spectrum and gas-phase accumulators for one run.
 
         Parameters
@@ -95,8 +94,14 @@ class EmissionProducts:
             From CellEmissionCalculator.line_keys; fixes the line order of every accumulator.
         spectral_workers : int
             Thread count for Gaussian channel integration within each batch.
-        spectral_method : {"exact", "linear-lut"}, optional
-            Direct erf integration or the explicitly selected linear lookup.
+        spectral_method : {"histogram-2d", "exact", "linear-lut"}, optional
+            Two-dimensional accumulation by default; legacy comparison methods
+            stay explicit and are never invoked as a 2D fallback.
+        histogram_engine : GaussianHistogramEngine, optional
+            The shared 2D geometry and standard-Gaussian prefix table. Required for 2D.
+        histogram_partial : bool, optional
+            True only for worker-owned sparse increments; the main accumulator
+            merges them in original batch order before one final expansion.
 
         Notes
         -----
@@ -114,23 +119,36 @@ class EmissionProducts:
         self.expected_cell_count = snapshot.processing_cell_count
         self.snapshot_cell_count = snapshot.cell_count
         self.projected_area_cm2 = snapshot.processing_area_cm2
-        velocity_edges_kms = np.linspace(
-            -VELOCITY_RANGE_KMS,
-            VELOCITY_RANGE_KMS,
-            VELOCITY_CHANNELS + 1,
-        )
+        velocity_edges_kms = velocity_channel_edges_kms()
 
-        self.images = LineLuminosityImageAccumulator(
+        image_class = LineLuminosityImageAccumulator
+        if histogram_partial and spectral_method == "histogram-2d":
+            from .compact_images import CompactImageAccumulator
+            image_class = CompactImageAccumulator
+        self.images = image_class(
             line_keys=self.line_keys,
             native_xy_shape=snapshot.processing_shape[:2],
             image_xy_origin=snapshot.processing_xy_origin,
         )
-        self.spectra = IntegratedSpectra(
-            line_keys=self.line_keys,
-            velocity_edges_kms=velocity_edges_kms,
-            workers=spectral_workers,
-            spectral_method=spectral_method,
-        )
+        if spectral_method == "histogram-2d":
+            from .gaussian.spectra import HistogramIntegratedSpectra
+            if histogram_engine is None:
+                raise ValueError("Prepare the shared Gaussian engine before constructing 2D products")
+            self.spectra = HistogramIntegratedSpectra(
+                line_keys=self.line_keys,
+                velocity_edges_kms=velocity_edges_kms,
+                engine=histogram_engine,
+                batch_partial=histogram_partial,
+                merge_threads=histogram_merge_threads,
+                workers=spectral_workers,
+            )
+        else:
+            self.spectra = IntegratedSpectra(
+                line_keys=self.line_keys,
+                velocity_edges_kms=velocity_edges_kms,
+                workers=spectral_workers,
+                spectral_method=spectral_method,
+            )
         self.phases = GasPhaseVelocityAccumulator(velocity_edges_kms)
         self.counts = {
             "all": 0,                      # Number of processed cells.
@@ -302,7 +320,10 @@ class EmissionProducts:
         --------
         products.merge(batch_products)
         """
-        self.images.merge(other.images)
+        if hasattr(other.images, 'merge_into_dense'):
+            other.images.merge_into_dense(self.images)
+        else:
+            self.images.merge(other.images)
         self.spectra.merge(other.spectra)
         self.phases.merge(other.phases)
         self.intrinsic_luminosity_erg_s += other.intrinsic_luminosity_erg_s
@@ -363,7 +384,11 @@ class EmissionProducts:
             self.intrinsic_luminosity_erg_s,
             self.attenuated_luminosity_erg_s,
         ))
-        check_spectrum_luminosity(outputs.spectrum_payload, expected_luminosity)
+        if self.spectra.spectral_method == "histogram-2d":
+            from .gaussian.accounting import check_histogram_luminosity
+            check_histogram_luminosity(outputs.spectrum_payload, expected_luminosity)
+        else:
+            check_spectrum_luminosity(outputs.spectrum_payload, expected_luminosity)
         image_conservation = self.check_line_products(
             image_payload=outputs.image_payload,
             spectrum_payload=outputs.spectrum_payload,

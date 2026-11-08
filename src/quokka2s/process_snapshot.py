@@ -84,6 +84,9 @@ def process_parallel_batches(
             progress.start_batch(batch_number)
             stage_progress = lambda stage: progress.set_stage(batch_number, stage)
         partial = EmissionProducts(
+            histogram_engine=getattr(products.spectra, 'engine', None),
+            histogram_partial=True,
+            histogram_merge_threads=config.histogram_merge_threads,
             snapshot=snapshot,
             line_keys=emission_calculator.line_keys,
             spectral_workers=config.spectral_workers,
@@ -280,7 +283,8 @@ def process_snapshot(config, snapshot, emission_calculator, products, began, *, 
     Returns per-slab and total wall timings; the five read stages partition
     read/derive time, and columns_total_seconds is their two-column subtotal.
     products accumulates sums in place; began starts cell calculation for ETA.
-    status_began, when supplied, starts the full conversion-plus-process run.
+    status_began, when supplied, starts the complete process clock, excluding
+    separately measured z conversion and prebuilt Gaussian templates.
     Final product checks and saving happen in main()."""
     # 1. Select index windows only; no simulation fields are loaded yet.
     selected_slabs = select_slabs_to_process(config, snapshot)
@@ -390,6 +394,11 @@ def run_one_snapshot(config: ProcessSettings, config_path: Path) -> None:
     snapshot fields and lookup readers stay local to this call. The temporary
     z-contiguous copy is removed before the next snapshot or plotting step.
     """
+    histogram_engine = None
+    gaussian_table_seconds = 0.0
+    if config.spectral_method == "histogram-2d":
+        from quokka2s.products.gaussian.preparation import prepare_gaussian_engine
+        histogram_engine, gaussian_table_seconds = prepare_gaussian_engine(config.gaussian_grid)
     print_run_settings(config=config, config_path=config_path)
     began = time.monotonic()
     input_identity = processing_input_identity(config=config)
@@ -397,6 +406,8 @@ def run_one_snapshot(config: ProcessSettings, config_path: Path) -> None:
     input_loading_seconds = time.monotonic() - began
     print('Outputs: allocating image, spectrum and gas-phase accumulators...', flush=True)
     products = EmissionProducts(
+        histogram_engine=histogram_engine,
+        histogram_merge_threads=config.histogram_merge_threads,
         snapshot=snapshot,
         line_keys=emission_calculator.line_keys,
         spectral_workers=config.spectral_workers,
@@ -412,9 +423,16 @@ def run_one_snapshot(config: ProcessSettings, config_path: Path) -> None:
         stage = 'preparing z-contiguous fields'
         with prepare_z_contiguous_snapshot(
             snapshot=snapshot,
+            dataset_path=config.dataset,
             work_directory=config.output_dir.parent,
             source_identity=input_identity['snapshot_files'],
+            prepared_directory=config.prepared_z_fields,
+            reader_threads=config.z_reader_threads,
+            read_workers=config.z_read_workers,
         ) as (prepared_snapshot, preprocessing):
+            # Exclude only conversion. Input initialization and all numerical
+            # slab reads, derivations, calculations, checks and saves stay timed.
+            began += preprocessing['conversion_seconds']
             stage = 'processing cells'
             calculation_began = time.monotonic()
             processing_timings = process_snapshot(
@@ -426,7 +444,11 @@ def run_one_snapshot(config: ProcessSettings, config_path: Path) -> None:
                 status_began=began,
             )
             processing_timings['input_loading_seconds'] = input_loading_seconds
-            processing_timings['z_conversion_seconds'] = preprocessing['preprocessing_seconds']
+            processing_timings['z_conversion_seconds'] = preprocessing['conversion_seconds']
+            processing_timings['z_cache_validation_seconds'] = preprocessing['preprocessing_seconds'] if preprocessing['cache_reused'] else 0.0
+            processing_timings['z_reader_initialization_seconds'] = preprocessing['reader_initialization_seconds']
+            processing_timings['z_conversion_excluded_from_process'] = True
+            processing_timings['gaussian_table_build_seconds_excluded'] = gaussian_table_seconds
             stage = 'building results'
             print('Outputs: building image, spectrum and gas-phase results...', flush=True)
             outputs = products.build_outputs()
@@ -453,7 +475,15 @@ def run_one_snapshot(config: ProcessSettings, config_path: Path) -> None:
             )
             cache_identity = preprocessing['identity']
             report['field_preprocessing'] = {
-                'method': 'z-contiguous-copy',
+                'method': 'disk-z-contiguous-bounded-eager-fused',
+                'snapshot_metadata': preprocessing['identity']['snapshot_metadata'],
+                'metadata_sidecar_write': preprocessing['metadata_sidecar_write'],
+                'prepared_cache_reused': preprocessing['cache_reused'],
+                'reader_threads': config.z_reader_threads,
+                'read_workers': config.z_read_workers,
+                'bounded_eager_reading': dict(preprocessing['reader_statistics']),
+                'fused_derivation': dict(preprocessing['derivation_statistics']),
+                'conversion_excluded_from_process': True,
                 'seconds': preprocessing['preprocessing_seconds'],
                 'shape': cache_identity['shape'],
                 'fields': list(cache_identity['fields']),
@@ -463,7 +493,7 @@ def run_one_snapshot(config: ProcessSettings, config_path: Path) -> None:
                     record['size_bytes']
                     for record in cache_identity['fields'].values()
                 ),
-                'retention': 'temporary; removed when snapshot processing exits',
+                'retention': 'retained explicit cache' if preprocessing['cache_reused'] else 'temporary; removed when snapshot processing exits',
             }
             if processing_input_identity(config=config) != input_identity:
                 raise ValueError('Processing inputs or source files changed during calculation')
@@ -509,8 +539,8 @@ def main(argv=None):
     --no-plot saves numerical products only. Plot choices otherwise use the same
     YAML and format/title flags as plot. Each invocation freezes its inventory;
     completed matching products are reused and conflicting output is preserved.
-    --spectral-method explicitly overrides the YAML exact/linear-lut algorithm.
-    Tabulated linear integration is the default; exact remains an explicit option.
+    --spectral-method explicitly overrides the YAML algorithm. Pure histogram-2d
+    is the default; legacy methods remain explicit comparison options.
     """
     parser = argparse.ArgumentParser(
         prog="process",
@@ -522,7 +552,7 @@ def main(argv=None):
         "--spectral-method",
         choices=SPECTRAL_METHODS,
         default=None,
-        help="Override YAML spectral_method: exact erf or approximate linear-lut",
+        help="Override Gaussian method; histogram-2d is the default",
     )
     parser.add_argument(
         "--no-plot",

@@ -1,6 +1,6 @@
 # Shared selection. Relative YAML paths start at this file.
-jobname: sigma13-zmet0.2
-dataset: /scratch/pawsey0807/chongchong/Projects-data/2026-quokka-outflow/hpc/run2.v2/job41114622-sigma13-zmet0.2/run1/plt0782927
+jobname: reference_job
+dataset: ../inputs/snapshots/plt0655228
 results_dir: ../output
 # Results: ../output/sigma13.v2/plt0655228/{processed,figures,figures_titled}/
 
@@ -31,11 +31,19 @@ query_chunk: 131072
 chunk_workers: 16
 spectral_workers: 1
 slab_nx: 8
+# Retained for native-reader utilities; the process eager reader uses slab_nx.
 field_cache_slabs: 16
 field_cache_gib: 12
-spectral_method: linear-lut
-# Process always prepares a temporary z-contiguous copy beside these results.
-# It removes that copy after each snapshot, including failed calculations.
+spectral_method: histogram-2d
+# Optional absolute path of an existing validated raw z-field cache.
+# Null keeps a scoped temporary conversion; a supplied cache is read-only.
+prepared_z_fields: null
+# Independent tasks within the single-snapshot reader and main accumulator.
+z_reader_threads: 32
+z_read_workers: 5
+# Null selects 4 when OpenMP is available, otherwise 1.
+histogram_merge_threads: null
+# Only a temporary copy created by this process is removed on completion/failure.
 
 # Plotting: PNG with titles by default; CLI flags override each selection.
 figure_formats: [png]

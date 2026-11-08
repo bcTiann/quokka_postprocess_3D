@@ -21,7 +21,7 @@ from quokka2s.constants import (
 )
 from quokka2s.physics.gas_fields import HYDROGEN_MASS_G
 from quokka2s.products import DUST_STATES
-from quokka2s.products.emission_products import VELOCITY_CHANNELS
+from quokka2s.products.velocity_grid import VELOCITY_CHANNELS
 
 
 def build_processing_report(

@@ -54,8 +54,11 @@ class ProcessSettings:
     Each concurrent batch can use spectral_workers integration threads.
     Defaults use 16 concurrent batches and one integration thread per batch.
     Index ranges are [start, stop), or None for the full native axis.
-    spectral_method selects direct erf integration or approximate linear lookup;
-    the default linear-lut method uses the adopted tabulated Gaussian kernel.
+    spectral_method defaults to pure two-dimensional luminosity accumulation.
+    gaussian_grid optionally overrides its bounded mean and sigma geometry.
+    histogram_merge_threads=None selects four OpenMP threads when available,
+    otherwise one serial thread; unsupported explicit teams raise an error.
+    Exact/linear-lut remain explicit internal comparison methods, not fallbacks.
     field_cache_slabs limits adjacent shared reads, while field_cache_gib limits
     retained converted field arrays in GiB; neither is a total process RSS limit.
     """
@@ -74,7 +77,12 @@ class ProcessSettings:
     max_slabs: int | None = None
     x_index_range: tuple[int, int] | None = None
     y_index_range: tuple[int, int] | None = None
-    spectral_method: str = "linear-lut"
+    spectral_method: str = "histogram-2d"
+    gaussian_grid: dict | None = None
+    histogram_merge_threads: int | None = None
+    prepared_z_fields: Path | None = None
+    z_reader_threads: int = 32
+    z_read_workers: int = 5
     field_cache_slabs: int = 16
     field_cache_gib: int = 12
 
@@ -102,7 +110,8 @@ _RUN_REQUIRED_SETTINGS = {"dataset", "jobname", "results_dir"}
 _PROCESS_TABLE_PATHS = ("despotic_table", "cloudy_table", "dust_opacity_table")
 _PROCESS_INTEGERS = (
     "slab_nx", "query_chunk", "chunk_workers", "spectral_workers", "max_slabs",
-    "field_cache_slabs", "field_cache_gib",
+    "field_cache_slabs", "field_cache_gib", "z_reader_threads", "z_read_workers",
+    "histogram_merge_threads",
 )
 _REGION_INDEX_RANGES = ("x_index_range", "y_index_range")
 _PROCESS_DEFAULTS = {
@@ -121,7 +130,7 @@ _PLOT_DEFAULTS = {
 }
 _FIGURE_FORMATS = ("png", "pdf")
 _FIGURE_STYLES = ("untitled", "titled")
-SPECTRAL_METHODS = ("exact", "linear-lut")
+SPECTRAL_METHODS = ("histogram-2d", "exact", "linear-lut")
 _ALLOWED_SETTINGS = (
     _RUN_REQUIRED_SETTINGS
     | set(_PROCESS_DEFAULTS)
@@ -491,7 +500,7 @@ def _process_settings(
     for name in _PROCESS_TABLE_PATHS:
         values[name] = _path_value(name, values[name], config_path.parent)
     for name in _PROCESS_INTEGERS:
-        values[name] = _positive_int(name, values[name], nullable=name == "max_slabs")
+        values[name] = _positive_int(name, values[name], nullable=name in ("max_slabs", "histogram_merge_threads"))
     if spectral_method is not None:
         values["spectral_method"] = spectral_method
     if (
@@ -499,6 +508,14 @@ def _process_settings(
         or values["spectral_method"] not in SPECTRAL_METHODS
     ):
         raise ValueError(f"spectral_method must be one of {', '.join(SPECTRAL_METHODS)}")
+    if values['prepared_z_fields'] is not None:
+        if not isinstance(values['prepared_z_fields'], str) or not Path(values['prepared_z_fields']).expanduser().is_absolute():
+            raise ValueError('prepared_z_fields must be an absolute existing cache directory')
+        values['prepared_z_fields'] = _path_value('prepared_z_fields', values['prepared_z_fields'], config_path.parent)
+    if values['z_read_workers'] > 5:
+        raise ValueError('z_read_workers cannot exceed the five native fields')
+    if values["gaussian_grid"] is not None and not isinstance(values["gaussian_grid"], dict):
+        raise ValueError("gaussian_grid must be a mapping of Gaussian grid parameters or null")
     if values["query_chunk"] > 1000000:
         raise ValueError("query_chunk must be at most 1000000 cells")
     return ProcessSettings(

@@ -1,7 +1,7 @@
 # quokka2s — QUOKKA emission post-processing
 
-Process one QUOKKA snapshot or a run directory by preparing a temporary
-z-contiguous copy, calculating emission products, then drawing images and
+Process one QUOKKA snapshot or a run directory by preparing or reusing
+z-contiguous fields, calculating emission products, then drawing images and
 spectra from the saved arrays. On Setonix, use the short
 [Setonix guide](docs/setonix.md).
 
@@ -33,16 +33,18 @@ uv sync
 
 uv creates `.venv` and installs this checkout in editable mode. No activation,
 `PYTHONPATH` or manual `pip install` is needed. The locked environment uses
-Python 3.11. Building yt and the Cython spectrum kernel needs Git and C/C++
+Python 3.11. Building yt and the thirteen native processing kernels needs Git and C/C++
 build tools. uv installs the pinned build dependencies automatically; no manual
 Cython installation or compilation command is needed. Both process and plot
 dependencies are installed by default. `uv run` checks the environment
 automatically and reuses the locked versions; it does not reinstall everything
 on each run.
 
-After changing `src/quokka2s/products/_gaussian_fractions.pyx`, run `uv sync`
-to rebuild the compiled spectrum kernel. The build cache also tracks this source
-when `uv run` checks the environment. Generated C and compiled binaries stay local.
+After changing a processing `.pyx` source or build settings, run `uv sync`
+to rebuild the native kernels. The build cache tracks these sources when
+`uv run` checks the environment. Linux builds probe OpenMP support for independent
+histogram merging and channel expansion; unsupported platforms use serial kernels.
+Generated C and compiled binaries stay local.
 
 On Setonix, follow its [environment setup](docs/setonix.md#2-configure-the-environment)
 instead: keep the repository, environment, caches and generated results under
@@ -81,16 +83,16 @@ uv run process
 This uses the YAML settings and draws figures after saving each snapshot's
 numerical products. Before cell calculations, process reads the original plt
 without modifying it and writes five temporary z-contiguous `.npy` fields beside
-the selected `processed/` directory. It then reads bounded groups from those
-files, derives complete-z columns and velocity gradients, and calculates the
-images and spectra. The working copy is removed when that snapshot's processing
-context exits, including after a calculation failure. Batch runs finish and
-release one snapshot's working copy before starting the next.
+the selected `processed/` directory. It then reads bounded slabs through five
+field streams, derives complete-z columns and velocity gradients, and calculates
+images and spectra. Set `prepared_z_fields` to an existing validated cache to
+reuse it read-only; `null` creates the temporary copy. Process removes only the
+copy it created, including after failure. Snapshots are processed sequentially.
 
 Conversion holds one float64 field in memory at a time: `8 × Nx × Ny × Nz`
 bytes. Its five files need about `40 × Nx × Ny × Nz` bytes of temporary space on the
 results filesystem, in addition to saved products. For a `512 × 512 × 4096`
-snapshot this is 8 GiB per conversion buffer and about 40 GiB on disk. Group
+snapshot this is 8 GiB per conversion buffer and about 40 GiB on disk. Slab
 buffers, derived fields and concurrent calculations add to process memory.
 
 To limit the emission calculation to a small x/y region, run
@@ -213,11 +215,15 @@ root continue to come from YAML. Single-snapshot plot uses only the dataset
 folder name to locate saved products; the original simulation is not needed.
 Process records its effective settings in `emission_report.json`.
 The process defaults are eight x cells per slab, 131,072 cells per batch,
-16 concurrent batches, one spectral worker per batch, and up to 16 slabs sharing
-at most 12 GiB of converted field arrays. Gaussian integration uses the fused
-one-dimensional `linear-lut` method by default; `--spectral-method exact` selects
-the analytic erf path explicitly. See the [processing settings](docs/usage.md#processing-settings)
-for the numerical distinction and timing fields.
+16 concurrent batches, five field streams and 32 column-derivation tasks.
+Gaussian integration defaults to pure `histogram-2d`: deposit cell luminosity
+onto neighboring `(mu, ln(sigma))` nodes, merge batches in order and expand
+one standard-normal cumulative table with shared channel boundaries. Nodes use a five-sigma cutoff without
+renormalization or 1D fallback. Supported OpenMP builds use four main merge
+threads and eight final channel threads. Explicit `exact` and `linear-lut`
+methods remain references. Process timing excludes raw-field conversion and
+Gaussian preparation; reading, physical lookups, all products, checks and saving
+remain timed. See the [processing settings](docs/usage.md#processing-settings).
 
 [Detailed usage](docs/usage.md) · [Methods](docs/emission_method.md) ·
 [Code guide](docs/code_walkthrough.md) · [Repository layout](docs/repository_layout.md)

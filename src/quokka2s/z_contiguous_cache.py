@@ -92,8 +92,21 @@ def z_contiguous_cache_identity(
             'size_bytes': state.st_size,
             'modified_ns': state.st_mtime_ns,
         }
+    metadata_path = cache_directory / 'snapshot_metadata.json'
+    metadata_identity = None
+    if metadata_path.exists():
+        resolved_metadata = metadata_path.resolve(strict=True)
+        if not resolved_metadata.is_relative_to(cache_directory):
+            raise ValueError('Metadata sidecar must resolve within its prepared cache')
+        metadata_bytes = resolved_metadata.read_bytes()
+        metadata_identity = {
+            'filename': 'snapshot_metadata.json',
+            'size_bytes': len(metadata_bytes),
+            'sha256': hashlib.sha256(metadata_bytes).hexdigest(),
+        }
     return {
         'directory': str(cache_directory),
+        'snapshot_metadata': metadata_identity,
         'manifest_sha256': hashlib.sha256(manifest_bytes).hexdigest(),
         'schema': CACHE_SCHEMA,
         'source_identity': manifest['source_identity'],

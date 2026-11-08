@@ -1,10 +1,13 @@
 # Repository directories and reading order
 
-The Python production workflow prepares temporary z-contiguous copies of the
-five snapshot fields, calculates and saves products, then invokes plot by
-default. Each snapshot's working copy is removed before plotting or the next
-snapshot. Plot reads only saved numerical products. Table-building tools and
-additional paper figures have their own commands.
+The Python production workflow uses the default pure-2D Gaussian luminosity
+histogram and a bounded eager reader for z-contiguous raw fields. It validates
+an explicit read-only `prepared_z_fields` cache or creates/removes its own
+temporary copy when that setting is null. Snapshot metadata/physical inputs and
+all numerical work remain timed; only Gaussian preparation and actual z
+conversion are excluded. Process calculates/saves before invoking plot by
+default. Plot reads only saved products. Table-building and auxiliary figures
+have their own commands.
 
 `pyproject.toml` declares dependencies; `uv.lock` records the resolved versions
 and source identities. uv creates `.venv` with `uv sync` and selects it for
@@ -16,12 +19,17 @@ standalone wheel with embedded input data. The default dependencies support
 both process and plot; the `tables` extra adds the optional chemistry solver
 and table-building tools.
 
-The package builds with setuptools and a pinned Cython/SciPy build environment.
-`uv sync` compiles [products/_gaussian_fractions.pyx](../src/quokka2s/products/_gaussian_fractions.pyx)
-for spectrum processing; no manual Cython installation is needed. The build
-cache tracks that file and `pyproject.toml`, so editing the native source causes
-the next sync to rebuild it. Generated C and native binaries are local build
-products. Plot reads saved arrays without importing this processing extension.
+The package builds thirteen native extensions with normal `setup.py` and shared
+`build_support.py`, using pinned Cython/NumPy/SciPy build dependencies. The native
+inventory covers legacy 1D reference integration, 2D deposition/row selection/
+merge/prefix integration/spectral preparation and retained A reference kernels, Cloudy/DESPOTIC interpolation,
+fused slab derivation, paired-field checking and compact images. `uv` cache
+keys track these sources and build declarations. Generated C and binaries are
+local build products. On Linux the active compiler must pass an OpenMP link
+probe before merge/expansion receive those flags; macOS uses serial kernels.
+Runtime verifies actual teams: automatic main merge selects four and expansion
+eight only when available, otherwise one; explicit unsupported teams raise.
+Plot does not import these processing extensions to draw saved arrays.
 
 ## Where each kind of file belongs
 
@@ -49,34 +57,38 @@ products. Plot reads saved arrays without importing this processing extension.
 2. [process_snapshot.py](../src/quokka2s/process_snapshot.py): select one snapshot
    or a run inventory, read inputs, process slabs, build/check/save results,
    then draw each saved result unless `--no-plot` is selected.
-3. [processing_inputs.py](../src/quokka2s/processing_inputs.py) scopes a temporary
-   [z_contiguous_cache.py](../src/quokka2s/z_contiguous_cache.py) copy beside the
-   output. Conversion uses [native_snapshot_reader.py](../src/quokka2s/native_snapshot_reader.py)
-   to assemble one full raw field at a time, then writes five z-contiguous
-   float64 `.npy` files. Process uses their reader for numerical values;
-   original plt metadata supplies geometry and units. Native reading remains
-   available to independent table and figure-preparation utilities.
-   [snapshot_reader.py](../src/quokka2s/snapshot_reader.py) derives the same six
-   core arrays from a slab, preserving periodic x/y neighbours and complete z.
-   During process, [slab_field_cache.py](../src/quokka2s/slab_field_cache.py)
-   shares five converted halo-field arrays among up to 16 adjacent selected
-   slabs, under a 12 GiB retained-value limit. The reading thread owns this scoped
-   cache; each slab still derives its six copied core arrays in the same order.
-   Groups shrink to fit, an unshared slab uses the direct reader, and the
-   context releases retained values on success or failure. It retains no open
-   maps or full-snapshot field arrays. The outer preparation context removes
-   its owned disk copy on success or failure; result reuse does not need it.
-   `slab_windows(x_start=..., x_stop=..., slab_nx=...)` yields global core bounds;
-   `slab.iter_batches(batch_size=...)` yields native cell views. Consume batches
-   before releasing the slab: a retained view keeps its underlying arrays alive.
+3. [processing_inputs.py](../src/quokka2s/processing_inputs.py) restores supplied
+   [snapshot_metadata.py](../src/quokka2s/snapshot_metadata.py) geometry/units or
+   opens yt, then loads physical tables inside process time. It validates a
+   read-only prepared cache or scopes an owned temporary
+   [z_contiguous_cache.py](../src/quokka2s/z_contiguous_cache.py) conversion.
+   [bounded_z_reader.py](../src/quokka2s/bounded_z_reader.py) eagerly reads only
+   the current x slab plus x neighbours, full native y and full z, with five
+   file streams. Its 32-thread pool then derives selected complete columns via
+   [physics/_slab_derive.pyx](../src/quokka2s/physics/_slab_derive.pyx), filling six
+   core arrays and releasing all raw slab fields before batches begin. The
+   default path uses neither mmap nor multi-slab grouped field retention.
+   [snapshot_reader.py](../src/quokka2s/snapshot_reader.py) dispatches this path
+   while keeping native block/NumPy references for independent utilities.
+   `slab.iter_batches()` yields read-only views; consume them before releasing
+   the slab. Up to 16 batches run concurrently and merge in input order.
 4. [cell_emission.py](../src/quokka2s/physics/cell_emission.py): obtain each named
    line's emissivity and temperature, then apply foreground dust.
-5. [emission_products.py](../src/quokka2s/products/emission_products.py): send the
-   same calculated batch to image, spectrum and gas-phase accumulators.
-   [integrated_spectra.py](../src/quokka2s/products/integrated_spectra.py)
-   selects available cells and thermal groups; its compiled
-   [_gaussian_fractions.pyx](../src/quokka2s/products/_gaussian_fractions.pyx)
-   fills channel probabilities before the existing NumPy luminosity reduction.
+5. [emission_products.py](../src/quokka2s/products/emission_products.py) sends each
+   batch to images, spectra and gas phases. Default
+   [products/gaussian/spectra.py](../src/quokka2s/products/gaussian/spectra.py)
+   deposits luminosities into a mu/ln(sigma) grid, keeps sparse worker increments
+   and merges the main 40-account histogram in original batch/group order.
+   [products/gaussian/preparation.py](../src/quokka2s/products/gaussian/preparation.py)
+   builds one standard-normal prefix table before the process clock.
+   `prefix_tables.py` stores cumulative fine-cell masses on dimensionless
+   [-5,5]; `prefix_engine.py` standardizes each occupied node and reuses
+   adjacent channel boundaries. Cutoff support is not renormalized. The
+   preceding two-dimensional grid still rejects out-of-grid emitting cells.
+   `prefix_arithmetic.py` binds exact contraction arithmetic to the actual
+   prefix binary, NumPy dispatch, table, geometry and observed native team.
+   `integrated_spectra.py` and `_gaussian_fractions.pyx` retain explicit
+   `exact`/`linear-lut` comparison methods, not the default process algorithm.
 6. [plot_emission_results.py](../src/quokka2s/plot_emission_results.py): draw the
    saved products selected by the same [configuration](../configs/emission.yaml).
 
@@ -98,7 +110,8 @@ current scientific rules.
 | `cloudy/` | `lookup.py`: interpolation; `cell_fields.py`: batch queries; `table_definition.py`: ordered build lines, grid and radiation recipe; `incident_spectrum.py`: continuum-export reader |
 | `despotic/` | `solver_settings.py`: adopted solver defaults/source identities; `table_data.py`: table records/field names; `snapshot_domain.py`: physical settings/bounds checks and recorded build-snapshot metadata |
 | `despotic/` | `table_files.py`: NPZ serialization; `cell_solver.py`: equilibrium at one state; `fixed_temperature_chemistry.py`: fixed-temperature GOW callable; `abundance_workspace.py`, `two_body_rates.py`, `reaction_terms.py`: its composition and reaction helpers; `table_builder.py`: grid calculation |
-| `despotic/` | `lookup.py` and `cell_fields.py`: process-time queries; `build_table.py`, `extend_table.py`, `interpolate_failed.py`, `list_failures.py`: table commands; `table_extension.py`: exact axis extension and raw-source validation; `prepare_table_plots.py`/`table_figure_data.py`: numerical figure preparation; `plot_table.py`/`table_plots.py`: draw saved panels |
+| `despotic/` | `runtime_table.py`: seven-field process loader; `lookup.py` and `cell_fields.py`: queries; `build_table.py`, `extend_table.py`, `interpolate_failed.py`, `list_failures.py`: table commands; `table_extension.py`: exact axis extension and raw-source validation; `prepare_table_plots.py`/`table_figure_data.py`: numerical figure preparation; `plot_table.py`/`table_plots.py`: draw saved panels |
+| `products/gaussian/` | Default 2D geometry, sparse deposition/merge, standard-normal prefix table, runtime arithmetic gate, channel expansion and cutoff luminosity accounting |
 | `products/` | Image, spectrum, gas-phase and auxiliary numerical accumulation; `profile_preparation.py` prepares saved normalized/per-area curves; auxiliary preparation modules save masks, logarithmic panels, limits and radiation/dust samples |
 | `figures/` | `line_luminosity_images.py`, `line_spectra.py`, `gas_phase_spectra.py`, `all_line_spectra.py`: saved-product renderers; `line_labels.py`: titles; `figure_files.py`: PNG/PDF paths and saving; other modules: additional figures |
 
@@ -147,7 +160,9 @@ saved unless `--no-plot` is supplied. `process_reuse.py` verifies status/report
 completion, exact configuration and input/source identity, NPZ CRCs and required
 product fields before reusing complete results. It records snapshot file
 metadata without hashing payload bytes, and hashes the three lookup/dust inputs
-and package Python/Cython sources. The identity is captured before calculation
+and package Python/Cython/native sources and the numerical runtime/CPU dispatch. Explicit prepared caches also bind their
+manifest, field file states, original source and optional metadata-sidecar SHA.
+The identity is captured before calculation
 and rechecked before saving, then stored in the report. A selected region is
 complete according to `processing_complete`, even with `full_snapshot=False`.
 Incomplete, conflicting and legacy outputs without identity are preserved and

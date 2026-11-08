@@ -62,8 +62,8 @@ def write_emission_results(
     -------
     write_emission_results(directory=config.output_dir, outputs=outputs, report=report)
     """
-    np.savez_compressed(directory / "images.npz", **outputs.image_payload)
-    np.savez_compressed(directory / "spectra.npz", **outputs.spectrum_payload)
-    np.savez_compressed(directory / "phase_velocity.npz", **outputs.phase_payload)
+    np.savez(directory / "images.npz", **outputs.image_payload)
+    np.savez(directory / "spectra.npz", **outputs.spectrum_payload)
+    np.savez(directory / "phase_velocity.npz", **outputs.phase_payload)
     report_path = directory / "emission_report.json"
     report_path.write_text(json.dumps(report, indent=2, allow_nan=False) + "\n")

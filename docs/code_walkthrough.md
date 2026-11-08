@@ -10,13 +10,15 @@ uv run process
 uv run plot
 ```
 
-Before calculating cells, process converts the original snapshot's five raw
-fields into temporary z-contiguous `.npy` arrays. It assembles and writes one
-complete field at a time. The copy lives beside the numerical output, outside
-the read-only snapshot, and is removed when that snapshot finishes or fails.
-For a 512 x 512 x 4096 box this needs about 8 GiB for one conversion buffer and
-40 GiB of temporary disk space. A selected x/y region still prepares the whole
-snapshot. Completed-result reuse happens first and creates no working copy.
+Before calculating cells, process prepares its standard-Gaussian prefix table separately
+from the process clock. It then opens the original snapshot metadata and physical
+tables inside that clock. `prepared_z_fields` optionally selects an absolute
+existing z-contiguous field cache: it is validated and read without changing or
+deleting it. With `None`/YAML `null`, process writes its own temporary five-field
+cache beside results, then removes that owned copy on success or failure.
+The original snapshot is always read-only. A fresh conversion assembles one full
+raw field at a time, even for an x/y region; later slab reads are bounded.
+Completed-result reuse runs first and creates no working copy.
 
 From the repository root, both read the default `configs/emission.yaml`.
 Use `--config PATH` to select another file. Each runs directly;
@@ -52,11 +54,18 @@ automatically installs the checkout in editable mode and registers commands
 from `[project.scripts]` in `pyproject.toml`. Process and plot call the existing
 `process_snapshot.main()` and `plot_emission_results.main()` functions directly.
 No activation, import-path export, or manual editable installation is needed.
-Sync also builds the Cython spectrum kernel with the pinned build dependencies
-and the local C compiler. After editing
-[products/_gaussian_fractions.pyx](../src/quokka2s/products/_gaussian_fractions.pyx),
-run `uv sync` to rebuild it; uv also tracks this source when checking the build
-cache for `uv run`. Generated C and native binaries are local build products.
+Sync builds thirteen native extensions through `setup.py` and `build_support.py`,
+using the pinned Cython/NumPy/SciPy build dependencies and local C compiler.
+The inventory includes the retained 1D reference kernel, 2D deposition/merging/
+prefix expansion/spectral preparation and retained A reference kernels, Cloudy/DESPOTIC interpolation, fused derived
+fields, paired-field checking and compact images. The build disables fast-math
+and implicit FMA contraction. On Linux it verifies the active compiler can link
+OpenMP before enabling it for independent-row merge and channel expansion;
+macOS builds those kernels serially. Runtime checks verify actual team sizes:
+merge defaults to four workers and expansion to eight when supported, otherwise
+one. Explicit unsupported native-team requests raise. `uv` tracks the native
+sources and build declarations; run `uv sync` after editing them. Generated C
+and native binaries are local build products.
 Plot reports the saved-results directory, each line being drawn, output paths,
 and the final file count and elapsed time; these messages do not alter products.
 The equivalent `uv run python -m quokka2s.process_snapshot` and
@@ -117,9 +126,10 @@ The package has five purpose-specific folders:
 |---|---|---|
 | Read settings | `load_process_configs()` | A fixed list of `ProcessSettings` records with YAML settings, command-line selection and resolved per-snapshot paths |
 | Reuse completed results | `process_reuse.reuse_completed_results()` | Complete, intact products with exact matching configuration and input/source identity, or a clear preserved-output error |
-| Open inputs | `processing_inputs.load_processing_inputs(config)` | `snapshot`, `emission_calculator` |
+| Prepare Gaussian tables | `products.gaussian.preparation.prepare_gaussian_engine()` | One standard-normal prefix table and an arithmetic gate; separately timed before process |
+| Open inputs | `processing_inputs.load_processing_inputs(config)` | Fresh/restored `snapshot` metadata and `emission_calculator`, inside process time |
 | Create output arrays | `EmissionProducts(...)` | Initially empty image, spectrum, and gas-phase accumulators |
-| Prepare fields | `processing_inputs.prepare_z_contiguous_snapshot()` | Scoped z-contiguous files and a prepared snapshot using their raw values |
+| Prepare fields | `processing_inputs.prepare_z_contiguous_snapshot()` | Validated existing fields or an owned temporary cache, plus its bounded eager reader |
 | Process cells | `process_snapshot()` | The accumulated numerical results |
 | Build outputs | `products.build_outputs()` | Image, spectrum and gas-phase arrays and summaries |
 | Add interpretation | `ResultMetadata.from_processing_inputs()` then `outputs.add_metadata()` | Selected pixel coordinates, region and ordered dust metadata |
@@ -140,7 +150,9 @@ The single-record `load_process_config()` remains available for figure tools.
 fields. Regional products can be complete with `full_snapshot=False`; completion
 uses `processing_complete`. Identity records snapshot file paths/sizes/mtime_ns
 without hashing payloads, and hashes the three lookup/dust inputs plus package
-Python/Cython sources. It is captured before calculation and rechecked before
+Python/Cython/native sources and the numerical runtime/CPU dispatch. A supplied field cache adds its manifest, file states,
+original-source identity and optional metadata-sidecar SHA. It is captured
+before calculation and rechecked before
 saving as additive report metadata. These table hashes govern result reuse,
 without changing table-domain compatibility. Legacy results without identity
 are preserved and cannot be reused by process, but remain drawable by plot.
@@ -157,17 +169,19 @@ builds the human-readable summary, including the effective `run_configuration`.
 [products/emission_products.py](../src/quokka2s/products/emission_products.py) groups the accumulated products.
 The objects group related variables; they are not extra copies of the snapshot:
 
-- `snapshot` holds the yt dataset and an optional `xy_region` of native index
+- `snapshot` holds dataset metadata and an optional `xy_region` of native index
   bounds. `shape`, cell widths/volume, `cell_count`, and `projected_area_cm2`
   describe the original box. `processing_shape`, `processing_cell_count`,
   `processing_area_cm2`, and `processing_xy_origin` describe the selected region.
-  `snapshot.native_reader` caches file locations and units from yt metadata.
-  Process uses a prepared snapshot whose `field_reader` reads the temporary
-  z-contiguous arrays. The original snapshot remains available to utilities
-  that read native blocks directly. During processing, the scoped field cache
-  shares converted fields across up to 16 adjacent selected slabs. Outside that context it retains
-  no numerical payloads or open maps. `snapshot.read_slab()` still copies the
-  current core fields and derives the same six slab arrays.
+  `snapshot.native_reader` holds file locations and units from yt or the
+  restored metadata sidecar.
+  Process uses a prepared snapshot whose `field_reader` is a `BoundedEagerReader`
+  for z-contiguous raw fields. It owns only the current slab inputs, performs
+  direct file reads rather than mmap/group prefetch, and releases them before
+  returning the six derived arrays. The original native-block reader remains
+  available to independent table/figure utilities. With a supplied metadata
+  sidecar, geometry/units/native descriptors are restored without `yt.load` or
+  native header rescanning; restoration remains inside process time.
 - `emission_calculator` is a `CellEmissionCalculator`. It holds the DESPOTIC
   and Cloudy readers, ten line names, and named dust cross-sections. Each reader
   holds its fixed lookup table. These objects are created once and shared across
@@ -191,14 +205,16 @@ reuse that line's mask; a physical zero remains available.
 Inside `load_processing_inputs(config)`, follow three named steps:
 
 1. `check_input_paths()` checks the configured input and output locations.
-2. `open_snapshot()` opens yt, obtains the original grid geometry, and records
-   the effective x/y selection from YAML and command-line arguments.
-3. `load_emission_calculator()` loads the tables, creates their cell readers,
+2. Restore metadata with `open_snapshot_metadata()` when the supplied field
+   cache has a sidecar; otherwise `open_snapshot()` opens yt. Both construct
+   current geometry/units and the effective x/y selection inside process time.
+3. `load_emission_calculator()` loads the seven required DESPOTIC fields and
+   the Cloudy/dust tables, creates their cell readers,
    and prepares the per-line dust cross-sections. It derives line names once
    from Cloudy plus `co10` and `co21`, then constructs `CellEmissionCalculator`.
 
 `print_run_settings()` displays the selected run and paths before input loading.
-After yt opens the snapshot, `print_snapshot_summary()` displays its native grid,
+After metadata loading, `print_snapshot_summary()` displays its native grid,
 physical cell widths and selected index ranges without reading cell fields.
 Stage messages precede table loading, each slab read/calculation, and final
 construction/check/saving. They are terminal messages only; the numerical
@@ -236,8 +252,10 @@ cell widths and volume from the current snapshot. A full slab has shape
 
 For the reference `(256, 256, 2048)` grid, one slab contains eight x cells and
 all y,z cells: `(8, 256, 2048)`, or 4,194,304 cells. There are 32 such slabs. The reader
-copies one extra cell on each x/y side, giving loaded fields of shape
-`(10, 258, 2048)`. Only the `(8, 256, 2048)` core contributes to products.
+eagerly reads one extra x cell on each side while keeping the native full y
+axis, giving five raw fields of shape `(10, 256, 2048)`. The kernel indexes
+y neighbours within that full axis. Only the `(8, 256, 2048)` core contributes
+to products.
 x/y neighbours wrap across the original box faces: the first x core `0:8`
 loads indices `[255, 0, ..., 7, 8]`. Both directions use centred differences;
 z retains one-sided differences at its two outer faces. Full z columns stay
@@ -266,56 +284,62 @@ for x_start, x_stop in slab_windows(
 For a selected region, pass its global x bounds instead. The last window may be
 shorter than `slab_nx`; neighbour selection still belongs to `read_slab()`.
 
-Process first enters `prepare_z_contiguous_snapshot()`. Its
-[z_contiguous_cache.py](../src/quokka2s/z_contiguous_cache.py) converter fills
-one complete float64 XYZ array from the native blocks and writes it in C order,
-then releases that field before preparing the next. The five disk fields are
-density, temperature and the three momentum densities. `ZContiguousReader`
-maps one file read-only, copies the requested x/y indices and full z columns,
-and closes the map. It does not scan and scatter native blocks during slab
-reads. The inherited unit conversion turns momenta into velocities exactly as
-before. Metadata and the original input identity still come from the plt.
+Process enters `prepare_z_contiguous_snapshot()` after loading fresh metadata
+and physical tables. Its [z_contiguous_cache.py](../src/quokka2s/z_contiguous_cache.py)
+converter writes complete C-order float64 XYZ arrays for density, temperature
+and three momentum densities when no prepared cache is supplied. A supplied
+`prepared_z_fields` path instead validates those files and their original-source
+identity. Its optional `snapshot_metadata.json` contains only geometry, units
+and native block descriptors, never cell values or derived fields.
 
-Process opens `native_reader.reuse_slab_fields()` around the actual selected
-slab windows, after applying `max_slabs`.
-[slab_field_cache.py](../src/quokka2s/slab_field_cache.py) groups up to 16
-adjacent windows and reads their combined x range once, including the original
-periodic x/y neighbours and full z. Each slab receives a read-only view into
-five converted density, temperature and velocity arrays; batches receive only
-the usual six copied core arrays. The cache belongs to the reading thread.
-Its 12 GiB limit counts retained field values, not total process memory.
-Groups shrink when needed; an unshared single window uses the direct reader.
-The context releases retained values on completion or an exception.
+The active [bounded_z_reader.py](../src/quokka2s/bounded_z_reader.py) path then:
 
-The default full 512 x 512 x 4096 run has four groups of 128 core x cells.
-Each group includes one x/y neighbour on either side: five arrays of
-130 x 514 x 4096 values, about 10.2 GiB. Each of its 16 slabs has eight core
-x cells. Slab batches remain read-only array views; 16 workers handle batches
-of 131072 cells, with one spectral thread per batch. Results merge in original
-batch order. No temporary cache path enters completed-result reuse identity.
+1. Read the five fields with up to `z_read_workers=5` concurrent file streams.
+   Each stream uses one to three contiguous `readinto` ranges covering the slab's
+   core x cells and periodic x neighbours, the full native y axis and full z.
+   Partial y selection reduces calculation/output but not these full-y reads.
+2. Wait for every field read and close its file before deriving quantities.
+3. Reuse the same `z_reader_threads=32` pool to distribute disjoint selected
+   `(x,y)` columns. [physics/_slab_derive.pyx](../src/quokka2s/physics/_slab_derive.pyx)
+   preserves the original unit-conversion stages, momentum/density division,
+   centre-to-boundary foreground column, harmonic shielding column and velocity
+   gradient. It fills six selected-core arrays directly, retaining full z and
+   original periodic x/y and one-sided outer-z neighbours.
+4. Return flattened read-only `SlabArrays` and release all five raw slab inputs.
+   No mmap, full-snapshot payload owner or multi-slab group survives this step.
+5. Process up to `chunk_workers=16` immutable 131072-cell batch views, merge in
+   original order, then release the six arrays before reading the next slab.
 
-The report records input loading and `z_conversion_seconds` separately from
-field reading, columns, gradients and calculation. `field_preprocessing`
-describes the temporary format and byte count. Status elapsed time includes
-loading, conversion, calculation, saving and cleanup; the cell ETA starts
-after conversion so preprocessing does not inflate its remaining-cell estimate.
+The 32-column and five-I/O settings share one pool and run before emission
+batches; they do not multiply the 16 batch workers. Main merge has its own
+verified team and can overlap still-running batches, but it is one ordered
+main-thread operation, not a team inside every batch. Final expansion begins
+after all slab batches have merged. Pure 2D batches do not invoke a second
+cell-by-400 integration pool. Main histogram merge automatically uses an actual
+four-thread OpenMP team when available; final expansion uses an actual eight-
+thread team over independent channels. Unsupported automatic teams use one
+serial worker; explicit unsupported native requests raise.
 
-Read `read_slab()` from top to bottom as these steps:
+`field_cache_slabs`/`field_cache_gib` remain accepted for the original native
+reader interface. They do not control the bounded eager process path, whose
+`reuse_slab_fields()` context deliberately retains no grouped fields.
 
-1. `snapshot.native_reader.read_slab_fields()` returns selected x/y cells plus
-   one wrapped neighbour on each side, keeping full z. Within a shared group,
-   these are read-only views; direct reads return owned field copies.
-2. `select_core_simulation_fields()` copies core density, QUOKKA temperature
-   and vz, removing the x/y neighbours.
-3. `calculate_dust_foreground_column()` calculates the column to the observer.
-4. `calculate_shielding_column()` calculates the +z/-z harmonic-mean column.
-5. `calculate_core_velocity_gradient()` calculates dV/dr using neighbours.
-6. Release this slab's halo views. The scoped cache can retain their group
-   until its last read. Flatten the six copied core arrays into read-only
-   `SlabArrays`.
+Input initialization, eager reads and fused derivation have separate report
+measurements. Foreground columns, shielding and gradients share one fused pass;
+its total is reported as `fused_derivation`, without claiming separate measured
+wall times for those operations. `field_preprocessing` records payload bytes,
+read/close counts, retained-byte peaks and actual derivation/read settings.
+The process clock starts before input identity/metadata/physical-table loading.
+It excludes Gaussian table preparation and only actually-created z conversion;
+cache validation, reader initialization, payloads, calculations, checks, saving
+and cleanup remain timed. The final status includes save/cleanup, while the
+report is assembled before writing itself. Cell ETA starts at the slab loop.
 
-All six numerical field arrays retain their three-dimensional core-slab shape
-until the final flattening in `read_slab()`.
+### Original native reader for utilities and references
+
+The following native-block selection and NumPy-derived-field path remains useful
+for independent table/figure utilities and as a reference. It is not the default
+bounded eager process route described above.
 
 In [native_snapshot_reader.py](../src/quokka2s/native_snapshot_reader.py),
 `NativeSnapshotReader` uses yt's native block bounds, payload offsets, field
@@ -557,9 +581,9 @@ products.record_batch(cells=cells, emission=emission)
 ```
 
 Images read each named line and select its available cell positions. Spectra
-group lines with identical selections, then pack that group's fields into
-three `(Ngroup_lines, Navailable_cells)` numerical arrays. These arrays exist
-only while adding that batch. Independent cell sums check image and spectrum
+group lines with identical selections, then native preparation packs their
+original fields directly into the cold/hot branch matrices used by width
+groups. These temporary arrays exist only while adding that batch. Independent cell sums check image and spectrum
 luminosities using each line's own selection. Saved image/profile axes and
 line names are unchanged; `cell_counts_by_regime` has shape `(Nline, 2)`.
 
@@ -583,38 +607,60 @@ snapshot reads or emission-table queries are needed.
 | Product | File and function | Calculation |
 |---|---|---|
 | Image | [products/line_luminosity_images.py](../src/quokka2s/products/line_luminosity_images.py), `LineLuminosityImageAccumulator.add_batch()` | Find each cell's native `(x,y)` pixel and add `epsilon * volume`; all z cells on that sightline add to the same pixel |
-| Spectrum | [products/integrated_spectra.py](../src/quokka2s/products/integrated_spectra.py), `IntegratedSpectra.add_batch()` | Centre the line at cell `vz`, integrate its thermal Gaussian over velocity channels, and add luminosity to the selected region's integrated spectrum |
+| Spectrum | [products/gaussian/spectra.py](../src/quokka2s/products/gaussian/spectra.py), `HistogramIntegratedSpectra.add_batch()` | Deposit luminosity into the 2D Gaussian-node histogram; merge batches and expand the accumulated nodes over 400 channels once |
 | Gas phases | [products/gas_phase_velocity.py](../src/quokka2s/products/gas_phase_velocity.py), `GasPhaseVelocityAccumulator.add_batch()` | Assign the mixed-temperature phase, add cell mass to its velocity channel, and accumulate velocity moments |
 
 Image accumulation uses the selected native x/y sightlines: 256 × 256 for
 the full reference snapshot, or 512 × 512 for a full 512 × 512 × 4096 grid.
-Spectrum accumulation uses each line's available cells directly; it does not
-go through a rebinned image.
-Intrinsic and attenuated spectra share the same thermal integration for a
-cell. They differ only in the luminosity being distributed over channels.
-`accumulate_velocity_spectra()` keeps the default 8192-cell chunks and processes
-64 channels at a time. Each worker owns a reusable `(channel, cell)` fraction
-buffer and one previous boundary-CDF value per cell. The compiled
-[products/_gaussian_fractions.pyx](../src/quokka2s/products/_gaussian_fractions.pyx)
-combines edge subtraction, division by the NumPy-prepared thermal denominator,
-SciPy's real-double `erf`, and adjacent-CDF differences in one GIL-free loop.
-It writes the dense fractions in their original cell positions without retaining
-a full boundary-CDF matrix. For dimensionless arguments at or beyond `+/-8`,
-the pinned SciPy float64 `erf` already returns exactly `+/-1`; the loop writes
-those same rounded values directly.
+Spectrum accumulation uses each line's available cells directly and does not
+go through a rebinned image. The default `histogram-2d` route is:
 
-The build disables fast-math and fused multiply-add contraction. Luminosity
-weighting still uses `np.einsum(..., optimize=False)`, and chunk partials are
-merged in input order. Each task returns its own partial spectrum, while worker
-scratch is released when the integration call finishes. Unaligned channel-edge
-arrays and nondefault NumPy or SciPy special-function error policies retain the
-NumPy/SciPy coefficient path.
+1. Keep existing cold/hot branches, line availability, Doppler centres and
+   thermal widths. Group only lines with identical physical widths.
+2. For each active cell, find adjacent mean-velocity nodes and adjacent
+   `ln(sigma)` nodes. Bilinear weights distribute that cell's luminosity to the
+   four corners. Intrinsic and attenuated accounts share geometry, keeping
+   distinct luminosities. Narrow/broad sigma bands retain their own mu spacing.
+3. A compiled selector passes original row IDs to indexed corner-major scatter.
+   Stable integer radix sorting orders the unique occupied nodes without
+   changing floating additions. Workers own sparse increments and compact
+   image partials, never a dense per-worker Gaussian histogram.
+4. The main accumulator merges each batch/group in original order into
+   `H[node, profile]`, with 40 profiles for dust x ten lines x cold/hot. Native
+   threads update only independent node rows; every call completes before the
+   next ordered increment.
+5. At output construction, standardize the occupied node boundaries with
+   `z=(v-mu)/sigma`. A single prefix table stores cumulative standard-normal
+   fine-cell masses on [-5,5], spacing 1/128. Interpolate each needed boundary
+   once; adjacent channels reuse their common value and subtract to obtain
+   integrated probabilities. Node profiles retain the five-sigma cutoff without
+   renormalization. The earlier histogram still rejects out-of-grid parameters.
+6. Multiply probabilities by the node's 40 luminosity accounts. Independent
+   channel rows may use eight verified OpenMP workers while each channel keeps
+   original ascending node/profile/block/band order. `prefix_arithmetic.py`
+   checks partial and full blocks against an independent NumPy contraction,
+   selecting FMA or separate multiply/add only after exact byte comparisons.
+   An unmatched mode raises before process; it does not silently switch methods.
+
+The four luminosity accounts distinguish actual captured channel light,
+analytic light outside the velocity window, analytic within-window light
+removed by the node cutoff, and signed lookup-window residual. In particular,
+`input = captured + outside + truncated_inside - signed_lookup_residual`;
+the report checks these identities without treating approximation as missing
+luminosity. Complete cell Gaussian moments remain independent of this cutoff.
+
+Explicit `exact` and `linear-lut` methods remain comparison references in
+[integrated_spectra.py](../src/quokka2s/products/integrated_spectra.py) and
+[_gaussian_fractions.pyx](../src/quokka2s/products/_gaussian_fractions.pyx).
+The latter uses a 1D erf table; neither is the process default or a 2D fallback.
+
 The same luminosities, velocities and thermal widths also enter
 [products/line_velocity_moments.py](../src/quokka2s/products/line_velocity_moments.py).
-`LineVelocityMoments.from_cells()` calculates the batch's total light, mean
-velocity and centered second moment, including each cell's full Gaussian.
-`merged()` combines these small totals across batches, workers and cold/hot
-branches. It also includes the separation between batch mean velocities.
+The 2D `shared_width_moments()` path preserves each line's positive mask,
+velocity anchor and NumPy reductions while reusing identical velocity/thermal
+arrays. Its `LineVelocityMoments` records contain total light, mean velocity
+and centered second moment, including every complete cell Gaussian.
+`merged()` combines these totals across batches, workers and cold/hot branches. It also includes the separation between batch mean velocities.
 No extra cell arrays remain in memory.
 The channel integrator and full moments use the same
 `MINIMUM_GAUSSIAN_WIDTH_KMS` from `line_velocity_moments.py`: 1e-5 km/s.
@@ -629,7 +675,9 @@ sigma_full² = sum(L * ((v - mean_velocity)² + s²)) / sum(L)
 For example, two equal-light cells at -10 and +10 km/s, each with thermal
 width 3 km/s, give mean velocity 0 and full sigma sqrt(100 + 9) km/s.
 The full moments do not depend on the saved ±200 km/s channel window.
-`IntegratedSpectra` owns one set of running arrays:
+`HistogramIntegratedSpectra` retains the common spectrum arrays below and
+adds the main node histogram or worker-owned sparse updates. It fills the final
+`dL_dv` channels once, during output construction:
 
 | Attribute | Shape | Stored value |
 |---|---|---|
@@ -664,8 +712,11 @@ With multiple chunk workers, `process_parallel_batches()` submits a bounded
 number of batches from the already loaded slab. Workers read the same immutable
 slab arrays; each owns its output accumulators. The main thread merges their
 results in input order using `EmissionProducts.merge()`. It reads the next slab
-only after the current one is finished. `spectral_workers` controls additional
-spectral-integration threads inside each batch.
+only after the current one is finished. The default 2D route uses sparse
+batch deposition, four verified native threads for main node merging and eight
+for final channel expansion. These phases do not nest with reader derivation.
+`spectral_workers` controls the retained explicit 1D comparison integrators,
+not another 400-bin integration pool inside 2D batches.
 
 The end of `main()` keeps construction, checking, reporting and writing separate:
 
@@ -725,8 +776,8 @@ Window moments are also saved by cold/hot branch with shape `(2, 10, 2)`.
 Zero-light lines have NaN centroids and dispersions.
 
 Process checks independent cell sums against image pixels, spectrum inputs
-and full-moment light. It checks the channel integral against captured light,
-and captured plus outside light against cell sums. These comparisons use
+and full-moment light. It checks the channel integral against captured light
+and the cutoff-aware four-account identities against cell sums. These comparisons use
 `rtol=1e-10, atol=0`: float64 summation-order differences are accepted; expected
 zero light must remain zero. It also checks finite physical outputs, dust
 attenuation, cold CIII/CIV zeros and gas-phase accounting. Plot does not repeat
@@ -743,10 +794,10 @@ form:
 | `execution` | Slab size, query-batch size, and worker counts |
 | Counts, masses, and conservation checks | Per-line missing emissivities, unavailable gas temperatures, luminosity sums, and spectral-window losses |
 | `cold_gas_luminosity_by_despotic_temperature` | Cold-branch Halpha/HI/CII light above four TD thresholds, corresponding total light, and intrinsic/attenuated fractions |
-| `elapsed_seconds` | Time to build the report, before saving; final `status.json` includes file-writing time |
+| `elapsed_seconds` | Process time through report construction, excluding Gaussian build and actual z conversion; final `status.json` also includes saving and cleanup |
 
 `write_emission_results()` receives only the output directory, finished payloads
-and report. It writes the three NPZ files and `emission_report.json`; it does not
+and report. It writes three uncompressed NPZ files and `emission_report.json`; it does not
 open yt, query tables, add metadata or perform checks. `main()` marks completion
 only after writing succeeds. `status.json` records progress or a failure,
 including the failed stage; it is not a resume checkpoint.

@@ -183,6 +183,15 @@ class Snapshot:
         foreground_column, shielding_column and velocity_gradient. Field reading
         includes cache filling and unit conversion; core preparation occurs twice.
         """
+        if self.field_reader is not None and hasattr(self.field_reader, 'derive_slab'):
+            return self.field_reader.derive_slab(
+                self,
+                x_start=x_start,
+                x_stop=x_stop,
+                y_start=y_start,
+                y_stop=y_stop,
+                on_stage=on_stage,
+            )
         # 1. Copy selected cells plus one periodic neighbour on each x/y side.
         # Example: x=0:8 reads [255, 0, ..., 7, 8]; y=0:1 reads [255, 0, 1].
         # All z cells remain present so neither column calculation is truncated.

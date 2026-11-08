@@ -55,11 +55,12 @@ uv sync --python "$(command -v python)"
 ```
 
 uv creates `.venv` and installs the checkout in editable mode. No activation,
-`PYTHONPATH` or manual `pip install` is needed. Building yt and the Cython
-spectrum kernel needs Git and C/C++ build tools. uv installs the pinned Cython
+`PYTHONPATH` or manual `pip install` is needed. Building yt and the thirteen native
+processing kernels needs Git and C/C++ build tools. uv installs the pinned Cython
 and SciPy build dependencies automatically. Keep a GCC/Clang-compatible C
-compiler available when rebuilding the spectrum extension after a source update;
-`uv sync` tracks `src/quokka2s/products/_gaussian_fractions.pyx` for rebuilds.
+compiler available when rebuilding after a source update; `uv sync` tracks the
+processing `.pyx` sources and shared build settings. Linux builds probe OpenMP
+before enabling independent node-merge and final-channel threads.
 After setup, later logins only need `cd` to this repository
 and the `uv run` commands below. They reuse the existing environment and check
 its dependencies automatically, without activation or repeated exports.
@@ -114,19 +115,26 @@ directories are reported without being overwritten. Legacy results remain
 drawable with plot. Choose a fresh results root for a separate calculation;
 see the [reuse rules](usage.md#completed-result-reuse).
 
-The default spectral method is direct `erf` integration. To test the optional
-compiled one-dimensional lookup approximation, select it explicitly and use
-a separate output group:
+The default is pure `histogram-2d`: cell luminosities accumulate onto neighboring
+mean/width nodes, then one standard-normal cumulative table expands their spectra.
+Adjacent channels reuse their shared cumulative boundary.
+Node Gaussians are truncated at five sigma without renormalization or 1D fallback.
+To compare the retained one-dimensional reference method, select it explicitly
+and use a separate output group:
 
 ```bash
 uv run process --jobname sigma50-lut --spectral-method linear-lut --no-plot
 ```
 
 This keeps the configured dataset and x/y selection. Use
-`--spectral-method exact` for the direct method. Both methods read the original snapshot without
-modifying it; results stay in the selected SOFTWARE output group. The chosen
-method is saved in the report and must match for process reuse. Lookup changes
-channel values slightly through interpolation; see
+`--spectral-method exact` for direct integration. Process uses prepared raw
+z-contiguous fields and preserves the original snapshot. Set `prepared_z_fields`
+to an existing validated cache to reuse it read-only; `null` creates a temporary
+copy. Process timing excludes conversion and Gaussian preparation, while input
+initialization, payload reads, physical lookups, products, checks and saving remain
+timed. Results stay in the selected output group. The chosen method is saved in
+the report and must match for process reuse. Interpolation changes channel
+values; see
 [spectral integration](usage.md#spectral-integration) before comparing results.
 
 To process the run's direct `plt` plus digits directories, in numeric order:

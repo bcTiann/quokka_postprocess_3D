@@ -1,8 +1,13 @@
 """Verify completed numerical results before skipping an expensive calculation."""
 from __future__ import annotations
 
+import importlib
+from importlib.machinery import EXTENSION_SUFFIXES
 import json
+import os
 from pathlib import Path
+import platform
+import sys
 from zipfile import ZipFile
 
 from quokka2s.emission_results import read_emission_results
@@ -50,13 +55,47 @@ def snapshot_file_state(dataset: Path) -> dict:
     }
 
 
+def _runtime_numerical_identity() -> dict:
+    """Bind saved results to the actual NumPy dispatch and library runtime.
+
+    Inspect metadata/binary identity only; no Gaussian preparation, snapshot
+    reads or emission-table queries occur. The NumPy core is the same loaded
+    binary whose CPU feature dispatch selects the einsum implementation.
+    """
+    import numpy as np
+    import scipy
+
+    try:
+        core = importlib.import_module("numpy._core._multiarray_umath")
+    except ModuleNotFoundError:
+        core = importlib.import_module("numpy.core._multiarray_umath")
+    features = {
+        name: bool(value)
+        for name, value in sorted(getattr(core, "__cpu_features__", {}).items())
+    }
+    return {
+        "system": platform.system(),
+        "machine": platform.machine(),
+        "python_version": list(sys.version_info[:3]),
+        "python_implementation": platform.python_implementation(),
+        "byteorder": sys.byteorder,
+        "numpy_version": np.__version__,
+        "scipy_version": scipy.__version__,
+        "numpy_cpu_features": features,
+        "numpy_disable_cpu_features": os.environ.get("NPY_DISABLE_CPU_FEATURES"),
+        "numpy_einsum_binary_sha256": file_sha256(core.__file__),
+    }
+
+
 def processing_input_identity(config: ProcessSettings) -> dict:
     """Record source-file metadata and hashes of tables and calculation sources.
 
     Snapshot payloads are only stat'ed, never hashed or loaded. File sizes and
     nanosecond modification times detect ordinary source updates. Table and
-    Python/Cython source hashes also detect replacements at the same paths.
-    These records govern result reuse, not physical table compatibility.
+    Python/Cython and native-extension hashes detect replacements at the
+    same paths. Runtime versions and NumPy dispatch/binary identity also bind
+    reuse to its numerical implementation. These records govern result reuse,
+    not physical table compatibility.
     """
     if not (config.dataset / "Header").is_file():
         raise FileNotFoundError(f"Missing snapshot Header: {config.dataset / 'Header'}")
@@ -64,16 +103,34 @@ def processing_input_identity(config: ProcessSettings) -> dict:
     source_hashes = {
         str(path.relative_to(package_directory)): file_sha256(path)
         for path in sorted(package_directory.rglob("*"))
-        if path.suffix in (".py", ".pyx")
+        if path.is_file()
+        and (
+            path.suffix in (".py", ".pyx")
+            or any(
+                path.name.endswith(suffix)
+                and path.name[:-len(suffix)].isidentifier()
+                for suffix in EXTENSION_SUFFIXES
+            )
+        )
     }
     table_hashes = {
         name: file_sha256(getattr(config, name))
         for name in ("despotic_table", "cloudy_table", "dust_opacity_table")
     }
+    snapshot_state = snapshot_file_state(dataset=config.dataset)
+    prepared_identity = None
+    if config.prepared_z_fields is not None:
+        from .z_contiguous_cache import z_contiguous_cache_identity
+        prepared_identity = z_contiguous_cache_identity(
+            cache_directory=config.prepared_z_fields,
+            source_identity=snapshot_state,
+        )
     return {
-        "snapshot_files": snapshot_file_state(dataset=config.dataset),
+        "snapshot_files": snapshot_state,
         "table_sha256": table_hashes,
         "source_sha256": source_hashes,
+        "runtime_identity": _runtime_numerical_identity(),
+        "prepared_z_fields": prepared_identity,
     }
 
 

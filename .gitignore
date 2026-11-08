@@ -5,9 +5,13 @@
 /build/
 /dist/
 # Local Cython build products; the readable .pyx source is tracked.
-/src/quokka2s/products/_gaussian_fractions.c
-/src/quokka2s/products/_gaussian_fractions*.so
-/src/quokka2s/products/_gaussian_fractions*.pyd
+/src/**/*.c
+/src/**/*.so
+/src/**/*.pyd
+/src/**/*.so.new
+/src/**/*.pyd.new
+/build_receipt.json
+/portable_c_manifest.json
 .ipynb_checkpoints/
 .DS_Store
 .vscode/

@@ -1,10 +1,11 @@
 """Load run inputs: a native snapshot, two emission tables, and dust opacity."""
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
+import time
 
 from quokka2s.cloudy.lookup import CloudyLookup
 from quokka2s.cloudy.cell_fields import CloudyCellReader
@@ -20,7 +21,7 @@ from quokka2s.snapshot_reader import Snapshot
 from quokka2s.despotic.table_files import load_table
 from quokka2s.despotic.lookup import DespoticLookup
 from quokka2s.despotic.snapshot_domain import validate_table_domain
-from quokka2s.z_contiguous_cache import prepare_z_contiguous_cache, ZContiguousReader
+from quokka2s.z_contiguous_cache import prepare_z_contiguous_cache, z_contiguous_cache_identity
 
 
 def load_processing_inputs(config):
@@ -31,14 +32,19 @@ def load_processing_inputs(config):
     cell arrays are loaded later by read_slab()."""
     print('Inputs: checking snapshot and table paths...', flush=True)
     check_input_paths(config)
-    print('Inputs: opening snapshot metadata with yt...', flush=True)
-    snapshot = open_snapshot(
-        dataset_path=config.dataset,
-        xy_region={
-            "x": config.x_index_range,
-            "y": config.y_index_range,
-        },
-    )
+    region = {"x": config.x_index_range, "y": config.y_index_range}
+    sidecar = None if config.prepared_z_fields is None else config.prepared_z_fields / 'snapshot_metadata.json'
+    if sidecar is not None and sidecar.exists():
+        from .snapshot_metadata import open_snapshot_metadata
+        print('Inputs: restoring validated snapshot metadata; no yt load...', flush=True)
+        snapshot = open_snapshot_metadata(
+            dataset_path=config.dataset,
+            metadata_path=sidecar,
+            xy_region=region,
+        )
+    else:
+        print('Inputs: opening snapshot metadata with yt...', flush=True)
+        snapshot = open_snapshot(dataset_path=config.dataset, xy_region=region)
     print_snapshot_summary(snapshot=snapshot)
     emission_calculator = load_emission_calculator(config=config)
 
@@ -50,28 +56,63 @@ def load_processing_inputs(config):
 
 
 @contextmanager
-def prepare_z_contiguous_snapshot(*, snapshot: Snapshot, work_directory: Path, source_identity: dict):
-    """Yield a prepared snapshot and delete its owned copy when processing exits.
+def prepare_z_contiguous_snapshot(
+    *, snapshot: Snapshot, dataset_path: Path, work_directory: Path, source_identity: dict,
+    prepared_directory: Path | None = None, reader_threads: int = 8,
+    read_workers: int = 5,
+):
+    """Prepare/reuse z fields, then own one bounded reader until processing exits.
 
-    The work directory is the selected result's parent, never the source plt or
-    a capacity-limited system temporary directory. Only this context's unique
-    temporary directory is removed. Geometry, units and physical axes stay the
-    same; standalone input-loading callers retain their original native reader.
+    Snapshot and native metadata are initialized by the timed process. Only
+    prepare_z_contiguous_cache()'s created conversion cost may be excluded.
+    Reader construction, unit factors and existing-cache checks remain timed.
     """
-    with TemporaryDirectory(prefix='.zfields-', dir=work_directory) as temporary_directory:
-        cache_directory = Path(temporary_directory) / 'fields'
-        native_reader = snapshot.native_reader
+    from .bounded_z_reader import BoundedEagerReader
+    native_reader = snapshot.native_reader
+    if prepared_directory is None:
+        storage = TemporaryDirectory(prefix='.zfields-', dir=work_directory)
+    else:
+        prepared_directory = Path(prepared_directory).resolve(strict=True)
+        storage = nullcontext(prepared_directory)
+    with storage as directory:
+        cache_directory = Path(directory) / 'fields' if prepared_directory is None else Path(directory)
         preparation = prepare_z_contiguous_cache(
             native_reader=native_reader,
             cache_directory=cache_directory,
             source_identity=source_identity,
         )
-        field_reader = ZContiguousReader(
-            native_reader=native_reader,
-            cache_directory=cache_directory,
+        if prepared_directory is not None and preparation['created']:
+            raise AssertionError('An explicitly prepared cache cannot be converted during process')
+        metadata_write = None
+        if preparation['created']:
+            from .snapshot_metadata import write_snapshot_metadata
+            metadata_write = write_snapshot_metadata(
+                snapshot=snapshot,
+                dataset_path=dataset_path,
+                metadata_path=cache_directory / 'snapshot_metadata.json',
+                source_identity=source_identity,
+            )
+            preparation['identity'] = z_contiguous_cache_identity(
+                cache_directory=cache_directory,
+                source_identity=source_identity,
+            )
+        preparation['metadata_sidecar_write'] = metadata_write
+        initialization_began = time.monotonic()
+        reader = BoundedEagerReader(
+            native_reader,
+            cache_directory=preparation['directory'],
+            reader_threads=reader_threads,
+            read_workers=read_workers,
         )
-        prepared_snapshot = replace(snapshot, field_reader=field_reader)
-        yield prepared_snapshot, preparation
+        preparation['reader_initialization_seconds'] = time.monotonic() - initialization_began
+        preparation['conversion_seconds'] = preparation['preprocessing_seconds'] if preparation['created'] else 0.0
+        preparation['cache_reused'] = not preparation['created']
+        preparation['reader_statistics'] = reader.read_statistics
+        preparation['derivation_statistics'] = reader.derivation_statistics
+        try:
+            yield replace(snapshot, field_reader=reader), preparation
+        finally:
+            reader.close()
 
 
 def print_snapshot_summary(snapshot: Snapshot) -> None:
@@ -146,8 +187,10 @@ def load_emission_calculator(config) -> CellEmissionCalculator:
     the product accumulators, so loading the emission tables does not need it.
     Return a calculator holding two readers, line names, and named cross-sections
     [cm^2/H]. No cell queries run here."""
+    from .despotic.runtime_table import load_runtime_despotic_lookup
+
     print(f'Tables: loading DESPOTIC: {config.despotic_table}', flush=True)
-    despotic = load_despotic_lookup(
+    despotic = load_runtime_despotic_lookup(
         table_path=config.despotic_table,
     )
     print(f'Tables: loading Cloudy: {config.cloudy_table}', flush=True)
