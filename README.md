@@ -33,7 +33,7 @@ uv sync
 
 uv creates `.venv` and installs this checkout in editable mode. No activation,
 `PYTHONPATH` or manual `pip install` is needed. The locked environment uses
-Python 3.11. Building yt and the thirteen native processing kernels needs Git and C/C++
+Python 3.11. Building yt and the fourteen native processing kernels needs Git and C/C++
 build tools. uv installs the pinned build dependencies automatically; no manual
 Cython installation or compilation command is needed. Both process and plot
 dependencies are installed by default. `uv run` checks the environment
@@ -216,12 +216,16 @@ folder name to locate saved products; the original simulation is not needed.
 Process records its effective settings in `emission_report.json`.
 The process defaults are eight x cells per slab, 131,072 cells per batch,
 16 concurrent batches, five field streams and 32 column-derivation tasks.
-Gaussian integration defaults to pure `histogram-2d`: deposit cell luminosity
-onto neighboring `(mu, ln(sigma))` nodes, merge batches in order and expand
-one standard-normal cumulative table with shared channel boundaries. Nodes use a five-sigma cutoff without
-renormalization or 1D fallback. Supported OpenMP builds use four main merge
-threads and eight final channel threads. Explicit `exact` and `linear-lut`
-methods remain references. Process timing excludes raw-field conversion and
+Gaussian integration defaults to `histogram-layered`: distribute each cell's
+luminosity across four nodes on fixed logarithmic sigma layers, with mean
+spacing `0.1 * sigma(layer)`. Worker and main hash stores allocate only visited
+integer-key nodes, without a configured mu/sigma coverage box. The physical
+width floor remains `1e-5 km/s`; invalid or unrepresentable nodes raise.
+The main store merges batches in order on one thread. One standard-normal
+prefix table expands occupied nodes, using eight final channel threads when
+supported. Node profiles retain a five-sigma cutoff without renormalization.
+Explicit bounded `histogram-2d`, `exact` and `linear-lut`
+methods remain comparison routes. Process timing excludes raw-field conversion and
 Gaussian preparation; reading, physical lookups, all products, checks and saving
 remain timed. See the [processing settings](docs/usage.md#processing-settings).
 

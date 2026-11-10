@@ -34,14 +34,19 @@ slab_nx: 8
 # Retained for native-reader utilities; the process eager reader uses slab_nx.
 field_cache_slabs: 16
 field_cache_gib: 12
-spectral_method: histogram-2d
+# Occupied nodes only: each layer uses delta_mu=0.1*sigma(layer), delta_ln_sigma=1/32.
+spectral_method: histogram-layered
+# Null uses the selected method's defaults; layered has no finite mu/sigma rectangle.
+# Layered overrides: mu_spacing_ratio, log_sigma_step and mu_anchor (km/s).
+gaussian_grid: null
 # Optional absolute path of an existing validated raw z-field cache.
 # Null keeps a scoped temporary conversion; a supplied cache is read-only.
 prepared_z_fields: null
 # Independent tasks within the single-snapshot reader and main accumulator.
 z_reader_threads: 32
 z_read_workers: 5
-# Null selects 4 when OpenMP is available, otherwise 1.
+# Null selects one ordered merge thread for histogram-layered.
+# The explicit histogram-2d reference selects 4 with OpenMP, otherwise 1.
 histogram_merge_threads: null
 # Only a temporary copy created by this process is removed on completion/failure.
 

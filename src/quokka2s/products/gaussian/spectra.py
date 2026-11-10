@@ -145,7 +145,7 @@ class HistogramIntegratedSpectra(IntegratedSpectra):
         self.histogram_statistics["deposit_seconds"] += time.perf_counter() - began
         self.histogram_statistics["kernel_rows"] += int(velocity_kms.size)
         self.histogram_statistics["fallback_rows"] += int(np.count_nonzero(increment.fallback_mask))
-        self.histogram_statistics["histogram_updates"] += int(increment.nodes.size)
+        self.histogram_statistics["histogram_updates"] += int(increment.nodes.shape[0])
         profile_ids = self._profile_ids(line_keys, branch_index)
         self._registered_input[profile_ids] += increment.weights.sum(axis=0)
         if self.batch_partial:

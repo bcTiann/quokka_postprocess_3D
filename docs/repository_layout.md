@@ -1,7 +1,9 @@
 # Repository directories and reading order
 
-The Python production workflow uses the default pure-2D Gaussian luminosity
-histogram and a bounded eager reader for z-contiguous raw fields. It validates
+The Python production workflow uses the default `histogram-layered` Gaussian
+luminosity accumulator: sigma-scaled mean nodes are allocated on demand in
+worker and main integer-key hash stores. A bounded eager reader supplies
+z-contiguous raw fields. Process validates
 an explicit read-only `prepared_z_fields` cache or creates/removes its own
 temporary copy when that setting is null. Snapshot metadata/physical inputs and
 all numerical work remain timed; only Gaussian preparation and actual z
@@ -19,7 +21,7 @@ standalone wheel with embedded input data. The default dependencies support
 both process and plot; the `tables` extra adds the optional chemistry solver
 and table-building tools.
 
-The package builds thirteen native extensions with normal `setup.py` and shared
+The package builds fourteen native extensions with normal `setup.py` and shared
 `build_support.py`, using pinned Cython/NumPy/SciPy build dependencies. The native
 inventory covers legacy 1D reference integration, 2D deposition/row selection/
 merge/prefix integration/spectral preparation and retained A reference kernels, Cloudy/DESPOTIC interpolation,
@@ -27,8 +29,9 @@ fused slab derivation, paired-field checking and compact images. `uv` cache
 keys track these sources and build declarations. Generated C and binaries are
 local build products. On Linux the active compiler must pass an OpenMP link
 probe before merge/expansion receive those flags; macOS uses serial kernels.
-Runtime verifies actual teams: automatic main merge selects four and expansion
-eight only when available, otherwise one; explicit unsupported teams raise.
+The default main sparse merge uses one thread; channel expansion selects
+eight verified workers when supported, otherwise one. The retained bounded
+comparison can use its OpenMP merge kernel. Unsupported explicit teams raise.
 Plot does not import these processing extensions to draw saved arrays.
 
 ## Where each kind of file belongs
@@ -76,17 +79,20 @@ Plot does not import these processing extensions to draw saved arrays.
    line's emissivity and temperature, then apply foreground dust.
 5. [emission_products.py](../src/quokka2s/products/emission_products.py) sends each
    batch to images, spectra and gas phases. Default
-   [products/gaussian/spectra.py](../src/quokka2s/products/gaussian/spectra.py)
-   deposits luminosities into a mu/ln(sigma) grid, keeps sparse worker increments
-   and merges the main 40-account histogram in original batch/group order.
-   [products/gaussian/preparation.py](../src/quokka2s/products/gaussian/preparation.py)
-   builds one standard-normal prefix table before the process clock.
-   `prefix_tables.py` stores cumulative fine-cell masses on dimensionless
-   [-5,5]; `prefix_engine.py` standardizes each occupied node and reuses
-   adjacent channel boundaries. Cutoff support is not renormalized. The
-   preceding two-dimensional grid still rejects out-of-grid emitting cells.
-   `prefix_arithmetic.py` binds exact contraction arithmetic to the actual
-   prefix binary, NumPy dispatch, table, geometry and observed native team.
+   [products/gaussian/layered_spectra.py](../src/quokka2s/products/gaussian/layered_spectra.py)
+   distributes luminosities to four sigma-layer/mean nodes and keeps worker
+   increments plus a sparse main 40-account store. Main merging preserves
+   original batch/group order. `layered_geometry.py` defines stable `(k,i)`
+   keys with mean spacing `0.1 * sigma(k)`, logarithmic step `0.03125` and
+   physical sigma floor `1e-5 km/s`, without a rectangular coverage box.
+   [products/gaussian/layered_engine.py](../src/quokka2s/products/gaussian/layered_engine.py)
+   prepares one standard-normal prefix table before the process clock and
+   expands sorted occupied nodes with shared adjacent channel boundaries.
+   `prefix_tables.py` stores cumulative fine-cell masses on [-5,5]; node
+   cutoff support is not renormalized. Invalid or unrepresentable coordinates
+   raise. `layered_gate.py` and `prefix_arithmetic.py` bind exact contraction
+   arithmetic to the coordinate/prefix binaries, NumPy dispatch, table,
+   coordinate rule and observed native team.
    `integrated_spectra.py` and `_gaussian_fractions.pyx` retain explicit
    `exact`/`linear-lut` comparison methods, not the default process algorithm.
 6. [plot_emission_results.py](../src/quokka2s/plot_emission_results.py): draw the
@@ -111,9 +117,16 @@ current scientific rules.
 | `despotic/` | `solver_settings.py`: adopted solver defaults/source identities; `table_data.py`: table records/field names; `snapshot_domain.py`: physical settings/bounds checks and recorded build-snapshot metadata |
 | `despotic/` | `table_files.py`: NPZ serialization; `cell_solver.py`: equilibrium at one state; `fixed_temperature_chemistry.py`: fixed-temperature GOW callable; `abundance_workspace.py`, `two_body_rates.py`, `reaction_terms.py`: its composition and reaction helpers; `table_builder.py`: grid calculation |
 | `despotic/` | `runtime_table.py`: seven-field process loader; `lookup.py` and `cell_fields.py`: queries; `build_table.py`, `extend_table.py`, `interpolate_failed.py`, `list_failures.py`: table commands; `table_extension.py`: exact axis extension and raw-source validation; `prepare_table_plots.py`/`table_figure_data.py`: numerical figure preparation; `plot_table.py`/`table_plots.py`: draw saved panels |
-| `products/gaussian/` | Default 2D geometry, sparse deposition/merge, standard-normal prefix table, runtime arithmetic gate, channel expansion and cutoff luminosity accounting |
+| `products/gaussian/` | Default sigma-layer coordinates, compiled sparse worker/main node stores, standard-normal prefix expansion and node-window accounting; explicit bounded comparison |
 | `products/` | Image, spectrum, gas-phase and auxiliary numerical accumulation; `profile_preparation.py` prepares saved normalized/per-area curves; auxiliary preparation modules save masks, logarithmic panels, limits and radiation/dust samples |
 | `figures/` | `line_luminosity_images.py`, `line_spectra.py`, `gas_phase_spectra.py`, `all_line_spectra.py`: saved-product renderers; `line_labels.py`: titles; `figure_files.py`: PNG/PDF paths and saving; other modules: additional figures |
+
+The explicit `histogram-2d` comparison retains `geometry.py`, `pure_engine.py`
+and `spectra.py` for the previous bounded axes and dense main histogram.
+`preparation.py` and `prefix_engine.py` supply its prefix expansion. Its
+finite bounds remain strict; it does not switch methods on out-of-grid input.
+See [spectral settings](usage.md#spectral-integration) for method-specific
+configuration and the distinction between node and original-cell accounts.
 
 `gas_fields.mixed_gas_temperature_K()` supplies the cold-DESPOTIC/hot-QUOKKA
 temperature rule to gas-phase statistics, projection maps and phase histograms.

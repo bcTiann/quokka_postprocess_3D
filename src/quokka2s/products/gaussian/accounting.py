@@ -134,8 +134,12 @@ def update_cutoff_report(report, payload, *, engine, audit):
         raise ValueError("Unsupported histogram-node integration table")
     for dust_index, dust_key in enumerate(payload["dust_state_keys"].tolist()):
         dust_report = report[dust_key]
+        if getattr(engine, "coordinate_rule", None) == "sigma-scaled-layered":
+            histogram_description = "Layered ln(sigma) luminosity histogram with sigma-scaled mean spacing"
+        else:
+            histogram_description = "Bilinear mu/ln(sigma) luminosity histogram"
         dust_report["profile"] = (
-            f"Bilinear mu/ln(sigma) luminosity histogram with {description}; "
+            f"{histogram_description} with {description}; "
             "node Gaussians truncated at +/-5 sigma without renormalization"
         )
         dust_report["node_integration"] = node_integration

@@ -399,6 +399,9 @@ def run_one_snapshot(config: ProcessSettings, config_path: Path) -> None:
     if config.spectral_method == "histogram-2d":
         from quokka2s.products.gaussian.preparation import prepare_gaussian_engine
         histogram_engine, gaussian_table_seconds = prepare_gaussian_engine(config.gaussian_grid)
+    elif config.spectral_method == "histogram-layered":
+        from quokka2s.products.gaussian.layered_engine import prepare_layered_engine
+        histogram_engine, gaussian_table_seconds = prepare_layered_engine(config.gaussian_grid)
     print_run_settings(config=config, config_path=config_path)
     began = time.monotonic()
     input_identity = processing_input_identity(config=config)
@@ -539,8 +542,9 @@ def main(argv=None):
     --no-plot saves numerical products only. Plot choices otherwise use the same
     YAML and format/title flags as plot. Each invocation freezes its inventory;
     completed matching products are reused and conflicting output is preserved.
-    --spectral-method explicitly overrides the YAML algorithm. Pure histogram-2d
-    is the default; legacy methods remain explicit comparison options.
+    --spectral-method explicitly overrides the YAML algorithm. Sparse
+    histogram-layered is the default; bounded histogram-2d, exact and linear-lut
+    remain explicit comparison options.
     """
     parser = argparse.ArgumentParser(
         prog="process",
@@ -552,7 +556,7 @@ def main(argv=None):
         "--spectral-method",
         choices=SPECTRAL_METHODS,
         default=None,
-        help="Override Gaussian method; histogram-2d is the default",
+        help="Override Gaussian method; histogram-layered is the default",
     )
     parser.add_argument(
         "--no-plot",

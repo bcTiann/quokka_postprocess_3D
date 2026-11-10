@@ -81,7 +81,7 @@ class EmissionProducts:
     """Running image/spectrum/phase sums; never retains individual cell arrays."""
 
     def __init__(self, snapshot, line_keys, spectral_workers, *,
-                 spectral_method="histogram-2d", histogram_engine=None,
+                 spectral_method="histogram-layered", histogram_engine=None,
                  histogram_partial=False, histogram_merge_threads=None):
         """Create image, spectrum and gas-phase accumulators for one run.
 
@@ -94,11 +94,12 @@ class EmissionProducts:
             From CellEmissionCalculator.line_keys; fixes the line order of every accumulator.
         spectral_workers : int
             Thread count for Gaussian channel integration within each batch.
-        spectral_method : {"histogram-2d", "exact", "linear-lut"}, optional
-            Two-dimensional accumulation by default; legacy comparison methods
-            stay explicit and are never invoked as a 2D fallback.
+        spectral_method : {"histogram-layered", "histogram-2d", "exact", "linear-lut"}, optional
+            On-demand sigma-layer nodes by default. The bounded-grid and direct
+            reference methods stay explicit and are never automatic fallbacks.
         histogram_engine : GaussianHistogramEngine, optional
-            The shared 2D geometry and standard-Gaussian prefix table. Required for 2D.
+            The prepared coordinate rule and shared standard-Gaussian prefix
+            table. Required for both node methods.
         histogram_partial : bool, optional
             True only for worker-owned sparse increments; the main accumulator
             merges them in original batch order before one final expansion.
@@ -111,7 +112,12 @@ class EmissionProducts:
 
         Examples
         --------
-        products = EmissionProducts(snapshot, emission_calculator.line_keys, spectral_workers=1)
+        products = EmissionProducts(
+            snapshot=snapshot,
+            line_keys=emission_calculator.line_keys,
+            spectral_workers=1,
+            histogram_engine=prepared_engine,
+        )
         """
         self.line_keys = tuple(line_keys)
         # Retain only the small geometry values needed when finalizing.
@@ -122,7 +128,7 @@ class EmissionProducts:
         velocity_edges_kms = velocity_channel_edges_kms()
 
         image_class = LineLuminosityImageAccumulator
-        if histogram_partial and spectral_method == "histogram-2d":
+        if histogram_partial and spectral_method in ("histogram-layered", "histogram-2d"):
             from .compact_images import CompactImageAccumulator
             image_class = CompactImageAccumulator
         self.images = image_class(
@@ -130,11 +136,14 @@ class EmissionProducts:
             native_xy_shape=snapshot.processing_shape[:2],
             image_xy_origin=snapshot.processing_xy_origin,
         )
-        if spectral_method == "histogram-2d":
-            from .gaussian.spectra import HistogramIntegratedSpectra
+        if spectral_method in ("histogram-layered", "histogram-2d"):
+            if spectral_method == "histogram-layered":
+                from .gaussian.layered_spectra import LayeredIntegratedSpectra as histogram_class
+            else:
+                from .gaussian.spectra import HistogramIntegratedSpectra as histogram_class
             if histogram_engine is None:
-                raise ValueError("Prepare the shared Gaussian engine before constructing 2D products")
-            self.spectra = HistogramIntegratedSpectra(
+                raise ValueError("Prepare the shared Gaussian engine before constructing node products")
+            self.spectra = histogram_class(
                 line_keys=self.line_keys,
                 velocity_edges_kms=velocity_edges_kms,
                 engine=histogram_engine,
@@ -384,7 +393,7 @@ class EmissionProducts:
             self.intrinsic_luminosity_erg_s,
             self.attenuated_luminosity_erg_s,
         ))
-        if self.spectra.spectral_method == "histogram-2d":
+        if self.spectra.spectral_method in ("histogram-layered", "histogram-2d"):
             from .gaussian.accounting import check_histogram_luminosity
             check_histogram_luminosity(outputs.spectrum_payload, expected_luminosity)
         else:

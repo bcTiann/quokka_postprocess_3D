@@ -23,6 +23,7 @@ MODULES = (
     "quokka2s.products.gaussian._spectral_fields",
     "quokka2s.products.gaussian._sparse_expand",
     "quokka2s.products.gaussian._prefix_expand",
+    "quokka2s.products.gaussian._layered_deposit",
 )
 OPENMP_MODULES = {
     "quokka2s.products.gaussian._histogram_merge",
@@ -77,6 +78,7 @@ def extension_flags(module, *, openmp_supported):
     if module in {
         "quokka2s.products.gaussian._sparse_expand",
         "quokka2s.products.gaussian._prefix_expand",
+        "quokka2s.products.gaussian._layered_deposit",
     } and sys.platform.startswith("linux"):
         link_flags.append("-lm")
     return compile_flags, link_flags

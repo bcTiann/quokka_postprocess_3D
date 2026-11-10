@@ -115,10 +115,17 @@ directories are reported without being overwritten. Legacy results remain
 drawable with plot. Choose a fresh results root for a separate calculation;
 see the [reuse rules](usage.md#completed-result-reuse).
 
-The default is pure `histogram-2d`: cell luminosities accumulate onto neighboring
-mean/width nodes, then one standard-normal cumulative table expands their spectra.
-Adjacent channels reuse their shared cumulative boundary.
-Node Gaussians are truncated at five sigma without renormalization or 1D fallback.
+The default is `histogram-layered`: each cell's luminosity is distributed to
+four nodes on logarithmic sigma layers. The default mean spacing is
+`0.1 * sigma(layer)`, with `log_sigma_step: 0.03125`, a physical width floor
+of `1e-5 km/s` and no configured mu/sigma coverage box. Worker and main hash
+stores allocate visited integer-key nodes. Main merging uses one thread in
+batch order; final prefix expansion uses eight channel threads when supported.
+One standard-normal cumulative table supplies the channel probabilities,
+with shared boundaries and a node five-sigma cutoff without renormalization.
+Invalid or unrepresentable coordinates raise. The retained `histogram-2d`
+bounded grid is an explicit comparison; use method-specific settings and a
+separate result group for that route.
 To compare the retained one-dimensional reference method, select it explicitly
 and use a separate output group:
 

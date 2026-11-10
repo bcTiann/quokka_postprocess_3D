@@ -286,7 +286,7 @@ Omitted settings use the same defaults shown in the shared YAML:
 | `spectral_workers` | Per-batch threads for explicit 1D reference methods; no extra integration pool in default 2D | 1 |
 | `z_reader_threads` | Shared reader/complete-column derivation pool size | 32 |
 | `z_read_workers` | Simultaneous raw-field file streams before derivation | 5 |
-| `histogram_merge_threads` | Main 2D merge team; null verifies four workers or selects serial | null |
+| `histogram_merge_threads` | Main sparse-node merge; the default layered method accepts one thread only | 1 |
 | `prepared_z_fields` | Absolute existing read-only field cache, or owned temporary conversion | null |
 | `field_cache_slabs`, `field_cache_gib` | Retained native-reader settings; unused by bounded eager process | 16, 12 |
 
@@ -324,32 +324,103 @@ multi-slab groups. Plot needs only saved products, never this cache.
 
 ### Spectral integration
 
-The default `spectral_method: histogram-2d` accumulates cell luminosity on a
-bounded two-dimensional mean-velocity/`ln(sigma)` grid, then expands occupied
-nodes over the fixed 400 bins from -200 to +200 km/s. Every active cell uses
-four bilinear weights; narrow/broad bands use their own mu resolution. The
-`gaussian_grid` mapping optionally supplies the grid parameters. All emitting
-parameters must be covered: out-of-grid values raise, with no 1D fallback.
+The default `histogram-layered` method accumulates each emitting cell's own
+luminosity into four parameter nodes, then expands only occupied nodes over
+400 velocity bins from -200 to +200 km/s. The default settings are:
+
+```yaml
+spectral_method: histogram-layered
+gaussian_grid:
+  mu_spacing_ratio: 0.1
+  log_sigma_step: 0.03125
+  mu_anchor: 0.0
+histogram_merge_threads: 1
+```
+
+`gaussian_grid: null` selects the same layered defaults. Fixed natural-log
+sigma layers begin at the unchanged physical floor, `1e-5 km/s`. Layer `k`
+has width `exp(log(sigma_floor) + k * log_sigma_step)`; layer zero is restored
+to the exact floor. Mean nodes on that layer have spacing
+`mu_spacing_ratio * sigma(k)`, anchored at `mu_anchor`. The lower and upper
+sigma layers each locate their own two mean neighbors and compute separate
+mean fractions. The four weights remain nonnegative and sum to one.
+
+Compiled worker and main stores allocate visited integer-key nodes `(k,i)`
+and compact luminosity rows. No main rectangular grid or fixed mu/sigma
+coverage box is allocated. Finite floating-point coordinates and signed
+integer keys still have limits: invalid inputs, overflow and indistinguishable
+neighboring nodes raise rather than clip, disappear or use another method.
+Memory includes retained capacities, hash metadata and temporary output/resize
+buffers, not just the number of final occupied rows.
+
+The main sparse store merges each batch/group in original order on one
+thread; omitted/1 selects that thread, while another explicit team raises.
+Final nodes are sorted by sigma-layer and signed mean index. Prefix expansion
+can use eight verified native channel workers when supported, otherwise one.
+The default can also be named explicitly:
+
+```bash
+uv run process --spectral-method histogram-layered --jobname sparse-process --no-plot
+```
 
 One standard-normal prefix table stores cumulative fine-cell areas on
 `z in [-5,5]` at spacing 1/128. It is prepared before process timing. Each
 occupied node standardizes its physical channel boundaries, interpolates the
-cumulative values and reuses adjacent channels' shared boundaries. No separate
-mu/sigma integral template is required. This does not remove the preceding
-two-dimensional histogram's configured mu/sigma bounds. Node profiles retain
-`mu +/- 5*sigma` clipping without renormalization. Actual captured
-light, analytic outside-window light, analytic removed within-window tails and
-the signed lookup residual are recorded separately. Full Gaussian moments,
-physical temperatures/widths, dust states and per-line missingness retain their
-cell definitions. See the [method reference](emission_method.md#saved-products-and-figures).
+cumulative values and reuses adjacent channels' shared boundaries. No
+node-by-channel probability matrix or mu/sigma integral template is retained.
+Node profiles use `mu +/- 5*sigma` clipping without renormalization; no
+original-cell support cut precedes deposition.
 
-Worker batches return sparse node increments. The main histogram merges them in
-original batch/group order. Final native expansion partitions complete channel
-rows, preserving each channel's original node/profile/block/band arithmetic.
-A runtime gate signs the actual binaries and NumPy dispatch and selects an
-exact matching native arithmetic mode against an independent prefix-table
-NumPy contraction. If neither FMA nor separate multiply/add matches, preparation
-raises before process; no method is silently substituted.
+Actual captured light, analytic outside-window light, analytic removed
+within-window tails and signed lookup residual are recorded separately.
+Their analytic U/K references describe the resulting node mixture. Full
+Gaussian moments, physical temperatures/widths, dust states and per-line
+missingness retain their original-cell definitions. This is a different node
+approximation from the bounded grid: spectra, finite-window moments and
+node-window accounts need accuracy comparisons rather than a byte-equality
+claim. Images, gas phases and original-cell full moments remain protected.
+See the [method reference](emission_method.md#saved-products-and-figures).
+
+A runtime gate binds the actual coordinate/prefix binaries, coordinate rule,
+NumPy dispatch, table and observed team. It selects a native arithmetic mode
+only after exact comparisons with an independent NumPy prefix contraction.
+If neither FMA nor separate multiply/add matches, preparation raises before
+process; no method is silently substituted. Sparse storage or a smaller
+spacing ratio alone does not establish full-process speed or an error bound.
+
+To compare another spacing ratio, use a separate configuration and output
+group. For example:
+
+```yaml
+spectral_method: histogram-layered
+gaussian_grid:
+  mu_spacing_ratio: 0.05
+  log_sigma_step: 0.03125
+  mu_anchor: 0.0
+histogram_merge_threads: 1
+```
+
+The retained `histogram-2d` comparison uses the previous bounded rectangular
+mu/`ln(sigma)` grid, narrow/broad resolutions and dense main histogram. All
+emitting parameters must fit its configured bounds; out-of-grid input raises,
+without automatically switching to the sparse default. Use a separate YAML
+file with the bounded method's keys, or its default grid:
+
+```yaml
+spectral_method: histogram-2d
+gaussian_grid: null
+histogram_merge_threads: 1
+```
+
+Historical original-cell integration timings describe a different workload.
+An approximately fourteen-minute conversion-plus-process comparison is not a
+measurement of the sparse default. Measure the complete process on fixed
+inputs and report conversion and Gaussian preparation separately.
+
+Grid mappings belong to the chosen method. Do not pass the sparse ratio keys
+to `histogram-2d` or bounded axis keys to `histogram-layered`. When comparing
+methods, select a separate YAML and output group; a CLI method override does
+not convert a method-specific `gaussian_grid` mapping.
 
 Explicit reference methods remain available:
 
@@ -361,7 +432,7 @@ uv run process --jobname reference-lut --spectral-method linear-lut
 `exact` calls SciPy's double-precision erf. `linear-lut` uses the retained 1D
 erf table on [0,8] with spacing 1/4096 and odd symmetry. Those reference paths
 keep their existing cell chunks, boundary handling and error-policy behavior.
-`--spectral-method histogram-2d` explicitly selects the default. CLI overrides
+`--spectral-method histogram-layered` explicitly selects the default. CLI overrides
 apply only to that invocation and to every selected snapshot in a run. Plot
 reads the saved method/products and does not recalculate integration.
 
@@ -386,21 +457,23 @@ Concurrency belongs to distinct phases, not one multiplied worker count:
 | Raw-field I/O, reader pool | 5 streams in the 32-thread pool | One stream per field; derivation waits for all reads |
 | Fused derivation, same reader pool | Up to 32 tasks | Disjoint complete `(x,y)` columns; no batch processing yet |
 | Emission/products, batch pool | Up to 16 batches | Immutable views of one derived slab; original ordered main merge |
-| Main 2D histogram merge | Actual team 4 or serial 1 | Independent node rows; each increment completes in original order |
-| Final 2D expansion | Actual team 8 or serial 1 | Independent complete channel rows, after all slab batches |
+| Main sparse-node merge | One main thread | Original batch/group order into the integer-key store |
+| Final occupied-node expansion | Actual team 8 or serial 1 | Independent complete channel rows, after all slab batches |
 
-The main merge may overlap unfinished batch workers, but its one team is owned
+The main merge may overlap unfinished batch workers, but it is owned
 by the main accumulator rather than nested inside every batch. Reader
 derivation finishes before those batches start; final expansion starts only
 after all slab batches are merged.
 
-All thirteen extensions build with normal setuptools and pinned native-build
-dependencies. Linux merge/expansion enable OpenMP only after the active compiler
-links its runtime. macOS uses serial kernels. Runtime observes actual team sizes;
+All fourteen extensions build with normal setuptools and pinned native-build
+dependencies. Linux channel expansion and the retained bounded merge enable
+OpenMP only after the active compiler links its runtime. macOS uses serial
+kernels. Runtime observes actual expansion team sizes;
 automatic selection falls back to one worker if necessary, while explicitly
 requested unsupported native teams raise rather than claim parallel execution.
-`histogram_merge_threads` supplies an explicit main-merge request; expansion's
-native `threads` argument is likewise strict. No OpenMP wait policy is forced.
+The sparse default accepts only `histogram_merge_threads: 1`; the explicit
+bounded comparison can request a supported merge team. Expansion's native
+`threads` argument is likewise strict. No OpenMP wait policy is forced.
 
 Memory limits for legacy field groups are not total process RSS controls.
 Current raw slab buffers, six derived arrays, batch queries, sparse increments,
