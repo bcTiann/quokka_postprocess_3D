@@ -14,6 +14,7 @@ import numpy as np
 
 from .accounting import add_cutoff_accounts, update_cutoff_report
 from .spectra import HistogramIntegratedSpectra
+from .template_coverage import TemplateCoverageTotals, print_template_coverage
 from ..integrated_spectra import IntegratedSpectra
 from ..line_velocity_moments import MINIMUM_GAUSSIAN_WIDTH_KMS
 
@@ -73,6 +74,11 @@ class TemplateIntegratedSpectra(HistogramIntegratedSpectra):
         self._finalized = False
         self._full_window_luminosity = np.zeros(self.profile_count, dtype=np.float64)
         self._clipped_window_luminosity = np.zeros(self.profile_count, dtype=np.float64)
+        self._coverage = TemplateCoverageTotals(
+            profile_count=self.profile_count,
+            table_minimum=engine.lookup_tables.sigma_nodes[0],
+            table_maximum=engine.lookup_tables.sigma_nodes[-1],
+        )
         self._groups = []
         self._owned_input_bytes = 0
         self._groups_prepared = 0
@@ -98,6 +104,13 @@ class TemplateIntegratedSpectra(HistogramIntegratedSpectra):
             "independent_window_accounting_seconds": 0.0,
             "spectral_add_batch_seconds": 0.0,
             "ordered_profile_merge_seconds": 0.0,
+            "fallback_probability_seconds": 0.0,
+            "fallback_rows": 0,
+            "fallback_active_rows": 0,
+            "fallback_probability_intervals": 0,
+            "fallback_probability_batches": 0,
+            "fallback_product_updates": 0,
+            "coverage_statistics_seconds": 0.0,
         }
 
     def add_batch(self, cells, emission):
@@ -153,6 +166,7 @@ class TemplateIntegratedSpectra(HistogramIntegratedSpectra):
                 self._clipped_window_luminosity[group.profile_ids] += result.clipped_window
                 for name, value in result.statistics.items():
                     self.direct_statistics[name] = self.direct_statistics.get(name, 0) + value
+                self._coverage.add_group(result.coverage, group.profile_ids)
                 self._groups_finished += 1
             if self._groups_finished != self._groups_prepared:
                 raise AssertionError("A prepared original-cell Gaussian group was omitted")
@@ -188,6 +202,7 @@ class TemplateIntegratedSpectra(HistogramIntegratedSpectra):
         self.merge_full_line_moments(moments=other.full_line_moments, line_keys=self.line_keys)
         self._full_window_luminosity += other._full_window_luminosity
         self._clipped_window_luminosity += other._clipped_window_luminosity
+        self._coverage.merge(other._coverage)
         for name, value in other.direct_statistics.items():
             self.direct_statistics[name] = self.direct_statistics.get(name, 0) + value
         self.direct_statistics["ordered_profile_merge_seconds"] += perf_counter() - began
@@ -246,16 +261,23 @@ class TemplateIntegratedSpectra(HistogramIntegratedSpectra):
         self.engine.validate_prepared_state()
         self._finalized = True
         payload, report = IntegratedSpectra.build_output(self, projected_area_cm2=projected_area_cm2)
+        coverage = self._coverage.summary(
+            line_keys=self.line_keys,
+            input_luminosity=self.input_luminosity,
+            clipped_window_luminosity=self._clipped_window_luminosity,
+        )
         statistics = {
             **self.direct_statistics,
             "coordinate_rule": "original-cell-template-query",
             "histogram_allocated": False,
             "node_records_created": 0,
-            "cell_by_channel_probability_matrix_allocated": False,
+            "cell_by_channel_probability_matrix_allocated": self._coverage.counts["outside_rows"] > 0,
+            "probability_matrix_scope": "Only bounded out-of-table rows; never table-covered cells or a whole snapshot",
+            "maximum_direct_probability_rows": self.engine.maximum_direct_probability_rows,
             "per_cell_probability_buffer_bytes": 400 * 8,
-            "integration": "Original-cell four-corner preintegrated template query",
+            "integration": "Original-cell four-corner template query; valid out-of-table widths use stable direct bin integrals",
             "cutoff_sigma": 5.0,
-            "cutoff_applies_to": "Each stored template-corner Gaussian",
+            "cutoff_applies_to": self.engine.cutoff_applies_to,
             "renormalized": False,
             "accounting_scope": "Independent original-cell analytic endpoint intervals",
             "timing_scope": "integration/accounting/add_batch durations sum overlapping worker calls; see processing_timings.gaussian for elapsed union and wave wall",
@@ -265,7 +287,7 @@ class TemplateIntegratedSpectra(HistogramIntegratedSpectra):
         }
         accounting_engine = SimpleNamespace(
             coordinate_rule="original-cell",
-            cutoff_applies_to="Original-cell Gaussians for analytic references; stored template-corner Gaussians for queried spectra",
+            cutoff_applies_to=self.engine.cutoff_applies_to,
             lookup_tables=self.engine.lookup_tables,
             expansion_statistics=statistics,
             untruncated_window_luminosity=self._full_window_luminosity,
@@ -273,13 +295,27 @@ class TemplateIntegratedSpectra(HistogramIntegratedSpectra):
         )
         audit = add_cutoff_accounts(payload, engine=accounting_engine, cutoff_sigma=5.0)
         update_cutoff_report(report, payload, engine=accounting_engine, audit=audit)
-        for dust_report in report.values():
+        for dust_state, dust_report in report.items():
             dust_report["spectral_method"] = "direct-template"
             dust_report["direct_statistics"] = statistics
-            dust_report["fallback"] = "None: all emitting cells use the prepared integrated templates; uncovered widths raise"
+            dust_report["template_coverage"] = {
+                **coverage,
+                "profiles": [entry for entry in coverage["profiles"] if entry["dust_state"] == dust_state],
+            }
+            dust_report["profile"] = (
+                "Original-cell four-corner phase/log-sigma templates inside coverage; "
+                "original mu/sigma stable bin integration outside sigma coverage"
+            )
+            dust_report["cutoff_applies_to"] = self.engine.cutoff_applies_to
+            dust_report["cell_integration"] = "preintegrated-templates-with-direct-outside-sigma-integration"
+            dust_report["fallback"] = (
+                "All valid out-of-table widths use stable original-cell bin integrals; "
+                "same +/-5sigma cutoff, no renormalization or luminosity omission threshold"
+            )
             dust_report["merge_backend"] = {
                 "selected_threads": 1,
                 "batch_group_order_unchanged": True,
                 "storage": "Small channel profiles and endpoint vectors; no parameter-node accumulator",
             }
+        print_template_coverage(coverage, self.direct_statistics)
         return payload, report

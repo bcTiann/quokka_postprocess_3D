@@ -64,7 +64,8 @@ def interval_probability(a, b):
     active = a < b
     # Even log-CDF differences lose digits for extraordinarily narrow intervals.
     # An independent SciPy 8-point Gaussian rule on these smooth tiny intervals
-    # avoids endpoint subtraction. This path is reference/build time only.
+    # avoids endpoint subtraction in table building, direct integration and
+    # independent original-cell window accounting.
     with np.errstate(over="ignore", invalid="ignore"):
         width = b - a
         midpoint = 0.5 * a + 0.5 * b

@@ -91,7 +91,9 @@ Plot does not import these processing extensions to draw saved arrays.
    calls [_template_integrate.pyx](../src/quokka2s/products/gaussian/_template_integrate.pyx)
    to interpolate each original cell and directly add its luminosity-weighted
    probabilities. Default sigma coverage is [1e-5,1024] km/s, with natural-log
-   step 1/32; uncovered widths raise. Mean integer shifts reuse the phase table.
+   step 1/32; valid uncovered widths use direct stable bin integration. Mean
+   integer shifts reuse the phase table. `template_coverage.py` combines observed
+   extrema and per-account fallback counts/light in original worker merge order.
    Original-cell analytic endpoint accounts remain separate from queried
    template-corner support. No luminosity-node histogram is created.
    `layered_spectra.py` and `layered_engine.py` retain the previous sparse-node

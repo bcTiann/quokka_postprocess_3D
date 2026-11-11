@@ -220,10 +220,12 @@ Gaussian integration defaults to `direct-template`: each original cell directly
 interpolates four preintegrated fractional-mean/log-sigma templates, multiplies
 their channel probabilities by its luminosity and adds the small spectrum.
 Integer-bin mean shifts reuse the same fractional templates. No luminosity-node
-histogram or batch-by-400 probability matrix is allocated. The compiled kernel
+histogram or table-covered batch-by-400 probability matrix is allocated. The compiled kernel
 uses float64 and each template node's five-sigma support without renormalization.
 The table's default sigma coverage is `1e-5` to `1024 km/s`, with natural-log
-spacing `0.03125`; uncovered widths raise. A wider known domain can be selected
+spacing `0.03125`. Valid widths outside that table use original-cell stable bin
+integration with the same five-sigma cutoff and no brightness omission threshold.
+Only those outside rows use bounded probability blocks. A wider known domain can be selected
 with `gaussian_grid: {sigma_max: 8192.0}`. Nonflat phase transition spacing is at most 0.1 and
 is finer near narrow-profile channel transitions. Physical width and missingness
 rules are unchanged. Bounded physical-preparation/query waves finish and merge
@@ -231,6 +233,8 @@ in original batch order. Retained `histogram-layered`, `histogram-2d`, `exact`
 and `linear-lut` methods are explicit comparisons. Process timing excludes
 raw-field conversion and Gaussian preparation; reading, physical lookups, all products, checks and saving
 remain timed. See the [processing settings](docs/usage.md#processing-settings).
+Final logs and `spectral_report.*.template_coverage` record outside-row counts,
+observed sigma ranges, per-line fallback luminosities and direct integration work.
 
 [Detailed usage](docs/usage.md) · [Methods](docs/emission_method.md) ·
 [Code guide](docs/code_walkthrough.md) · [Repository layout](docs/repository_layout.md)

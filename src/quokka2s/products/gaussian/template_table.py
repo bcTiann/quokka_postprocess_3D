@@ -358,7 +358,7 @@ class FractionalGaussianTable:
                 "phase_spacing": "At most min(maximum_phase_step,mu_spacing_ratio*sigma/delta_v) in nonflat transition regions",
                 "flat_interior": "When 10*sigma < delta_v, only exact five-sigma-flat interior knots are omitted",
                 "velocity_storage": "Each layer spans the union of all phase five-sigma supports, with zero guard bins",
-                "outside_behavior": "Sigma and unsafe shifts raise; outside stored node support is known zero",
+                "outside_behavior": "Table-only queries require sigma coverage; TemplateEngine directly integrates valid outside widths; unsafe shifts raise and outside node support is known zero",
                 "cutoff_sigma": self.Z,
                 "cutoff_applies_to": "interpolated template-node Gaussians, not an exact original-cell support mask",
                 "renormalized": False,

@@ -124,8 +124,8 @@ those original Gaussians next, and one main thread merges in original order.
 Each batch owns inputs only until that bounded wave finishes.
 
 Default template sigma coverage is [1e-5,1024] km/s, with natural-log spacing 1/32.
-It must cover the emitting widths of the selected snapshot. Large simulations
-can exceed 1024 km/s; a configuration with known wider coverage can use:
+Large simulations can exceed 1024 km/s; those valid widths are integrated directly.
+To reduce that work when a wider domain is known, use:
 
 ```yaml
 spectral_method: direct-template
@@ -136,11 +136,14 @@ histogram_merge_threads: 1
 ```
 
 Other template parameters retain their defaults. This extends prepared coverage;
-it does not clip physical widths or provide an automatic fallback. Invalid or
-uncovered parameters raise. Template corners retain their own five-sigma support
+it does not clip physical widths. Valid uncovered widths still use stable
+original-cell direct integration. Invalid parameters raise. Template corners
+and direct original-cell profiles retain their own five-sigma support
 without renormalization; exact endpoint budget references use original cells.
 `processing_timings.gaussian` separates query/addition activity elapsed time from
 the broader Gaussian wave including analytic budget work and scheduling.
+Final coverage logs and `spectral_report.*.template_coverage` record counts,
+observed ranges and per-line fallback light; use them to assess later table bounds.
 Retained `histogram-layered` and `histogram-2d` methods are explicit comparisons;
 select a separate YAML/output group with method-specific grid keys.
 To compare the retained one-dimensional reference method, select it explicitly

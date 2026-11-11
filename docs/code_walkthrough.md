@@ -629,12 +629,24 @@ go through a rebinned image. The default `direct-template` route is:
    phase, locates two sigma layers and two phase knots on each layer, and
    interpolates four template values. It multiplies by that original cell's
    luminosity and immediately adds to the small spectrum. At most 400 temporary
-   coefficients are used; no batch-by-400 matrix or brightness-node store is made.
+   coefficients are used for table-covered cells. Outside sigma coverage,
+   `template_engine.py` evaluates stable original-cell bin probabilities in
+   bounded outside-only blocks and the kernel continues the same output in
+   ascending cell order. No brightness-node store is made.
 5. Main profile, input-light, count, full-moment and endpoint sums merge in the
    original batch order. Original-cell Gaussian vectors are released before
-   the next wave. Invalid coordinates and uncovered sigmas raise without
-   clipping, fallback or a luminosity threshold. To cover broader known widths,
+   the next wave. Invalid coordinates still raise; valid uncovered sigmas use
+   direct +/-5sigma integrals without a luminosity omission threshold. To reduce
+   direct integration for broader known widths,
    set `gaussian_grid: {sigma_max: 8192.0}` before preparation.
+
+`template_coverage.py` separately merges counts, min/max ranges and per-line,
+dust-state and cold/hot fallback luminosity references. Final logs summarize
+these fields; `spectral_report.*.template_coverage` retains the same account data.
+`fallback_probability_seconds` sums worker time generating outside-only bin
+probabilities; `integration_seconds` includes all lookup/direct work and is also
+a worker sum. Actual Gaussian activity/wave elapsed times remain under
+`processing_timings.gaussian`; these counters are not substitutes for wall time.
 
 Each template corner has its own five-sigma support without renormalization.
 Independent original-cell analytic endpoint references describe full and clipped

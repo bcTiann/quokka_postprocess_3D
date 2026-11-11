@@ -1,11 +1,12 @@
 # cython: language_level=3, boundscheck=False, wraparound=False, initializedcheck=False, cdivision=True
 """Fuse four-template wide interiors into one coefficient pass.
 
-All probabilities come from the prepared fractional-phase/log-sigma table. Each
-cell uses at most 400 stack doubles, never an input-batch by channel matrix.
-The main batch worker remains responsible for parallelism and ordered merging.
+Table-covered probabilities come from the fractional-phase/log-sigma table.
+Mixed calls additionally accept bounded outside-only direct probability rows.
+Each cell uses at most 400 stack doubles; the batch worker owns parallelism.
 """
 from libc.math cimport floor, isfinite
+from libc.float cimport DBL_MAX
 from libc.stdint cimport int64_t, uint8_t
 from libc.string cimport memset
 
@@ -532,6 +533,172 @@ def accumulate(
         "native_threads_per_batch": 1,
         "cell_by_channel_matrix_allocated": False,
         "per_cell_coefficient_scratch_bytes": 400 * 8,
+    }
+
+
+def validate_mixed_inputs(
+    const double[::1] centers,
+    const double[::1] sigmas,
+    const double[::1] log_sigmas,
+    const double[:, ::1] luminosity,
+    double delta_v=1.0,
+):
+    """Keep cell/L/shift guards while allowing positive out-of-table widths."""
+    validate_cells(centers, sigmas, log_sigmas, luminosity, delta_v, 0.0, DBL_MAX)
+    if np.any(np.asarray(sigmas) <= 0.0):
+        raise ValueError("Gaussian sigma must be positive")
+
+
+def accumulate_mixed_into(
+    const double[::1] centers,
+    const double[::1] sigmas,
+    const double[::1] log_sigmas,
+    const double[:, ::1] luminosity,
+    const double[::1] sigma_nodes,
+    const double[::1] log_sigma_nodes,
+    const int64_t[::1] phase_starts,
+    const double[::1] phase_values,
+    const int64_t[::1] row_min,
+    const int64_t[::1] row_count,
+    const int64_t[::1] row_offset,
+    const double[::1] table_values,
+    const int64_t[::1] output_bins,
+    const int64_t[::1] direct_rows,
+    const double[:, ::1] direct_probabilities,
+    double[:, ::1] output,
+    Py_ssize_t start_row,
+    Py_ssize_t stop_row,
+    double delta_v=1.0,
+):
+    """Continue a mixed cell interval in ascending original order into S[P,K].
+
+    direct_rows contains every out-of-table row in [start_row,stop_row), sorted
+    and unique. Only those rows have a precomputed probability vector. Inputs
+    must pass validate_mixed_inputs once and immutable table metadata must pass
+    validate_table. Reusing output across bounded chunks preserves cell order;
+    separate table/direct spectra are never reduced and added afterwards.
+    """
+    cdef Py_ssize_t count = centers.shape[0]
+    cdef Py_ssize_t profiles = luminosity.shape[1]
+    cdef Py_ssize_t channels = output_bins.shape[0]
+    cdef Py_ssize_t direct_count = direct_rows.shape[0]
+    cdef Py_ssize_t direct_cursor = 0
+    cdef Py_ssize_t direct_slot
+    cdef Py_ssize_t row
+    cdef Py_ssize_t profile
+    cdef Py_ssize_t item
+    cdef Py_ssize_t active_count
+    cdef Py_ssize_t first_bin
+    cdef Py_ssize_t stop_bin
+    cdef Py_ssize_t offsets[4]
+    cdef Py_ssize_t first[4]
+    cdef Py_ssize_t stop[4]
+    cdef uint8_t active_profiles[12]
+    cdef double weights[4]
+    cdef double coefficients[400]
+    cdef double *output_pointer
+    cdef const double *probability_pointer
+    cdef const double *light_pointer
+    cdef bint outside
+    cdef int invalid = 0
+    cdef int64_t active_rows = 0
+    cdef int64_t bins_visited = 0
+    cdef int64_t corner_values_read = 0
+    cdef int64_t product_updates = 0
+    cdef int64_t direct_active_rows = 0
+    cdef int64_t direct_bins_visited = 0
+    cdef int64_t direct_product_updates = 0
+    if channels < 1 or channels > 400 or sigma_nodes.shape[0] < 1:
+        raise ValueError("Require a prepared nonempty table and at most 400 channels")
+    if profiles < 1 or profiles > 12 or output.shape[0] != profiles or output.shape[1] != channels:
+        raise ValueError("Mixed output must have shape(profile count, channel count)")
+    if output.strides[0] != channels * sizeof(double):
+        raise ValueError("Mixed output rows must be C-contiguous")
+    if not 0 <= start_row <= stop_row <= count:
+        raise ValueError("Mixed row interval lies outside the prepared input")
+    if sigmas.shape[0] != count or log_sigmas.shape[0] != count or luminosity.shape[0] != count:
+        raise ValueError("Mixed input lengths differ")
+    if direct_probabilities.shape[0] != direct_count or direct_probabilities.shape[1] != channels:
+        raise ValueError("Direct probabilities must match direct_rows and channel count")
+    if not np.isfinite(np.asarray(direct_probabilities)).all() or np.any(np.asarray(direct_probabilities) < 0.0):
+        raise ValueError("Direct probabilities must be finite and nonnegative")
+    # An inconsistent mask must not pass an out-of-table width to locate_row.
+    with nogil:
+        for row in range(start_row, stop_row):
+            outside = sigmas[row] < sigma_nodes[0] or sigmas[row] > sigma_nodes[sigma_nodes.shape[0] - 1]
+            if outside:
+                if direct_cursor >= direct_count or direct_rows[direct_cursor] != row:
+                    invalid = 1
+                direct_cursor += 1
+            elif direct_cursor < direct_count and direct_rows[direct_cursor] == row:
+                invalid = 1
+        if direct_cursor != direct_count:
+            invalid = 1
+    if invalid:
+        raise ValueError("Direct rows must exactly identify out-of-table widths in their original order")
+    direct_cursor = 0
+    output_pointer = &output[0, 0]
+    with nogil:
+        for row in range(start_row, stop_row):
+            direct_slot = -1
+            if direct_cursor < direct_count and direct_rows[direct_cursor] == row:
+                direct_slot = direct_cursor
+                direct_cursor += 1
+            active_count = 0
+            for profile in range(profiles):
+                if luminosity[row, profile] > 0.0:
+                    active_profiles[active_count] = <uint8_t>profile
+                    active_count += 1
+            if active_count == 0:
+                continue
+            active_rows += 1
+            if direct_slot >= 0:
+                direct_active_rows += 1
+                probability_pointer = &direct_probabilities[direct_slot, 0]
+                first_bin = 0
+                stop_bin = channels
+                while first_bin < stop_bin and probability_pointer[first_bin] == 0.0:
+                    first_bin += 1
+                while stop_bin > first_bin and probability_pointer[stop_bin - 1] == 0.0:
+                    stop_bin -= 1
+                if first_bin == stop_bin:
+                    continue
+                direct_bins_visited += stop_bin - first_bin
+                direct_product_updates += active_count * (stop_bin - first_bin)
+            else:
+                if not locate_row(
+                    centers[row], sigmas[row], log_sigmas[row], delta_v,
+                    &sigma_nodes[0], &log_sigma_nodes[0], sigma_nodes.shape[0],
+                    &phase_starts[0], &phase_values[0], &row_min[0],
+                    &row_count[0], &row_offset[0], output_bins[0], channels,
+                    &offsets[0], &first[0], &stop[0], &weights[0], &first_bin, &stop_bin,
+                ):
+                    continue
+                corner_values_read += fill_coefficients(
+                    &coefficients[0], &table_values[0], &offsets[0], &first[0],
+                    &stop[0], &weights[0], first_bin, stop_bin,
+                )
+                probability_pointer = &coefficients[0]
+            bins_visited += stop_bin - first_bin
+            light_pointer = &luminosity[row, 0]
+            for item in range(active_count):
+                profile = active_profiles[item]
+                template_axpy_compiler(
+                    output_pointer + profile * channels + first_bin,
+                    probability_pointer + first_bin,
+                    light_pointer[profile],
+                    stop_bin - first_bin,
+                )
+            product_updates += active_count * (stop_bin - first_bin)
+    return {
+        "kernel_rows": int(stop_row - start_row),
+        "active_rows": int(active_rows),
+        "support_bins_visited": int(bins_visited),
+        "template_corner_values_read": int(corner_values_read),
+        "product_updates": int(product_updates),
+        "direct_active_rows": int(direct_active_rows),
+        "direct_support_bins_visited": int(direct_bins_visited),
+        "direct_product_updates": int(direct_product_updates),
     }
 
 

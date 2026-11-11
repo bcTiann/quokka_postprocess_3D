@@ -39,7 +39,8 @@ spectral_method: direct-template
 # Null uses sigma=[1e-5,1024] km/s and delta_ln_sigma=1/32.
 # Nonflat phase transition spacing is at most 0.1; flat interior knots are omitted.
 # Phase transition spacing also satisfies delta_phase<=0.1*sigma/channel_width.
-# Widths outside coverage raise; there is no luminosity threshold or fallback.
+# Valid widths outside coverage use direct +/-5sigma integration, without a
+# brightness threshold. Logs/report record counts, ranges and fallback light.
 # Optional keys: sigma_min, sigma_max, log_sigma_step, mu_spacing_ratio,
 # maximum_phase_step. The observation window stays [-200,200] with 400 channels.
 gaussian_grid: null

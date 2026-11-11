@@ -132,8 +132,10 @@ cells through preintegrated fractional-mean/log-sigma templates. With channel
 width `delta_v=1 km/s`, write `mu/delta_v=floor(mu/delta_v)+phase`. Integer shifts
 move the stored template; the fractional phase lies in [0,1]. Natural-log sigma
 nodes have step 0.03125 and default coverage [1e-5,1024] km/s. The physical width
-floor remains 1e-5 km/s. Invalid or uncovered parameters raise without clipping,
-missingness substitution or a different integration algorithm.
+floor remains 1e-5 km/s. Valid widths outside template coverage are integrated
+directly from their original mu/sigma, with stable bin probabilities clipped
+at +/-5 sigma and no renormalization or luminosity omission threshold. Invalid
+coordinates, unsafe integer shifts and nonpositive/nonfinite widths still raise.
 
 Each sigma layer independently samples phase with transition spacing at most
 `min(0.1,0.1*sigma/delta_v)`. When 10 sigma is narrower than a channel, exactly
@@ -142,7 +144,9 @@ transitions. All templates store their phase-union five-sigma support with
 zero guard bins; they are not restricted to the observed 400 bins before shifting.
 Default coverage can be extended explicitly, for example
 `gaussian_grid: {sigma_max: 8192.0}` for a large snapshot with broader emitting
-profiles. Finite sigma coverage still must be verified for the selected data.
+profiles. Coverage counts, observed ranges and luminosity-weighted fallback
+fractions are saved per line, dust state and temperature branch. They describe
+whether extending the finite table would reduce direct integration work.
 
 For one cell, let `beta=log(sigma/sigma_low)/log(sigma_high/sigma_low)` and let
 `alpha_low`, `alpha_high` be its two layer-specific phase fractions. The four

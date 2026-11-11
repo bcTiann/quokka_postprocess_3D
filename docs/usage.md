@@ -357,12 +357,18 @@ luminosity accounts and immediately accumulated. A Cython/C kernel keeps at
 most 400 temporary coefficients per cell, rather than a batch-by-400 matrix.
 No global or batch luminosity-node accumulator is created. No luminosity
 threshold drops cells. Stored template corners have individual five-sigma
-supports and are not renormalized. Invalid coordinates, unsafe integer shifts
-and sigmas outside the prepared coverage raise; there is no clipping or
-automatic alternate integrator.
+supports and are not renormalized. Valid sigmas outside prepared coverage use
+stable original-cell direct bin integrals, also truncated at +/-5sigma without
+renormalization. No luminosity threshold drops those cells. Invalid coordinates,
+unsafe integer shifts and nonpositive/nonfinite widths still raise.
 
 The fractional-mean table can be shifted to other finite means, but it does
-**not** cover arbitrary sigmas. Set bounds to cover the actual emitting widths.
+**not** store arbitrary sigmas. Set bounds to cover common emitting widths and
+reduce direct integration. Final log lines beginning `Gaussian template coverage`
+and `Gaussian fallback account`, plus `spectral_report.*.template_coverage`, give
+outside counts, sigma ranges, direct-probability work and each line/dust/branch's
+outside input and five-sigma window-reference luminosity. A physical cell can
+occur in several width groups; these row counts are not distinct physical cells.
 For example, a large snapshot with widths above 1024 km/s can use:
 
 ```yaml
