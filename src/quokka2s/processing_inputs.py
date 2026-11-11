@@ -124,9 +124,10 @@ def prepare_processing_snapshot(
 ):
     """Own the explicitly selected field reader; never mix the two sources.
 
-    The native-column reader retains only original-file descriptors and small
-    immutable neighbour faces between tiles. Snapshot.native_reader remains
-    the original metadata reader, so unit and global geometry access is intact.
+    The native-column reader retains metadata and small immutable neighbour
+    faces between tiles. Each NumPy field read closes its file.
+    Snapshot.native_reader remains the original metadata reader, so unit and
+    global geometry access is intact.
     No native-column initialization/read cost is excluded from process timing.
     """
     if field_source == "z-contiguous":

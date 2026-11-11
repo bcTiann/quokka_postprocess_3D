@@ -88,6 +88,11 @@ calculates its products, then releases its cell arrays before reading the next
 tile. Small finished products wait only when needed to preserve the original
 batch merge order. Snapshots are processed sequentially.
 
+Core fields and density/x-momentum/y-momentum neighbour data use the same
+complete-FAB-field `np.fromfile` reads. NumPy copies native x-contiguous values
+into owned z-contiguous RAM arrays; no persistent file descriptors, mapped
+arrays or special tiny-row read path are retained.
+
 This path requires a full box, regular level-zero FABs, `direct-template`,
 aligned complete-column batches, `max_slabs: null` and `prepared_z_fields: null`.
 Unsupported settings raise; there is no automatic source change. Process uses

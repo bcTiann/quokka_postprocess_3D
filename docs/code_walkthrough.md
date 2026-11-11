@@ -281,7 +281,11 @@ The default follows `native_column_process.process_native_columns()`:
    A batch contains complete z columns, divides the full y row and fits the
    native tile's y range without cutting an original batch.
 2. `NativeColumnReader.read_tile()` reads five original raw fields and required
-   global neighbour faces. Native x-fastest FAB values are gathered into owned
+   global neighbour faces through complete-field `np.fromfile` calls. The first
+   core supplies its cached density/x-momentum/y-momentum faces. Remaining FABs
+   read those same three complete fields through the shared helper, then select
+   the needed planes with NumPy slices. No persistent descriptor cache or
+   special tiny-row read path is used. Native x-fastest values are gathered into owned
    float64 C-order XYZ arrays with z contiguous in RAM. No converted file is written.
 3. `derive_native_column_tile()` computes the gradient before dropping x/y
    momentum, converts density and z momentum in place, reuses temperature and
@@ -298,6 +302,11 @@ All original reads, neighbour preparation, gather and derivation are timed.
 memory accounting and actual process RSS. Gradient and combined in-place
 units/columns passes have separate clocks; foreground and shielding columns
 are not falsely reported as independently timed operations.
+Reader `stats.method` is `numpy-fromfile`. Read-call/requested/received counters
+describe the actual complete-field API operations, including neighbour rereads.
+Its phase wall clocks include both reading and copying; separate worker-active
+unions, gather-only times, per-field timings and source-range unions are not
+collected. Their absence does not represent a measured zero.
 
 ### Explicit `field_source: z-contiguous` source
 

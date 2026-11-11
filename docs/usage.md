@@ -300,6 +300,12 @@ releasing x/y momenta; density/z momentum storage is then reused for physical
 density/velocity, temperature is reused, and the two column arrays are filled.
 Six read-only fields feed unchanged physical and Gaussian batches.
 
+All core reads and density/x-momentum/y-momentum neighbour reads use complete
+native FAB fields through one `np.fromfile` helper. The first tile supplies its
+already-read face values; remaining FABs read those three fields before NumPy
+slices out the required planes. Each call closes its source file. No persistent
+descriptor cache, mapped array or special tiny-row reader is retained.
+
 Processing requires the complete box, `direct-template`, `max_slabs: null` and
 `prepared_z_fields: null`. `query_chunk` must contain complete z columns and
 align with original y rows and native tile boundaries. Geometry/alignment is
@@ -313,6 +319,17 @@ before the next tile. A conservative preflight and 20 GiB process RSS guard
 include concurrent workers and pending products. Read statistics distinguish
 unique five-field payload, actual API requests including neighbour rereads and
 RAM layout; they do not claim to measure physical storage traffic.
+For `B` equal-size FABs, `B0` in the first tile, and `F` bytes per native field,
+one complete pass requests `(5*B + 3*(B-B0))*F` bytes. For a float64
+512x512x4096 domain with four equal XY tiles, this is 58 GiB of API requests
+versus 40 GiB of unique five-field payload. These are source-layout counts,
+not a measured disk-traffic or runtime claim.
+
+`native_columns.read_statistics.method` is `numpy-fromfile`. Its actual
+read-call/requested/received counters and phase wall times include complete-field
+reads and copying. The reader does not collect per-field worker timings,
+worker-active unions, separate gather-only times or source-range unions; those
+fields are absent rather than reported as zero.
 
 ### Explicit prepared or temporary z-contiguous fields
 

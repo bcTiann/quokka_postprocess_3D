@@ -12,7 +12,10 @@ have their own commands.
 
 The original-plotfile route uses:
 [native_column_reader.py](../src/quokka2s/native_column_reader.py) reads bounded
-full-z native tiles and raw global neighbour faces without writing a cache;
+full-z native tiles and raw global neighbour faces without writing a disk cache.
+One `np.fromfile` helper reads complete FAB fields for both cores and
+density/x-momentum/y-momentum neighbour planes, then NumPy copies to owned RAM.
+It retains no file-descriptor cache, mapped arrays or tiny-row read path;
 [native_column_fields.py](../src/quokka2s/native_column_fields.py) derives six
 physical fields using reused raw allocations;
 [native_column_process.py](../src/quokka2s/native_column_process.py) restores
@@ -24,6 +27,9 @@ slabs and retained integration methods. It validates a read-only
 `prepared_z_fields` cache or creates/removes a temporary copy when null; only
 that source excludes its actual conversion cost. Unsupported native-column
 settings raise instead of silently switching sources.
+Reader counters report complete-field API requests and received bytes. Phase
+wall clocks include copies; per-worker activity unions and separate gather
+times are not measured.
 
 `pyproject.toml` declares dependencies; `uv.lock` records the resolved versions
 and source identities. uv creates `.venv` with `uv sync` and selects it for
