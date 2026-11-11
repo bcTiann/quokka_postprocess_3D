@@ -37,7 +37,7 @@ def elapsed_union_ns(intervals):
 
 @dataclass(frozen=True)
 class GaussianBatchGroup:
-    """Owned km/s vectors[N] and luminosity accounts[N,P] in erg/s."""
+    """Read-only owned vectors[N] and accounts[N,P]; groups may share centers."""
 
     profile_ids: np.ndarray
     centers: np.ndarray
@@ -80,6 +80,7 @@ class TemplateIntegratedSpectra(HistogramIntegratedSpectra):
             table_maximum=engine.lookup_tables.sigma_nodes[-1],
         )
         self._groups = []
+        self._input_owner_ids = set()
         self._owned_input_bytes = 0
         self._groups_prepared = 0
         self._groups_finished = 0
@@ -135,14 +136,26 @@ class TemplateIntegratedSpectra(HistogramIntegratedSpectra):
         if not self.batch_partial or self._queue_finished or self._queue_failed:
             raise RuntimeError("Cannot append Gaussians after this worker queue finishes")
         widths = np.maximum(thermal_width_kms, MINIMUM_GAUSSIAN_WIDTH_KMS)
+        for values in (velocity_kms, widths, luminosity_matrix):
+            if (
+                not isinstance(values, np.ndarray)
+                or values.dtype != np.float64
+                or not values.flags.c_contiguous
+                or not values.flags.owndata
+            ):
+                raise ValueError("Template queues require owned C-order float64 inputs")
+            values.flags.writeable = False
         group = GaussianBatchGroup(
             profile_ids=self._profile_ids(line_keys, branch_index),
-            centers=np.array(velocity_kms, dtype=np.float64, order="C", copy=True),
-            sigmas=np.array(widths, dtype=np.float64, order="C", copy=True),
-            luminosity=np.array(luminosity_matrix, dtype=np.float64, order="C", copy=True),
+            centers=velocity_kms,
+            sigmas=widths,
+            luminosity=luminosity_matrix,
         )
         self._groups.append(group)
-        self._owned_input_bytes += group.array_bytes
+        for values in (group.profile_ids, group.centers, group.sigmas, group.luminosity):
+            if id(values) not in self._input_owner_ids:
+                self._input_owner_ids.add(id(values))
+                self._owned_input_bytes += values.nbytes
         self._groups_prepared += 1
         # Shared preparation still computes every original-cell moment and L sum.
         return np.zeros((self.velocity_edges_kms.size - 1, luminosity_matrix.shape[1]))
@@ -181,6 +194,7 @@ class TemplateIntegratedSpectra(HistogramIntegratedSpectra):
     def release_gaussian_inputs(self):
         """Drop owned input vectors after success or failure of their bounded wave."""
         self._groups.clear()
+        self._input_owner_ids.clear()
         self._owned_input_bytes = 0
 
     def merge(self, other):

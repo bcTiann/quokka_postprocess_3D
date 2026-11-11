@@ -181,6 +181,7 @@ def pack_width_group(
     const double[:, :] intrinsic_luminosity,
     const double[:, :] attenuated_luminosity,
     const int64_t[:] shared_lines,
+    bint cell_major=False,
 ):
     """Copy directly to the frozen (Nbranch, 2*Nshared) deposit layout.
 
@@ -201,10 +202,19 @@ def pack_width_group(
     for shared_index in range(shared_count):
         if shared_lines[shared_index] < 0 or shared_lines[shared_index] >= line_count:
             raise IndexError("A shared-width line index is outside the branch matrix")
-    # NumPy concatenate chooses C order for degenerate single-column inputs.
-    output_order = "F" if shared_count > 1 and cell_count > 1 else "C"
+    # Direct templates consume owned C-order rows. Retained histogram methods
+    # keep their original layout and summation order.
+    output_order = "C" if cell_major else ("F" if shared_count > 1 and cell_count > 1 else "C")
     output = np.empty((cell_count, 2 * shared_count), dtype=np.float64, order=output_order)
     destination = output
+    if cell_major:
+        with nogil:
+            for row in range(cell_count):
+                for shared_index in range(shared_count):
+                    line_index = shared_lines[shared_index]
+                    destination[row, shared_index] = intrinsic_luminosity[line_index, row]
+                    destination[row, shared_count + shared_index] = attenuated_luminosity[line_index, row]
+        return output
     with nogil:
         for shared_index in range(shared_count):
             line_index = shared_lines[shared_index]

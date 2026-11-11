@@ -342,6 +342,7 @@ class HistogramIntegratedSpectra(IntegratedSpectra):
                 intrinsic_luminosity=luminosity_by_dust[DUST_STATES[0]],
                 attenuated_luminosity=luminosity_by_dust[DUST_STATES[1]],
                 shared_lines=np.asarray(shared_lines, dtype=np.int64),
+                cell_major=self.spectral_method == "direct-template",
             )
             channel_profiles = self.accumulate_group_histogram(
                 line_keys=tuple(line_keys[index] for index in shared_lines),
