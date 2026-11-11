@@ -43,6 +43,7 @@ cache-keys = [
     { file = "src/quokka2s/products/gaussian/_sparse_expand.pyx" },
     { file = "src/quokka2s/products/gaussian/_prefix_expand.pyx" },
     { file = "src/quokka2s/products/gaussian/_layered_deposit.pyx" },
+    { file = "src/quokka2s/products/gaussian/_template_integrate.pyx" },
     { file = "src/quokka2s/products/gaussian/_spectral_fields.pyx" },
     { file = "src/quokka2s/products/_image_columns.pyx" },
     { file = "src/quokka2s/physics/_slab_derive.pyx" },

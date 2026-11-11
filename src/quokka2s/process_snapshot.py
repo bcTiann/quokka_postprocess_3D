@@ -42,7 +42,8 @@ def accumulate_batch(cells, emission_calculator: CellEmissionCalculator, product
     emission_calculator holds the shared table readers and dust cross-sections.
     products receives image, spectrum, phase, and diagnostic sums in place.
     progress optionally records a stage label before each existing calculation.
-    Only the sums survive this call; no product retains cells or line arrays."""
+    Direct-template workers may retain owned Gaussian input vectors until the
+    next bounded query wave. No CellBatch or LineEmission object is retained."""
     products.failure_context = {
         "first_cell_id": cells.first_cell_id,
         "last_cell_id": cells.last_cell_id,
@@ -54,7 +55,10 @@ def accumulate_batch(cells, emission_calculator: CellEmissionCalculator, product
         progress('accumulating luminosity images')
     products.images.add_batch(cells=cells, emission=emission)
     if progress is not None:
-        progress('integrating Gaussian line spectra')
+        if products.spectra.spectral_method == "direct-template":
+            progress('preparing original-cell Gaussian inputs')
+        else:
+            progress('integrating Gaussian line spectra')
     products.spectra.add_batch(cells=cells, emission=emission)
     if progress is not None:
         progress('accumulating gas-phase velocity statistics')
@@ -62,7 +66,7 @@ def accumulate_batch(cells, emission_calculator: CellEmissionCalculator, product
     if progress is not None:
         progress('recording missingness, luminosity and cell accounting')
     products.record_batch(cells=cells, emission=emission)
-    # Only accumulated results survive this call; no product retains cells/emission.
+    # A template partial also owns its bounded Gaussian queue; not cells/emission.
 
 
 def process_parallel_batches(
@@ -201,9 +205,9 @@ def process_one_slab(
 ):
     """Read one core x window and finish its batches before returning.
 
-    window is (x_start, x_stop), with stop excluded. The shared executor is used
-    when chunk_workers > 1. Only accumulated sums survive; the slab is released
-    before progress reporting and the next slab read."""
+    window is (x_start, x_stop), with stop excluded. The default template method
+    uses the shared executor even for one worker. All query queues finish before
+    the slab is released, progress is reported and the next slab is read."""
     # read_slab() returns six flattened arrays, each normally shape (4194304,).
     # Neighbours are used for gradients and removed before these are returned.
     x_start, x_stop = window
@@ -223,7 +227,19 @@ def process_one_slab(
         flush=True,
     )
 
-    if config.chunk_workers == 1:
+    if config.spectral_method == "direct-template":
+        from quokka2s.products.gaussian.template_batches import process_template_batches
+        process_template_batches(
+            config=config,
+            snapshot=snapshot,
+            emission_calculator=emission_calculator,
+            products=products,
+            slab=slab,
+            executor=executor,
+            accumulate_batch=accumulate_batch,
+            progress=progress,
+        )
+    elif config.chunk_workers == 1:
         process_serial_batches(
             config=config,
             emission_calculator=emission_calculator,
@@ -353,7 +369,7 @@ def process_snapshot(config, snapshot, emission_calculator, products, began, *, 
         stage: sum(record['read_stage_seconds'][stage] for record in slab_timings)
         for stage in READ_STAGE_LABELS
     }
-    return {
+    timings = {
         'read_stage_labels': READ_STAGE_LABELS.copy(),
         'read_stage_totals_seconds': read_stage_totals,
         'columns_total_seconds': (
@@ -365,6 +381,9 @@ def process_snapshot(config, snapshot, emission_calculator, products, began, *, 
         ),
         'slabs': slab_timings,
     }
+    if config.spectral_method == "direct-template":
+        timings['gaussian'] = products.spectra.timing_summary()
+    return timings
 
 
 def print_run_settings(config, config_path: Path) -> None:
@@ -396,7 +415,10 @@ def run_one_snapshot(config: ProcessSettings, config_path: Path) -> None:
     """
     histogram_engine = None
     gaussian_table_seconds = 0.0
-    if config.spectral_method == "histogram-2d":
+    if config.spectral_method == "direct-template":
+        from quokka2s.products.gaussian.template_engine import prepare_template_engine
+        histogram_engine, gaussian_table_seconds = prepare_template_engine(config.gaussian_grid)
+    elif config.spectral_method == "histogram-2d":
         from quokka2s.products.gaussian.preparation import prepare_gaussian_engine
         histogram_engine, gaussian_table_seconds = prepare_gaussian_engine(config.gaussian_grid)
     elif config.spectral_method == "histogram-layered":
@@ -542,9 +564,9 @@ def main(argv=None):
     --no-plot saves numerical products only. Plot choices otherwise use the same
     YAML and format/title flags as plot. Each invocation freezes its inventory;
     completed matching products are reused and conflicting output is preserved.
-    --spectral-method explicitly overrides the YAML algorithm. Sparse
-    histogram-layered is the default; bounded histogram-2d, exact and linear-lut
-    remain explicit comparison options.
+    --spectral-method explicitly overrides the YAML algorithm. Original-cell
+    direct-template queries are the default; retained node, exact and linear-lut
+    methods remain explicit comparison options.
     """
     parser = argparse.ArgumentParser(
         prog="process",
@@ -556,7 +578,7 @@ def main(argv=None):
         "--spectral-method",
         choices=SPECTRAL_METHODS,
         default=None,
-        help="Override Gaussian method; histogram-layered is the default",
+        help="Override Gaussian method; direct-template is the default",
     )
     parser.add_argument(
         "--no-plot",

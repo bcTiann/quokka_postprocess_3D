@@ -55,7 +55,7 @@ uv sync --python "$(command -v python)"
 ```
 
 uv creates `.venv` and installs the checkout in editable mode. No activation,
-`PYTHONPATH` or manual `pip install` is needed. Building yt and the thirteen native
+`PYTHONPATH` or manual `pip install` is needed. Building yt and the fifteen native
 processing kernels needs Git and C/C++ build tools. uv installs the pinned Cython
 and SciPy build dependencies automatically. Keep a GCC/Clang-compatible C
 compiler available when rebuilding after a source update; `uv sync` tracks the
@@ -115,17 +115,34 @@ directories are reported without being overwritten. Legacy results remain
 drawable with plot. Choose a fresh results root for a separate calculation;
 see the [reuse rules](usage.md#completed-result-reuse).
 
-The default is `histogram-layered`: each cell's luminosity is distributed to
-four nodes on logarithmic sigma layers. The default mean spacing is
-`0.1 * sigma(layer)`, with `log_sigma_step: 0.03125`, a physical width floor
-of `1e-5 km/s` and no configured mu/sigma coverage box. Worker and main hash
-stores allocate visited integer-key nodes. Main merging uses one thread in
-batch order; final prefix expansion uses eight channel threads when supported.
-One standard-normal cumulative table supplies the channel probabilities,
-with shared boundaries and a node five-sigma cutoff without renormalization.
-Invalid or unrepresentable coordinates raise. The retained `histogram-2d`
-bounded grid is an explicit comparison; use method-specific settings and a
-separate result group for that route.
+The default is `direct-template`: each original cell directly interpolates four
+preintegrated fractional-mean/log-sigma templates, then multiplies and accumulates
+its luminosities. Integer-bin shifts reuse fractional-mean templates. The native
+float64 kernel has no additional BLAS dependency or luminosity-node histogram.
+Up to 16 physical batches prepare emission/products first; the same workers query
+those original Gaussians next, and one main thread merges in original order.
+Each batch owns inputs only until that bounded wave finishes.
+
+Default template sigma coverage is [1e-5,1024] km/s, with natural-log spacing 1/32.
+It must cover the emitting widths of the selected snapshot. Large simulations
+can exceed 1024 km/s; a configuration with known wider coverage can use:
+
+```yaml
+spectral_method: direct-template
+gaussian_grid:
+  sigma_max: 8192.0
+spectral_workers: 1
+histogram_merge_threads: 1
+```
+
+Other template parameters retain their defaults. This extends prepared coverage;
+it does not clip physical widths or provide an automatic fallback. Invalid or
+uncovered parameters raise. Template corners retain their own five-sigma support
+without renormalization; exact endpoint budget references use original cells.
+`processing_timings.gaussian` separates query/addition activity elapsed time from
+the broader Gaussian wave including analytic budget work and scheduling.
+Retained `histogram-layered` and `histogram-2d` methods are explicit comparisons;
+select a separate YAML/output group with method-specific grid keys.
 To compare the retained one-dimensional reference method, select it explicitly
 and use a separate output group:
 

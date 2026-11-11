@@ -127,88 +127,66 @@ over channel boundaries. Luminosity outside that window is recorded rather
 than moved into edge channels. Each line and dust state has one integrated
 spectrum. Cold/hot contributions are retained separately.
 
-The process default `spectral_method: histogram-layered` represents emitting
-cells on fixed natural-log sigma layers, allocating node records only when
-they receive luminosity. With the unchanged physical width floor
-`sigma_floor = 1e-5 km/s`, layer `k >= 0` has
-`sigma(k) = exp(log(sigma_floor) + k * 0.03125)`, restoring layer zero to the
-exact floor. Its mean nodes are `mu(k,i) = mu_anchor + i * 0.1 * sigma(k)`,
-where `mu_anchor = 0 km/s` and `i` is a signed integer. There are no configured
-mu/sigma upper bounds or separate central/outer regions. Integer overflow,
-nonfinite coordinates and indistinguishable floating-point neighbors still
-raise; the coordinate rule does not promise unlimited numerical coverage.
+The process default `spectral_method: direct-template` evaluates original
+cells through preintegrated fractional-mean/log-sigma templates. With channel
+width `delta_v=1 km/s`, write `mu/delta_v=floor(mu/delta_v)+phase`. Integer shifts
+move the stored template; the fractional phase lies in [0,1]. Natural-log sigma
+nodes have step 0.03125 and default coverage [1e-5,1024] km/s. The physical width
+floor remains 1e-5 km/s. Invalid or uncovered parameters raise without clipping,
+missingness substitution or a different integration algorithm.
 
-For each cell, locate its two sigma layers. On each layer separately, locate
-the two neighboring mean nodes. The mean spacings differ between layers,
-so the two mean interpolation fractions can differ. The sigma fraction uses
-the logarithms of the actual neighboring sigma values, with endpoint
-correction. Its four nonnegative weights distribute that cell's own
-luminosity and sum to one. Intrinsic/attenuated and cold/hot accounts stay
-separate, and only identical physical widths share geometry.
+Each sigma layer independently samples phase with transition spacing at most
+`min(0.1,0.1*sigma/delta_v)`. When 10 sigma is narrower than a channel, exactly
+flat phase interiors can omit redundant knots while retaining fine boundary
+transitions. All templates store their phase-union five-sigma support with
+zero guard bins; they are not restricted to the observed 400 bins before shifting.
+Default coverage can be extended explicitly, for example
+`gaussian_grid: {sigma_max: 8192.0}` for a large snapshot with broader emitting
+profiles. Finite sigma coverage still must be verified for the selected data.
 
-For one luminosity `L`, let `beta = log(sigma/sigma_low) /
-log(sigma_high/sigma_low)` and let `alpha_low` and `alpha_high` be the two
-layer-specific mean fractions. The lower layer receives
-`L*(1-beta)*(1-alpha_low)` and `L*(1-beta)*alpha_low`; the upper receives
-`L*beta*(1-alpha_high)` and `L*beta*alpha_high`. Each line's luminosity and
-missing-value mask remain its own; shared coordinates do not mix the accounts.
+For one cell, let `beta=log(sigma/sigma_low)/log(sigma_high/sigma_low)` and let
+`alpha_low`, `alpha_high` be its two layer-specific phase fractions. The four
+template weights are `(1-beta)*(1-alpha_low)`, `(1-beta)*alpha_low`,
+`beta*(1-alpha_high)` and `beta*alpha_high`. They are nonnegative and sum to one.
+The weighted channel probability is multiplied by each of that cell's own
+luminosity accounts, then added directly to the spectrum. Intrinsic/attenuated,
+line and cold/hot accounts remain separate. Only physically identical widths
+share geometry. There is no node luminosity histogram or cell-brightness cut.
 
-Compiled worker and main hash stores use stable integer keys `(k,i)` and
-compact luminosity rows, rather than a preallocated rectangular grid. Memory
-depends on visited nodes and retained capacities, including hash overhead and
-temporary resize/output buffers. Main merging uses one thread and retains the
-input batch/group order for all 40 accounts (two dust states, ten lines and
-two temperature branches). Final nodes are ordered lexicographically by
-`(k,i)` before expansion.
+The immutable table is prepared outside process time. A compiled float64 loop
+combines lookup, four-corner interpolation and luminosity accumulation, with at
+most 400 temporary coefficients for one original cell. Adjacent supported channel
+values use contiguous template storage. Only bins supported by a nonzero-weight
+corner are visited; no exact original-cell support mask replaces this union.
+Each stored corner Gaussian truncates at its own `mu_node +/-5sigma_node`
+without renormalization. All batches and width groups retain their original
+ordered numerical merge. Normal builds disable fast-math and implicit FMA.
 
-A single standard-normal prefix table is prepared before process timing.
-Its dimensionless grid is [-5,5] at spacing 1/128. Stable analytic fine-cell
-areas are cumulatively summed from zero; online channel queries use linear
-interpolation and differences. Reconstructed nodes use `z=(v-mu)/sigma`,
-and adjacent channels reuse their shared cumulative boundary. Node Gaussians
-truncate outside `mu +/- 5*sigma` without renormalization. No original-cell
-support cut is applied before node deposition. Each node's probabilities are
-reused across its luminosity accounts. Up to eight supported native workers
-own independent channel rows, retaining fixed node/profile/block order.
-
-The runtime arithmetic gate compares native FMA/separate-multiply-add choices
-against an independent NumPy contraction of the same prefix-table
-coefficients using exact bytes, including partial and full blocks. Its
-signature binds the loaded coordinate/prefix binaries, coordinate rule,
-NumPy dispatch, table, channel edges and observed team. An unmatched mode
-raises before process rather than silently changing methods.
-
-Changing from the bounded grid to these sigma-scaled mean spacings changes
-the Gaussian mixture, not merely its storage. Binned spectra, window moments
-and node-window luminosity accounts can change and require accuracy checks,
-especially for narrow profiles near channel boundaries and weak wings.
-Images, gas phases, per-line missingness, physical temperatures/widths and
-original-cell full Gaussian moments retain their definitions. Node-window
-accounts check the new node population; they do not independently measure
-the original-cell-to-node shape error. Sparse storage alone guarantees
-neither a speedup nor an accuracy threshold.
-
-An explicit `spectral_method: histogram-2d` retains the bounded comparison
-grid in `mu` and `ln(sigma)`, including its central/outer and narrow/broad
-resolutions. It allocates the main rectangular histogram and requires all
-emitting parameters to fit its configured bounds. Out-of-grid values raise;
-it does not automatically select the sparse method or a 1D fallback. It uses
-the same standard-normal prefix table and node five-sigma accounting.
-
-Four luminosity accounts distinguish actual captured channel light, exact
-outside-window light, exact within-window light removed by the five-sigma node
-cutoff, and the signed lookup-window residual. Thus:
+The existing complete moments retain original-cell Gaussians and full support.
+Independent original-cell analytic endpoint references separately provide the
+untruncated and five-sigma-clipped window light. Captured spectrum light can
+differ from the clipped reference because of template interpolation, shifted
+corner supports and floating reduction. Four accounts therefore distinguish:
 
 ```text
 input = captured + outside + truncated_inside - signed_lookup_residual
-signed_lookup_residual = captured - exact_clipped_window
+signed_lookup_residual = captured - exact_original_cell_clipped_window
 ```
 
-The tail accounts apply to histogram-node Gaussians, not an independent
-cell-selection cut. No luminosity threshold drops cells. Full cell Gaussian
-moments remain untruncated. Grid interpolation changes channel values; the
-report records the adopted grid, cutoff, arithmetic gate, accounts and actual
-native teams, preserving per-line missingness and physical widths/masses.
+These identities close strict independent luminosity budgets without treating
+approximation as missing light. The tail bound applies to the original-cell
+analytic references; actual queried spectra use the template-corner supports.
+Images, gas phases, physical temperatures/widths, per-line missingness and full
+moments retain their definitions. Compare spectra and finite-window moments
+against a named reference when assessing grid accuracy.
+
+The retained explicit `histogram-layered` method instead accumulates brightness
+in sparse sigma-layer nodes whose mean spacing is0.1 times the layer sigma; it
+has no configured rectangular coverage box. A standard-normal prefix table
+expands occupied nodes. Its analytic accounts describe its node mixture.
+Explicit `histogram-2d` keeps the previous bounded axes and dense main histogram.
+Both raise on invalid or unrepresentable coordinates and retain their own
+accounting definitions. Neither is an automatic direct-template fallback.
 
 Explicit `spectral_method: exact` uses SciPy's double-precision erf, and
 `linear-lut` retains the one-dimensional erf table on [0,8] at spacing 1/4096
@@ -217,15 +195,15 @@ These methods are explicit references, never an automatic fallback.
 The [usage settings](usage.md#spectral-integration) describe selection and reuse.
 
 The bounded reader uses five I/O streams followed by up to 32 complete-column
-derivation tasks in the same pool. Up to 16 batch workers then calculate
-emission/products. The sparse main node store merges on one thread; final
-channel expansion uses eight verified native workers when supported, otherwise
-one. The retained bounded comparison can use its OpenMP merge kernel. These
-phases do not multiply into a nested per-cell worker count. Fourteen extensions
-build normally; Linux verifies compiler/runtime OpenMP support and macOS uses
-serial kernels. Explicit unsupported native teams raise.
+derivation tasks in the same pool. Up to 16 batch workers prepare unchanged
+emission/products for one bounded wave. Those same workers then query original
+Gaussian templates and release owned inputs. One main thread merges the wave
+in original batch order before the next wave starts. There is no final node
+expansion or nested spectral pool in the default. Fifteen extensions build
+normally, with portable C and optional ARM SIMD for template queries. Explicit
+node-reference OpenMP teams remain validated by their own kernels.
 
-Gaussian table/geometry/synthetic-gate preparation and actual z-copy conversion
+Gaussian template preparation and arithmetic checking and actual z-copy conversion
 are separately measured outside process elapsed time. Input identity, metadata
 construction/restoration, physical table loading, cache validation, every
 payload/derived/emission/product operation, checks, save and cleanup remain

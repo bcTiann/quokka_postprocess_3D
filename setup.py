@@ -1,11 +1,15 @@
 """Normal package build with an optional, compiler-verified Linux native teams."""
 from pathlib import Path
+import sys
 
 import numpy as np
 from Cython.Build import cythonize
 from setuptools import Extension, setup
 from setuptools.command.build_ext import build_ext
 
+# Isolated build backends execute this file without adding its directory to
+# sys.path. Resolve the bundled compiler settings beside this setup script.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from build_support import MODULES, extension_flags, probe_openmp
 
 

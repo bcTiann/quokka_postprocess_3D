@@ -99,7 +99,7 @@ def audit_accounting(payload, *, cutoff_sigma=5.0):
 
 
 def add_cutoff_accounts(payload, *, engine, cutoff_sigma=5.0):
-    """Attach exact engine endpoint references after histogram expansion."""
+    """Attach the selected engine's independent exact endpoint references."""
     input_light = payload["input_luminosity_erg_s"]
     expected_size = input_light.size
     references = []
@@ -114,7 +114,9 @@ def add_cutoff_accounts(payload, *, engine, cutoff_sigma=5.0):
     payload["outside_velocity_luminosity_erg_s"] = np.maximum(0.0, input_light - full_window)
     payload[TAIL_ARRAY] = np.maximum(0.0, full_window - clipped_window)
     payload[RESIDUAL_ARRAY] = payload["captured_luminosity_erg_s"] - clipped_window
-    return audit_accounting(payload, cutoff_sigma=cutoff_sigma)
+    audit = audit_accounting(payload, cutoff_sigma=cutoff_sigma)
+    audit["cutoff_applies_to"] = getattr(engine, "cutoff_applies_to", "histogram-node Gaussians")
+    return audit
 
 
 def update_cutoff_report(report, payload, *, engine, audit):
@@ -130,11 +132,17 @@ def update_cutoff_report(report, payload, *, engine, audit):
         # Retained A-reference engines use their original report description.
         node_integration = "fractional-mu-sigma-template"
         description = "fractional-mu and sigma integrated-bin templates"
+    elif method == "fractional-phase-log-sigma-template":
+        node_integration = None
+        description = "preintegrated fractional-mean/log-sigma templates"
     else:
         raise ValueError("Unsupported histogram-node integration table")
     for dust_index, dust_key in enumerate(payload["dust_state_keys"].tolist()):
         dust_report = report[dust_key]
-        if getattr(engine, "coordinate_rule", None) == "sigma-scaled-layered":
+        original_cells = getattr(engine, "coordinate_rule", None) == "original-cell"
+        if original_cells:
+            histogram_description = "Original-cell four-corner interpolation"
+        elif getattr(engine, "coordinate_rule", None) == "sigma-scaled-layered":
             histogram_description = "Layered ln(sigma) luminosity histogram with sigma-scaled mean spacing"
         else:
             histogram_description = "Bilinear mu/ln(sigma) luminosity histogram"
@@ -142,17 +150,36 @@ def update_cutoff_report(report, payload, *, engine, audit):
             f"{histogram_description} with {description}; "
             "node Gaussians truncated at +/-5 sigma without renormalization"
         )
-        dust_report["node_integration"] = node_integration
+        if original_cells:
+            dust_report["cell_integration"] = "preintegrated-phase-log-sigma-template-native"
+            dust_report.pop("node_integration", None)
+        else:
+            dust_report["node_integration"] = node_integration
         dust_report["gaussian_template_method"] = method
         dust_report.pop("phi_expansion_statistics", None)
         dust_report["gaussian_cutoff_sigma"] = audit["gaussian_cutoff_sigma"]
         dust_report["cutoff_renormalized"] = False
-        dust_report["cutoff_applies_to"] = "histogram-node Gaussians"
+        dust_report["cutoff_applies_to"] = (
+            "Stored template-corner Gaussians" if original_cells else "histogram-node Gaussians"
+        )
         dust_report["cutoff_accounting"] = (
             "Input = exact clipped window + physical outside window + truncated inside window; "
             "actual captured = exact clipped window + signed lookup window residual. "
             "Complete moments retain the original cell Gaussians."
         )
+        if original_cells:
+            dust_report["profile"] = (
+                "Original-cell luminosities multiplied by interpolated integrated-bin templates; "
+                "fractional mean plus integer-bin shift; logarithmic sigma interpolation"
+            )
+            dust_report["cutoff_reference_applies_to"] = "Original-cell Gaussians"
+            dust_report["cutoff_accounting"] = (
+                "Input = exact original-cell clipped window + original-cell physical outside "
+                "window + original-cell truncated inside window. Actual captured = exact "
+                "original-cell clipped window + signed template residual. The residual includes "
+                "template interpolation, shifted corner supports and floating reduction. "
+                "Complete moments retain original-cell Gaussians."
+            )
         dust_report["cutoff_accounting_audit"] = audit
         dust_report["template_expansion_statistics"] = engine.expansion_statistics
         for line_index, line_key in enumerate(payload["line_keys"].tolist()):

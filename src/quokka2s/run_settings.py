@@ -54,12 +54,13 @@ class ProcessSettings:
     Each concurrent batch can use spectral_workers integration threads.
     Defaults use 16 concurrent batches and one integration thread per batch.
     Index ranges are [start, stop), or None for the full native axis.
-    spectral_method defaults to sparse, on-demand luminosity nodes. Each
-    natural-log sigma layer uses mean spacing 0.1 times that layer's sigma;
-    adjacent layers have natural-log spacing 0.03125. gaussian_grid optionally
-    overrides that rule, with no finite mean/width rectangle inherited.
+    spectral_method defaults to direct original-cell integrated-bin templates.
+    Fractional mean position is interpolated separately on each natural-log
+    sigma layer; integer-bin mean shifts reuse those templates. Default width
+    coverage is 1e-5 to 1024 km/s; uncovered inputs raise. gaussian_grid can
+    override the template geometry without changing the fixed observation bins.
     histogram_merge_threads=None selects one ordered main merge thread for
-    histogram-layered. The explicit bounded histogram-2d reference selects four
+    direct-template and histogram-layered. The histogram-2d reference selects four
     OpenMP threads when available, otherwise one; unsupported teams raise.
     Exact/linear-lut remain explicit internal comparison methods, not fallbacks.
     field_cache_slabs limits adjacent shared reads, while field_cache_gib limits
@@ -80,7 +81,7 @@ class ProcessSettings:
     max_slabs: int | None = None
     x_index_range: tuple[int, int] | None = None
     y_index_range: tuple[int, int] | None = None
-    spectral_method: str = "histogram-layered"
+    spectral_method: str = "direct-template"
     gaussian_grid: dict | None = None
     histogram_merge_threads: int | None = None
     prepared_z_fields: Path | None = None
@@ -133,7 +134,7 @@ _PLOT_DEFAULTS = {
 }
 _FIGURE_FORMATS = ("png", "pdf")
 _FIGURE_STYLES = ("untitled", "titled")
-SPECTRAL_METHODS = ("histogram-layered", "histogram-2d", "exact", "linear-lut")
+SPECTRAL_METHODS = ("direct-template", "histogram-layered", "histogram-2d", "exact", "linear-lut")
 _ALLOWED_SETTINGS = (
     _RUN_REQUIRED_SETTINGS
     | set(_PROCESS_DEFAULTS)
@@ -519,6 +520,21 @@ def _process_settings(
         raise ValueError('z_read_workers cannot exceed the five native fields')
     if values["gaussian_grid"] is not None and not isinstance(values["gaussian_grid"], dict):
         raise ValueError("gaussian_grid must be a mapping of Gaussian grid parameters or null")
+    if values["spectral_method"] == "direct-template":
+        if values["spectral_workers"] != 1:
+            raise ValueError("direct-template requires spectral_workers: 1; chunk_workers supplies batch parallelism")
+        if values["histogram_merge_threads"] not in (None, 1):
+            raise ValueError("direct-template requires histogram_merge_threads: null or 1")
+        grid = values["gaussian_grid"]
+        if grid is not None:
+            supported = {
+                "sigma_min", "sigma_max", "log_sigma_step",
+                "mu_spacing_ratio", "maximum_phase_step",
+            }
+            unsupported = set(grid) - supported
+            if unsupported:
+                names = ", ".join(sorted(str(name) for name in unsupported))
+                raise ValueError("Unsupported direct-template gaussian_grid keys: " + names)
     if values["spectral_method"] == "histogram-layered":
         if values["histogram_merge_threads"] not in (None, 1):
             raise ValueError("histogram-layered requires histogram_merge_threads: null or 1")

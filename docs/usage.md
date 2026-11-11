@@ -283,10 +283,10 @@ Omitted settings use the same defaults shown in the shared YAML:
 | `slab_nx` | Number of x cells read per slab, retaining selected y and full z | 8 |
 | `query_chunk` | Maximum cells in one table-query batch | 131,072 |
 | `chunk_workers` | Concurrent query batches within the loaded slab | 16 |
-| `spectral_workers` | Per-batch threads for explicit 1D reference methods; no extra integration pool in default 2D | 1 |
+| `spectral_workers` | One compiled integration thread per template batch; batch parallelism uses chunk_workers | 1 |
 | `z_reader_threads` | Shared reader/complete-column derivation pool size | 32 |
 | `z_read_workers` | Simultaneous raw-field file streams before derivation | 5 |
-| `histogram_merge_threads` | Main sparse-node merge; the default layered method accepts one thread only | 1 |
+| `histogram_merge_threads` | Ordered main profile merge; direct-template accepts null or one | 1 |
 | `prepared_z_fields` | Absolute existing read-only field cache, or owned temporary conversion | null |
 | `field_cache_slabs`, `field_cache_gib` | Retained native-reader settings; unused by bounded eager process | 16, 12 |
 
@@ -324,103 +324,96 @@ multi-slab groups. Plot needs only saved products, never this cache.
 
 ### Spectral integration
 
-The default `histogram-layered` method accumulates each emitting cell's own
-luminosity into four parameter nodes, then expands only occupied nodes over
-400 velocity bins from -200 to +200 km/s. The default settings are:
+The default `direct-template` method directly queries each original cell's
+preintegrated Gaussian templates. It saves 400 bins from -200 to +200 km/s.
+The same cells, temperatures, thermal widths, luminosities, per-line masks and
+complete Gaussian moments are used by all products. Default settings are:
 
 ```yaml
-spectral_method: histogram-layered
+spectral_method: direct-template
 gaussian_grid:
+  sigma_min: 0.00001
+  sigma_max: 1024.0
+  log_sigma_step: 0.03125
   mu_spacing_ratio: 0.1
-  log_sigma_step: 0.03125
-  mu_anchor: 0.0
+  maximum_phase_step: 0.1
+spectral_workers: 1
 histogram_merge_threads: 1
 ```
 
-`gaussian_grid: null` selects the same layered defaults. Fixed natural-log
-sigma layers begin at the unchanged physical floor, `1e-5 km/s`. Layer `k`
-has width `exp(log(sigma_floor) + k * log_sigma_step)`; layer zero is restored
-to the exact floor. Mean nodes on that layer have spacing
-`mu_spacing_ratio * sigma(k)`, anchored at `mu_anchor`. The lower and upper
-sigma layers each locate their own two mean neighbors and compute separate
-mean fractions. The four weights remain nonnegative and sum to one.
+`gaussian_grid: null` selects these defaults. Write the mean in channel units as
+`mu/delta_v = floor(mu/delta_v) + phase`. Each natural-log sigma layer stores
+integrated-bin probabilities at phase knots from 0 to 1. Its phase transition
+spacing is at most `min(maximum_phase_step, mu_spacing_ratio*sigma/delta_v)`.
+For very narrow Gaussians, exactly flat interior phase knots can be omitted;
+fine transition knots near channel edges are retained. Each layer stores the
+union of all phase nodes' five-sigma supports plus zero guards, so shifting a
+mean into the window never mistakes an unstored supported bin for zero.
 
-Compiled worker and main stores allocate visited integer-key nodes `(k,i)`
-and compact luminosity rows. No main rectangular grid or fixed mu/sigma
-coverage box is allocated. Finite floating-point coordinates and signed
-integer keys still have limits: invalid inputs, overflow and indistinguishable
-neighboring nodes raise rather than clip, disappear or use another method.
-Memory includes retained capacities, hash metadata and temporary output/resize
-buffers, not just the number of final occupied rows.
+The kernel locates two sigma layers and, separately on each, two phase knots.
+Linear interpolation in phase and in `ln(sigma)` supplies four nonnegative
+weights. Their weighted template probabilities are multiplied by that cell's
+luminosity accounts and immediately accumulated. A Cython/C kernel keeps at
+most 400 temporary coefficients per cell, rather than a batch-by-400 matrix.
+No global or batch luminosity-node accumulator is created. No luminosity
+threshold drops cells. Stored template corners have individual five-sigma
+supports and are not renormalized. Invalid coordinates, unsafe integer shifts
+and sigmas outside the prepared coverage raise; there is no clipping or
+automatic alternate integrator.
 
-The main sparse store merges each batch/group in original order on one
-thread; omitted/1 selects that thread, while another explicit team raises.
-Final nodes are sorted by sigma-layer and signed mean index. Prefix expansion
-can use eight verified native channel workers when supported, otherwise one.
-The default can also be named explicitly:
+The fractional-mean table can be shifted to other finite means, but it does
+**not** cover arbitrary sigmas. Set bounds to cover the actual emitting widths.
+For example, a large snapshot with widths above 1024 km/s can use:
 
-```bash
-uv run process --spectral-method histogram-layered --jobname sparse-process --no-plot
+```yaml
+spectral_method: direct-template
+gaussian_grid:
+  sigma_max: 8192.0
 ```
 
-One standard-normal prefix table stores cumulative fine-cell areas on
-`z in [-5,5]` at spacing 1/128. It is prepared before process timing. Each
-occupied node standardizes its physical channel boundaries, interpolates the
-cumulative values and reuses adjacent channels' shared boundaries. No
-node-by-channel probability matrix or mu/sigma integral template is retained.
-Node profiles use `mu +/- 5*sigma` clipping without renormalization; no
-original-cell support cut precedes deposition.
+Other keys retain their defaults. Table construction and its arithmetic check
+run before process timing. Increasing the upper bound increases prepared table
+memory; it changes coverage rather than clipping physical widths.
 
-Actual captured light, analytic outside-window light, analytic removed
-within-window tails and signed lookup residual are recorded separately.
-Their analytic U/K references describe the resulting node mixture. Full
-Gaussian moments, physical temperatures/widths, dust states and per-line
-missingness retain their original-cell definitions. This is a different node
-approximation from the bounded grid: spectra, finite-window moments and
-node-window accounts need accuracy comparisons rather than a byte-equality
-claim. Images, gas phases and original-cell full moments remain protected.
-See the [method reference](emission_method.md#saved-products-and-figures).
+For each bounded wave of up to `chunk_workers` batches, the existing emission,
+image, gas-phase and full-moment preparation finishes first. Workers then query
+their owned original-cell Gaussians; the main thread merges in original batch
+order. Original-cell inputs are released after that wave. `chunk_workers: 1`
+uses the same wave and merge order on one worker. There is no nested spectral
+thread team; `spectral_workers` must be 1, and the main merge accepts null or 1.
 
-A runtime gate binds the actual coordinate/prefix binaries, coordinate rule,
-NumPy dispatch, table and observed team. It selects a native arithmetic mode
-only after exact comparisons with an independent NumPy prefix contraction.
-If neither FMA nor separate multiply/add matches, preparation raises before
-process; no method is silently substituted. Sparse storage or a smaller
-spacing ratio alone does not establish full-process speed or an error bound.
+`processing_timings.gaussian.query_and_profile_addition_seconds` is the elapsed
+union of template-query and real spectrum-addition intervals: parallel overlap
+counts once. It excludes independent analytic endpoint accounts. The separate
+`gaussian_wave_seconds_including_analytic_accounts_and_scheduling` includes
+query task dispatch, analytic accounts, bookkeeping and release. Worker call
+sums are diagnostic and are not wall time or divided by worker count. The
+complete process time continues to include initialization, field reads,
+physical calculations, numerical products, checking and saving.
 
-To compare another spacing ratio, use a separate configuration and output
-group. For example:
+Analytic window references use the original cells, whereas the queried spectra
+interpolate template corners with their own supports. The signed residual
+therefore includes interpolation, shifted support and floating reduction.
+Images, gas phases, original-cell complete moments and per-line missingness
+retain their definitions. Use named product and reference-spectrum comparisons
+to assess interpolation error, especially for narrow profiles and weak wings.
+
+The previous sparse default is retained as an explicit reference:
 
 ```yaml
 spectral_method: histogram-layered
-gaussian_grid:
-  mu_spacing_ratio: 0.05
-  log_sigma_step: 0.03125
-  mu_anchor: 0.0
-histogram_merge_threads: 1
-```
-
-The retained `histogram-2d` comparison uses the previous bounded rectangular
-mu/`ln(sigma)` grid, narrow/broad resolutions and dense main histogram. All
-emitting parameters must fit its configured bounds; out-of-grid input raises,
-without automatically switching to the sparse default. Use a separate YAML
-file with the bounded method's keys, or its default grid:
-
-```yaml
-spectral_method: histogram-2d
 gaussian_grid: null
 histogram_merge_threads: 1
 ```
 
-Historical original-cell integration timings describe a different workload.
-An approximately fourteen-minute conversion-plus-process comparison is not a
-measurement of the sparse default. Measure the complete process on fixed
-inputs and report conversion and Gaussian preparation separately.
-
-Grid mappings belong to the chosen method. Do not pass the sparse ratio keys
-to `histogram-2d` or bounded axis keys to `histogram-layered`. When comparing
-methods, select a separate YAML and output group; a CLI method override does
-not convert a method-specific `gaussian_grid` mapping.
+It distributes luminosity to on-demand `(sigma-layer,mean-index)` nodes with
+mean spacing 0.1 times the layer sigma and natural-log step 1/32. A standard-normal
+prefix table expands occupied nodes after the ordered main merge. Its analytic
+window references describe the node mixture. The bounded `histogram-2d` method
+keeps its rectangular axes, dense main histogram and strict finite coverage.
+Neither is an automatic fallback for direct-template. Use a separate YAML and
+output group when selecting a different method; method-specific grid mappings
+are not converted by a CLI override.
 
 Explicit reference methods remain available:
 
@@ -432,12 +425,12 @@ uv run process --jobname reference-lut --spectral-method linear-lut
 `exact` calls SciPy's double-precision erf. `linear-lut` uses the retained 1D
 erf table on [0,8] with spacing 1/4096 and odd symmetry. Those reference paths
 keep their existing cell chunks, boundary handling and error-policy behavior.
-`--spectral-method histogram-layered` explicitly selects the default. CLI overrides
+`--spectral-method direct-template` explicitly selects the default. CLI overrides
 apply only to that invocation and to every selected snapshot in a run. Plot
 reads the saved method/products and does not recalculate integration.
 
-The saved effective method, grid, cutoff, arithmetic gate and actual native
-teams describe the calculation. Result reuse requires exact configuration and
+The saved effective method, template geometry, cutoff, arithmetic check and native
+backend describe the calculation. Result reuse requires exact configuration and
 input/source identity; choose another jobname/results root for a comparison.
 
 ### Memory, concurrency and progress
@@ -457,27 +450,23 @@ Concurrency belongs to distinct phases, not one multiplied worker count:
 | Raw-field I/O, reader pool | 5 streams in the 32-thread pool | One stream per field; derivation waits for all reads |
 | Fused derivation, same reader pool | Up to 32 tasks | Disjoint complete `(x,y)` columns; no batch processing yet |
 | Emission/products, batch pool | Up to 16 batches | Immutable views of one derived slab; original ordered main merge |
-| Main sparse-node merge | One main thread | Original batch/group order into the integer-key store |
-| Final occupied-node expansion | Actual team 8 or serial 1 | Independent complete channel rows, after all slab batches |
+| Gaussian queries, same batch pool | Up to 16 batches, one compiled thread each | Original-cell template lookup after physical preparation finishes |
+| Main profile merge | One main thread | Original batch/group order; no node store or final expansion |
 
-The main merge may overlap unfinished batch workers, but it is owned
-by the main accumulator rather than nested inside every batch. Reader
-derivation finishes before those batches start; final expansion starts only
-after all slab batches are merged.
+Reader derivation finishes before physical batches start. Each bounded wave
+finishes physical preparation, Gaussian queries and the ordered main merge
+before its successor. These phases do not multiply into a nested worker count.
+The explicit node methods keep their own supported merge/expansion teams.
 
-All fourteen extensions build with normal setuptools and pinned native-build
-dependencies. Linux channel expansion and the retained bounded merge enable
-OpenMP only after the active compiler links its runtime. macOS uses serial
-kernels. Runtime observes actual expansion team sizes;
-automatic selection falls back to one worker if necessary, while explicitly
-requested unsupported native teams raise rather than claim parallel execution.
-The sparse default accepts only `histogram_merge_threads: 1`; the explicit
-bounded comparison can request a supported merge team. Expansion's native
-`threads` argument is likewise strict. No OpenMP wait policy is forced.
+All fifteen extensions build with normal setuptools and pinned native-build
+dependencies. Linux reference merge/expansion kernels enable OpenMP only after
+the compiler links its runtime; unsupported explicit teams raise. The default
+template kernel has a portable C path and optional ARM SIMD instructions, with
+no additional BLAS dependency or forced OpenMP wait policy.
 
 Memory limits for legacy field groups are not total process RSS controls.
-Current raw slab buffers, six derived arrays, batch queries, sparse increments,
-the main node histogram, tables and result arrays have separate lifetimes.
+Current raw slab buffers, six derived arrays, owned Gaussian input waves,
+templates and result arrays have separate lifetimes.
 More workers can increase memory and need not reduce full process time.
 `max_slabs: 1` makes an explicitly partial diagnostic run; omit it to finish the
 selected region/full snapshot.

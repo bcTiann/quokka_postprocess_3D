@@ -78,10 +78,10 @@ class EmissionOutputs:
 
 
 class EmissionProducts:
-    """Running image/spectrum/phase sums; never retains individual cell arrays."""
+    """Keep product sums and bounded worker Gaussian inputs until wave completion."""
 
     def __init__(self, snapshot, line_keys, spectral_workers, *,
-                 spectral_method="histogram-layered", histogram_engine=None,
+                 spectral_method="direct-template", histogram_engine=None,
                  histogram_partial=False, histogram_merge_threads=None):
         """Create image, spectrum and gas-phase accumulators for one run.
 
@@ -94,21 +94,22 @@ class EmissionProducts:
             From CellEmissionCalculator.line_keys; fixes the line order of every accumulator.
         spectral_workers : int
             Thread count for Gaussian channel integration within each batch.
-        spectral_method : {"histogram-layered", "histogram-2d", "exact", "linear-lut"}, optional
-            On-demand sigma-layer nodes by default. The bounded-grid and direct
-            reference methods stay explicit and are never automatic fallbacks.
+        spectral_method : {"direct-template", "histogram-layered", "histogram-2d", "exact", "linear-lut"}, optional
+            Original cells directly query preintegrated Gaussian templates by default.
+            Retained node and exact methods are explicit comparisons, not fallbacks.
         histogram_engine : GaussianHistogramEngine, optional
             The prepared coordinate rule and shared standard-Gaussian prefix
             table. Required for both node methods.
         histogram_partial : bool, optional
-            True only for worker-owned sparse increments; the main accumulator
-            merges them in original batch order before one final expansion.
+            True for worker-owned increments. Direct-template workers retain one
+            bounded batch of original Gaussians until its query wave finishes.
 
         Notes
         -----
         Spectra and phase histograms use 400 channels over [-200, 200] km/s.
         Cell luminosity totals have shape (L, 2), ordered cold then hot.
-        Only sums and statistics remain in this object, not cell arrays.
+        The main accumulator retains only sums and statistics. Direct-template
+        worker partials also own bounded Gaussian vectors until their query wave.
 
         Examples
         --------
@@ -128,7 +129,7 @@ class EmissionProducts:
         velocity_edges_kms = velocity_channel_edges_kms()
 
         image_class = LineLuminosityImageAccumulator
-        if histogram_partial and spectral_method in ("histogram-layered", "histogram-2d"):
+        if histogram_partial and spectral_method in ("direct-template", "histogram-layered", "histogram-2d"):
             from .compact_images import CompactImageAccumulator
             image_class = CompactImageAccumulator
         self.images = image_class(
@@ -136,13 +137,15 @@ class EmissionProducts:
             native_xy_shape=snapshot.processing_shape[:2],
             image_xy_origin=snapshot.processing_xy_origin,
         )
-        if spectral_method in ("histogram-layered", "histogram-2d"):
-            if spectral_method == "histogram-layered":
+        if spectral_method in ("direct-template", "histogram-layered", "histogram-2d"):
+            if spectral_method == "direct-template":
+                from .gaussian.template_spectra import TemplateIntegratedSpectra as histogram_class
+            elif spectral_method == "histogram-layered":
                 from .gaussian.layered_spectra import LayeredIntegratedSpectra as histogram_class
             else:
                 from .gaussian.spectra import HistogramIntegratedSpectra as histogram_class
             if histogram_engine is None:
-                raise ValueError("Prepare the shared Gaussian engine before constructing node products")
+                raise ValueError("Prepare the shared Gaussian engine before constructing spectra")
             self.spectra = histogram_class(
                 line_keys=self.line_keys,
                 velocity_edges_kms=velocity_edges_kms,
@@ -393,7 +396,7 @@ class EmissionProducts:
             self.intrinsic_luminosity_erg_s,
             self.attenuated_luminosity_erg_s,
         ))
-        if self.spectra.spectral_method in ("histogram-layered", "histogram-2d"):
+        if self.spectra.spectral_method in ("direct-template", "histogram-layered", "histogram-2d"):
             from .gaussian.accounting import check_histogram_luminosity
             check_histogram_luminosity(outputs.spectrum_payload, expected_luminosity)
         else:

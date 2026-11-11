@@ -10,7 +10,7 @@ uv run process
 uv run plot
 ```
 
-Before calculating cells, process prepares its standard-Gaussian prefix table separately
+Before calculating cells, process prepares its integrated Gaussian templates separately
 from the process clock. It then opens the original snapshot metadata and physical
 tables inside that clock. `prepared_z_fields` optionally selects an absolute
 existing z-contiguous field cache: it is validated and read without changing or
@@ -54,7 +54,7 @@ automatically installs the checkout in editable mode and registers commands
 from `[project.scripts]` in `pyproject.toml`. Process and plot call the existing
 `process_snapshot.main()` and `plot_emission_results.main()` functions directly.
 No activation, import-path export, or manual editable installation is needed.
-Sync builds fourteen native extensions through `setup.py` and `build_support.py`,
+Sync builds fifteen native extensions through `setup.py` and `build_support.py`,
 using the pinned Cython/NumPy/SciPy build dependencies and local C compiler.
 The inventory includes the retained 1D reference kernel, 2D deposition/merging/
 prefix expansion/spectral preparation and retained A reference kernels, Cloudy/DESPOTIC interpolation, fused derived
@@ -62,9 +62,9 @@ fields, paired-field checking and compact images. The build disables fast-math
 and implicit FMA contraction. On Linux it verifies the active compiler can link
 OpenMP before enabling it for independent-row merge and channel expansion;
 macOS builds those kernels serially. Runtime checks verify actual team sizes:
-the default sparse main merge uses one worker and expansion uses eight when
-supported, otherwise one. The explicit bounded method retains its native
-merge-team selection. Unsupported explicit teams raise. `uv` tracks the native
+the default template kernel uses one compiled integration thread per batch and
+one ordered main profile merge. The explicit node methods keep their own native
+merge/expansion teams. Unsupported explicit teams raise. `uv` tracks native
 sources and build declarations; run `uv sync` after editing them. Generated C
 and native binaries are local build products.
 Plot reports the saved-results directory, each line being drawn, output paths,
@@ -127,7 +127,7 @@ The package has five purpose-specific folders:
 |---|---|---|
 | Read settings | `load_process_configs()` | A fixed list of `ProcessSettings` records with YAML settings, command-line selection and resolved per-snapshot paths |
 | Reuse completed results | `process_reuse.reuse_completed_results()` | Complete, intact products with exact matching configuration and input/source identity, or a clear preserved-output error |
-| Prepare Gaussian tables | `products.gaussian.layered_engine.prepare_layered_engine()` | Sparse coordinate rules, one standard-normal prefix table and an arithmetic gate; separately timed before process |
+| Prepare Gaussian tables | `products.gaussian.template_engine.prepare_template_engine()` | Integrated fractional-mean/log-sigma templates and an arithmetic check; before process |
 | Open inputs | `processing_inputs.load_processing_inputs(config)` | Fresh/restored `snapshot` metadata and `emission_calculator`, inside process time |
 | Create output arrays | `EmissionProducts(...)` | Initially empty image, spectrum, and gas-phase accumulators |
 | Prepare fields | `processing_inputs.prepare_z_contiguous_snapshot()` | Validated existing fields or an owned temporary cache, plus its bounded eager reader |
@@ -311,14 +311,13 @@ The active [bounded_z_reader.py](../src/quokka2s/bounded_z_reader.py) path then:
 5. Process up to `chunk_workers=16` immutable 131072-cell batch views, merge in
    original order, then release the six arrays before reading the next slab.
 
-The 32-column and five-I/O settings share one pool and run before emission
-batches; they do not multiply the 16 batch workers. The default main sparse
-merge uses one thread and can overlap still-running batches, but remains one
-ordered main-thread operation. Final expansion begins after all slab batches
-have merged. Sparse histogram batches do not invoke a second cell-by-400
-integration pool. Final expansion uses an actual eight-thread team over
-independent channels when supported, otherwise one. The sparse store accepts
-only one main merge thread; unsupported explicit native requests raise.
+The 32-column and five-I/O settings share one pool and finish before physical
+batch preparation. Up to 16 batches then prepare unchanged emission/products.
+The same workers query their owned original-cell Gaussians in the next phase,
+then the main thread merges small profiles in original order. Only this bounded
+wave's Gaussian vectors survive preparation; they are released after querying.
+No node store or final expansion exists in the default route. One-worker mode
+uses the same wave path. These worker phases do not multiply one another.
 
 `field_cache_slabs`/`field_cache_gib` remain accepted for the original native
 reader interface. They do not control the bounded eager process path, whose
@@ -607,65 +606,48 @@ snapshot reads or emission-table queries are needed.
 | Product | File and function | Calculation |
 |---|---|---|
 | Image | [products/line_luminosity_images.py](../src/quokka2s/products/line_luminosity_images.py), `LineLuminosityImageAccumulator.add_batch()` | Find each cell's native `(x,y)` pixel and add `epsilon * volume`; all z cells on that sightline add to the same pixel |
-| Spectrum | [products/gaussian/layered_spectra.py](../src/quokka2s/products/gaussian/layered_spectra.py), `LayeredIntegratedSpectra` with shared `add_batch()` preparation | Deposit luminosity into sparse sigma-layer/mean nodes; merge batches and expand occupied nodes over 400 channels once |
+| Spectrum | [template_spectra.py](../src/quokka2s/products/gaussian/template_spectra.py), `TemplateIntegratedSpectra` with shared preparation | Query four original-cell templates, multiply by luminosity and merge small 400-channel profiles |
 | Gas phases | [products/gas_phase_velocity.py](../src/quokka2s/products/gas_phase_velocity.py), `GasPhaseVelocityAccumulator.add_batch()` | Assign the mixed-temperature phase, add cell mass to its velocity channel, and accumulate velocity moments |
 
 Image accumulation uses the selected native x/y sightlines: 256 × 256 for
 the full reference snapshot, or 512 × 512 for a full 512 × 512 × 4096 grid.
 Spectrum accumulation uses each line's available cells directly and does not
-go through a rebinned image. The default `histogram-layered` route is:
+go through a rebinned image. The default `direct-template` route is:
 
-1. Keep existing cold/hot branches, line availability, Doppler centres and
-   thermal widths. Group only lines with identical physical widths.
-2. [layered_geometry.py](../src/quokka2s/products/gaussian/layered_geometry.py)
-   defines sigma layers with natural-log step `0.03125`, anchored at the
-   physical width floor `1e-5 km/s`. Layer `k` has mean spacing
-   `0.1 * sigma(k)`, anchored at zero. Find two sigma layers and, separately
-   on each layer, two mean neighbors. Four nonnegative weights distribute
-   that cell's own luminosity. The two mean fractions can differ because
-   layer spacings differ. There are no configured mu/sigma upper bounds;
-   invalid inputs and unrepresentable integer/floating nodes raise.
-3. [_layered_deposit.pyx](../src/quokka2s/products/gaussian/_layered_deposit.pyx)
-   uses worker-local compiled hash workspaces keyed by `(sigma_layer,mu_index)`.
-   Keys identify coordinates independently of creation order. Workers return
-   owned sorted sparse increments; luminosity values remain separate by
-   intrinsic/attenuated, line and cold/hot account. They never allocate a
-   rectangular histogram or retain a list of original cells for expansion.
-4. [layered_spectra.py](../src/quokka2s/products/gaussian/layered_spectra.py)
-   owns a separate compiled main hash store with 40 luminosity columns.
-   One main thread merges each original batch/group before its successor.
-   Storage grows with visited nodes and retained capacities, including hash
-   and temporary resize/output buffers. Before expansion it extracts nodes
-   in lexicographic `(layer,mean-index)` order and releases the main hash.
-5. [layered_engine.py](../src/quokka2s/products/gaussian/layered_engine.py)
-   reconstructs the occupied node coordinates and standardizes boundaries with
-   `z=(v-mu)/sigma`. A single prefix table stores cumulative standard-normal
-   fine-cell masses on [-5,5], spacing 1/128. Interpolate each needed boundary
-   once; adjacent channels reuse their common value and subtract to obtain
-   integrated probabilities. Node profiles retain the five-sigma cutoff without
-   renormalization; no original-cell support cut is applied before deposition.
-6. Multiply probabilities by the node's 40 luminosity accounts. Independent
-   channel rows may use eight verified OpenMP workers while each channel keeps
-   the fixed sorted-node/profile/block order. `layered_gate.py` and
-   `prefix_arithmetic.py` check partial and full blocks against an independent NumPy contraction,
-   selecting FMA or separate multiply/add only after exact byte comparisons.
-   An unmatched mode raises before process; it does not silently switch methods.
+1. Keep the existing cold/hot branches, availability masks, Doppler centers and
+   physical thermal widths. Group only lines with identical widths.
+2. `template_table.py` constructs sigma layers from 1e-5 to 1024 km/s at natural-log
+   spacing 1/32. Each layer samples the mean's fractional channel position from
+   0 to 1. Transition spacing is at most `min(0.1,0.1*sigma/delta_v)`; redundant
+   exactly flat interior knots may be omitted for narrow profiles. A template
+   stores the union of its layer's phase-node five-sigma supports plus guards,
+   so it can be shifted before cropping to the observed 400 channels.
+3. `template_spectra.py` retains one bounded worker wave's original mu/sigma/L
+   vectors while shared preparation computes images, full moments and counts.
+   `template_batches.py` then queries those groups in their original order.
+4. `_template_integrate.pyx` splits each mean into integer shift and fractional
+   phase, locates two sigma layers and two phase knots on each layer, and
+   interpolates four template values. It multiplies by that original cell's
+   luminosity and immediately adds to the small spectrum. At most 400 temporary
+   coefficients are used; no batch-by-400 matrix or brightness-node store is made.
+5. Main profile, input-light, count, full-moment and endpoint sums merge in the
+   original batch order. Original-cell Gaussian vectors are released before
+   the next wave. Invalid coordinates and uncovered sigmas raise without
+   clipping, fallback or a luminosity threshold. To cover broader known widths,
+   set `gaussian_grid: {sigma_max: 8192.0}` before preparation.
 
-The four luminosity accounts distinguish actual captured channel light,
-analytic light outside the velocity window, analytic within-window light
-removed by the node cutoff, and signed lookup-window residual. In particular,
-`input = captured + outside + truncated_inside - signed_lookup_residual`;
-the report checks these identities without treating approximation as missing
-luminosity. Complete cell Gaussian moments remain independent of this cutoff.
+Each template corner has its own five-sigma support without renormalization.
+Independent original-cell analytic endpoint references describe full and clipped
+window light. The signed residual includes interpolation, shifted corner support
+and floating reduction. `input = captured + outside + truncated_inside -
+signed_lookup_residual` closes strict independent budgets. Complete cell moments
+remain untruncated, and per-line missingness remains independent.
 
-These analytic window references describe the new node mixture. The sparse
-rule changes node positions compared with bounded `histogram-2d`, so spectra,
-window moments and node-window accounts may change. Images, phases, per-line
-missingness and original-cell full moments retain their definitions. Exact
-prefix arithmetic does not bound the cell-to-node shape approximation; compare
-against direct Gaussian integrals, particularly near narrow-line bin edges.
-The explicit bounded method remains a comparison with its own finite axes,
-radix deposition, dense main histogram and strict coverage checks.
+The previous sparse method is explicitly selected as `histogram-layered`; it
+accumulates luminosity into sigma-scaled mean nodes and later expands occupied
+nodes from a standard-normal prefix table. Its endpoint accounts describe that
+node mixture. `histogram-2d` retains bounded axes and a dense main histogram.
+Neither is an automatic direct-template fallback.
 
 Explicit `exact` and `linear-lut` methods remain comparison references in
 [integrated_spectra.py](../src/quokka2s/products/integrated_spectra.py) and
@@ -693,9 +675,9 @@ sigma_full² = sum(L * ((v - mean_velocity)² + s²)) / sum(L)
 For example, two equal-light cells at -10 and +10 km/s, each with thermal
 width 3 km/s, give mean velocity 0 and full sigma sqrt(100 + 9) km/s.
 The full moments do not depend on the saved ±200 km/s channel window.
-`LayeredIntegratedSpectra` retains the common spectrum arrays below and
-adds the main sparse node store or worker-owned sparse updates. It fills the final
-`dL_dv` channels once, during output construction:
+`TemplateIntegratedSpectra` retains the common spectrum arrays below and
+small endpoint references. Worker queries fill their profiles before the
+ordered main merge; output construction does not expand a node store:
 
 | Attribute | Shape | Stored value |
 |---|---|---|
@@ -720,21 +702,18 @@ windows (32 for this snapshot), and `count_cells_in_slabs()` counts their core
 cells. With one shared worker pool, the main loop calls `process_one_slab()`
 and then `report_snapshot_progress()` for each window.
 
-For a first reading, follow the `chunk_workers == 1` branch inside
-`process_one_slab()` to `process_serial_batches()`. It calls the same
-`accumulate_batch()` used in parallel. This is a reading order, not a request
-to change the supplied YAML. Each slab is read and finished before the next;
-the list of windows does not hold any simulation field arrays.
+For the default, follow `process_one_slab()` into
+`template_batches.process_template_batches()`. `chunk_workers` limits the wave
+size, including when it is 1. Workers first call the same `accumulate_batch()`
+used by retained references. Gaussian inputs survive only this bounded physical
+wave. The next phase queries them; the main thread merges in batch order via
+`EmissionProducts.merge()`. Each slab is finished before the next one is read.
+The retained reference methods keep the original serial/parallel batch helpers.
 
-With multiple chunk workers, `process_parallel_batches()` submits a bounded
-number of batches from the already loaded slab. Workers read the same immutable
-slab arrays; each owns its output accumulators. The main thread merges their
-results in input order using `EmissionProducts.merge()`. It reads the next slab
-only after the current one is finished. The default layered route uses sparse
-batch deposition, one main merge thread and up to eight supported native
-threads for final channel expansion. These phases do not nest with reader derivation.
-`spectral_workers` controls the retained explicit 1D comparison integrators,
-not another 400-bin integration pool inside 2D batches.
+`processing_timings.gaussian` separates query-plus-addition elapsed union from
+whole Gaussian-wave wall time including independent analytic accounts and
+scheduling. The sum of overlapping worker call times is a diagnostic, not wall
+time. Timing lists are summarized and cleared after each completed wave.
 
 The end of `main()` keeps construction, checking, reporting and writing separate:
 

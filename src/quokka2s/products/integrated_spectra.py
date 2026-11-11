@@ -226,7 +226,7 @@ class IntegratedSpectra:
         complete Gaussian moments retain their original cell calculation.
         Example: ten lines and 400 channels give dL_dv.shape == (2, 10, 2, 400).
         """
-        if spectral_method not in ("histogram-layered", "histogram-2d", "exact", "linear-lut"):
+        if spectral_method not in ("direct-template", "histogram-layered", "histogram-2d", "exact", "linear-lut"):
             raise ValueError(f"Unknown spectral_method: {spectral_method!r}")
         self.line_keys = tuple(line_keys)
         self.velocity_edges_kms = np.asarray(velocity_edges_kms, dtype=float).copy()

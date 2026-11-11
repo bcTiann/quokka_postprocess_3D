@@ -1,8 +1,9 @@
 # Repository directories and reading order
 
-The Python production workflow uses the default `histogram-layered` Gaussian
-luminosity accumulator: sigma-scaled mean nodes are allocated on demand in
-worker and main integer-key hash stores. A bounded eager reader supplies
+The Python production workflow defaults to `direct-template`: original cells
+interpolate preintegrated fractional-mean/log-sigma probabilities and immediately
+multiply and accumulate their own luminosities. No node brightness store is
+created. A bounded eager reader supplies
 z-contiguous raw fields. Process validates
 an explicit read-only `prepared_z_fields` cache or creates/removes its own
 temporary copy when that setting is null. Snapshot metadata/physical inputs and
@@ -21,7 +22,7 @@ standalone wheel with embedded input data. The default dependencies support
 both process and plot; the `tables` extra adds the optional chemistry solver
 and table-building tools.
 
-The package builds fourteen native extensions with normal `setup.py` and shared
+The package builds fifteen native extensions with normal `setup.py` and shared
 `build_support.py`, using pinned Cython/NumPy/SciPy build dependencies. The native
 inventory covers legacy 1D reference integration, 2D deposition/row selection/
 merge/prefix integration/spectral preparation and retained A reference kernels, Cloudy/DESPOTIC interpolation,
@@ -29,9 +30,9 @@ fused slab derivation, paired-field checking and compact images. `uv` cache
 keys track these sources and build declarations. Generated C and binaries are
 local build products. On Linux the active compiler must pass an OpenMP link
 probe before merge/expansion receive those flags; macOS uses serial kernels.
-The default main sparse merge uses one thread; channel expansion selects
-eight verified workers when supported, otherwise one. The retained bounded
-comparison can use its OpenMP merge kernel. Unsupported explicit teams raise.
+The default template kernel has one compiled integration thread per batch,
+a portable C path and optional ARM SIMD. One main thread merges small profiles
+in batch order. Retained node comparisons keep their own native thread rules.
 Plot does not import these processing extensions to draw saved arrays.
 
 ## Where each kind of file belongs
@@ -78,23 +79,24 @@ Plot does not import these processing extensions to draw saved arrays.
 4. [cell_emission.py](../src/quokka2s/physics/cell_emission.py): obtain each named
    line's emissivity and temperature, then apply foreground dust.
 5. [emission_products.py](../src/quokka2s/products/emission_products.py) sends each
-   batch to images, spectra and gas phases. Default
-   [products/gaussian/layered_spectra.py](../src/quokka2s/products/gaussian/layered_spectra.py)
-   distributes luminosities to four sigma-layer/mean nodes and keeps worker
-   increments plus a sparse main 40-account store. Main merging preserves
-   original batch/group order. `layered_geometry.py` defines stable `(k,i)`
-   keys with mean spacing `0.1 * sigma(k)`, logarithmic step `0.03125` and
-   physical sigma floor `1e-5 km/s`, without a rectangular coverage box.
-   [products/gaussian/layered_engine.py](../src/quokka2s/products/gaussian/layered_engine.py)
-   prepares one standard-normal prefix table before the process clock and
-   expands sorted occupied nodes with shared adjacent channel boundaries.
-   `prefix_tables.py` stores cumulative fine-cell masses on [-5,5]; node
-   cutoff support is not renormalized. Invalid or unrepresentable coordinates
-   raise. `layered_gate.py` and `prefix_arithmetic.py` bind exact contraction
-   arithmetic to the coordinate/prefix binaries, NumPy dispatch, table,
-   coordinate rule and observed native team.
-   `integrated_spectra.py` and `_gaussian_fractions.pyx` retain explicit
-   `exact`/`linear-lut` comparison methods, not the default process algorithm.
+   batch to images, spectra and gas phases. The default
+   [template_spectra.py](../src/quokka2s/products/gaussian/template_spectra.py)
+   reuses the established line availability/width grouping and full moments.
+   It retains original-cell mu/sigma/luminosity arrays only for one bounded
+   worker wave. [template_batches.py](../src/quokka2s/products/gaussian/template_batches.py)
+   finishes physical preparation, Gaussian queries and ordered merging before
+   the next wave. [template_table.py](../src/quokka2s/products/gaussian/template_table.py)
+   prepares fractional-mean/log-sigma integrated-bin templates outside process
+   timing; [template_engine.py](../src/quokka2s/products/gaussian/template_engine.py)
+   calls [_template_integrate.pyx](../src/quokka2s/products/gaussian/_template_integrate.pyx)
+   to interpolate each original cell and directly add its luminosity-weighted
+   probabilities. Default sigma coverage is [1e-5,1024] km/s, with natural-log
+   step 1/32; uncovered widths raise. Mean integer shifts reuse the phase table.
+   Original-cell analytic endpoint accounts remain separate from queried
+   template-corner support. No luminosity-node histogram is created.
+   `layered_spectra.py` and `layered_engine.py` retain the previous sparse-node
+   method as an explicit comparison. `integrated_spectra.py` and
+   `_gaussian_fractions.pyx` retain explicit exact/1D-LUT references.
 6. [plot_emission_results.py](../src/quokka2s/plot_emission_results.py): draw the
    saved products selected by the same [configuration](../configs/emission.yaml).
 
@@ -117,7 +119,7 @@ current scientific rules.
 | `despotic/` | `solver_settings.py`: adopted solver defaults/source identities; `table_data.py`: table records/field names; `snapshot_domain.py`: physical settings/bounds checks and recorded build-snapshot metadata |
 | `despotic/` | `table_files.py`: NPZ serialization; `cell_solver.py`: equilibrium at one state; `fixed_temperature_chemistry.py`: fixed-temperature GOW callable; `abundance_workspace.py`, `two_body_rates.py`, `reaction_terms.py`: its composition and reaction helpers; `table_builder.py`: grid calculation |
 | `despotic/` | `runtime_table.py`: seven-field process loader; `lookup.py` and `cell_fields.py`: queries; `build_table.py`, `extend_table.py`, `interpolate_failed.py`, `list_failures.py`: table commands; `table_extension.py`: exact axis extension and raw-source validation; `prepare_table_plots.py`/`table_figure_data.py`: numerical figure preparation; `plot_table.py`/`table_plots.py`: draw saved panels |
-| `products/gaussian/` | Default sigma-layer coordinates, compiled sparse worker/main node stores, standard-normal prefix expansion and node-window accounting; explicit bounded comparison |
+| `products/gaussian/` | Default original-cell template table/query engine and bounded batch waves; retained sparse/bounded node references and their accounting |
 | `products/` | Image, spectrum, gas-phase and auxiliary numerical accumulation; `profile_preparation.py` prepares saved normalized/per-area curves; auxiliary preparation modules save masks, logarithmic panels, limits and radiation/dust samples |
 | `figures/` | `line_luminosity_images.py`, `line_spectra.py`, `gas_phase_spectra.py`, `all_line_spectra.py`: saved-product renderers; `line_labels.py`: titles; `figure_files.py`: PNG/PDF paths and saving; other modules: additional figures |
 
