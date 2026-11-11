@@ -8,7 +8,7 @@ results_dir: ../output
 # Every CLI --dataset requires explicit --jobname, even if YAML has that group.
 # A missing pair is rejected before config/input access or output creation.
 # CLI dataset paths must be absolute; omitted dataset keeps the YAML path.
-# uv run process --dataset /absolute/path/plt0008703 --jobname my-run --x 64 128 --y 32 64
+# uv run process --field-source z-contiguous --dataset /absolute/path/plt0008703 --jobname my-run --x 64 128 --y 32 64
 # uv run plot --dataset /absolute/path/plt0008703 --jobname my-run --x 64 128 --y 32 64
 # Process also accepts /absolute/path/run1/ and plots each snapshot by default.
 # Use process --no-plot for numerical products only, then draw the chosen group:
@@ -19,6 +19,8 @@ results_dir: ../output
 # Omitted x/y options keep their corresponding YAML range.
 
 # Optional native x-y region; null selects the full axis. z stays complete.
+# Regional process requires field_source: z-contiguous; plot/auxiliary tools
+# select their regions independently of the processing field source.
 # For example, x_index_range: [64, 128] selects x indices 64 through 127.
 x_index_range: null
 y_index_range: null
@@ -27,11 +29,15 @@ y_index_range: null
 # Process and plot select the same region directory from these settings.
 
 # Processing: cells per query batch, concurrent batches, threads per batch.
+# Read the original regular FAB columns into RAM; no z-field copy is written.
+# Requires full-box direct-template processing and complete-column batch alignment.
+# Select z-contiguous explicitly for regional/limited/reference-method process.
+field_source: native-columns
 query_chunk: 131072
 chunk_workers: 16
 spectral_workers: 1
 slab_nx: 8
-# Retained for native-reader utilities; the process eager reader uses slab_nx.
+# Slab/cache settings apply to the explicit z-contiguous source and utilities.
 field_cache_slabs: 16
 field_cache_gib: 12
 # Original-cell queries of preintegrated fractional-mean/log-sigma templates.
@@ -45,7 +51,8 @@ spectral_method: direct-template
 # maximum_phase_step. The observation window stays [-200,200] with 400 channels.
 gaussian_grid: null
 # Optional absolute path of an existing validated raw z-field cache.
-# Null keeps a scoped temporary conversion; a supplied cache is read-only.
+# Keep null with native-columns. Only field_source: z-contiguous uses a cache:
+# null makes a scoped temporary conversion; a supplied cache is read-only.
 prepared_z_fields: null
 # Independent tasks within the single-snapshot reader and main accumulator.
 z_reader_threads: 32
@@ -53,7 +60,8 @@ z_read_workers: 5
 # Null selects one ordered merge thread for direct-template or histogram-layered.
 # The explicit histogram-2d reference selects 4 with OpenMP, otherwise 1.
 histogram_merge_threads: null
-# Only a temporary copy created by this process is removed on completion/failure.
+# The native-column source writes no copy. The explicit z source removes only
+# the temporary copy it creates, including after failure.
 
 # Plotting: PNG with titles by default; CLI flags override each selection.
 figure_formats: [png]

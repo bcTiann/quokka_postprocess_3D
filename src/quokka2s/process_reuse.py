@@ -97,6 +97,8 @@ def processing_input_identity(config: ProcessSettings) -> dict:
     reuse to its numerical implementation. These records govern result reuse,
     not physical table compatibility.
     """
+    if config.field_source == "native-columns" and config.prepared_z_fields is not None:
+        raise ValueError("native-columns cannot use prepared_z_fields")
     if not (config.dataset / "Header").is_file():
         raise FileNotFoundError(f"Missing snapshot Header: {config.dataset / 'Header'}")
     package_directory = Path(__file__).parent
@@ -131,6 +133,7 @@ def processing_input_identity(config: ProcessSettings) -> dict:
         "source_sha256": source_hashes,
         "runtime_identity": _runtime_numerical_identity(),
         "prepared_z_fields": prepared_identity,
+        "field_source": config.field_source,
     }
 
 

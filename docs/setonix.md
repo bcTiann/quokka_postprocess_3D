@@ -97,7 +97,7 @@ Coverage is snapshot-dependent; see
 From a compute node in the allocation:
 
 ```bash
-uv run process --x 64 66 --y 64 66
+uv run process --field-source z-contiguous --x 64 66 --y 64 66
 ```
 
 This setup test selects x/y indices 64 and 65, with complete z columns. Ranges
@@ -150,16 +150,24 @@ To compare the retained one-dimensional reference method, select it explicitly
 and use a separate output group:
 
 ```bash
-uv run process --jobname sigma50-lut --spectral-method linear-lut --no-plot
+uv run process --field-source z-contiguous --jobname sigma50-lut --spectral-method linear-lut --no-plot
 ```
 
 This keeps the configured dataset and x/y selection. Use
-`--spectral-method exact` for direct integration. Process uses prepared raw
-z-contiguous fields and preserves the original snapshot. Set `prepared_z_fields`
-to an existing validated cache to reuse it read-only; `null` creates a temporary
-copy. Process timing excludes conversion and Gaussian preparation, while input
-initialization, payload reads, physical lookups, products, checks and saving remain
-timed. Results stay in the selected output group. The chosen method is saved in
+`--spectral-method exact` for direct integration, with the same explicit z source.
+Default full-box processing uses `field_source: native-columns`: original regular
+FAB columns are read into RAM, derived in place and released tile by tile, with
+no converted copy. It requires direct templates, aligned complete-column batches,
+`max_slabs: null` and `prepared_z_fields: null`; unsupported cases raise.
+All original reads, neighbour rereads, RAM rearrangement, physical work, checks
+and saving remain timed; only Gaussian preparation is excluded.
+
+The explicit `z-contiguous` source supports regions and reference methods.
+Set `prepared_z_fields` to a validated cache for read-only reuse; null makes an
+owned temporary copy. Only this source additionally excludes actual conversion
+time. Native processing prints tile bounds and updates status after each tile;
+the z source retains its slab/batch display and ten-second heartbeat.
+Results stay in the selected output group. The chosen source/method is saved in
 the report and must match for process reuse. Interpolation changes channel
 values; see
 [spectral integration](usage.md#spectral-integration) before comparing results.
@@ -178,7 +186,7 @@ are chosen manually, never inferred from the simulation path.
 For example, select the sigma50 run and its output group without editing YAML:
 
 ```bash
-uv run process --dataset /scratch/pawsey0807/chongchong/Projects-data/2026-quokka-outflow/hpc/run2.v2/job41114623-sigma50/run1 --jobname sigma50 --x 256 258 --y 256 258
+uv run process --field-source z-contiguous --dataset /scratch/pawsey0807/chongchong/Projects-data/2026-quokka-outflow/hpc/run2.v2/job41114623-sigma50/run1 --jobname sigma50 --x 256 258 --y 256 258
 ```
 
 Automatic plots use that same `sigma50` group and selected region. To calculate
@@ -255,7 +263,7 @@ To change snapshots without editing `dataset`, both commands accept an absolute
 `--dataset` path, for example:
 
 ```bash
-uv run process --dataset /scratch/pawsey0807/chongchong/Projects-data/2026-quokka-outflow/hpc/run2.v2/job41101509-sigma13/run1/plt0001450 --jobname job41101509-sigma13-run1 --x 64 66 --y 64 66
+uv run process --field-source z-contiguous --dataset /scratch/pawsey0807/chongchong/Projects-data/2026-quokka-outflow/hpc/run2.v2/job41101509-sigma13/run1/plt0001450 --jobname job41101509-sigma13-run1 --x 64 66 --y 64 66
 uv run plot --dataset /scratch/pawsey0807/chongchong/Projects-data/2026-quokka-outflow/hpc/run2.v2/job41101509-sigma13/run1/plt0001450 --jobname job41101509-sigma13-run1 --x 64 66 --y 64 66
 ```
 

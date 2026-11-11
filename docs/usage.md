@@ -161,7 +161,7 @@ YAML does not expand `$VARIABLE` expressions.
 ### Override the dataset, output group or region on the command line
 
 ```bash
-uv run process --dataset /path/to/simulations/plt0008703 --jobname sigma13.v2 --x 64 128 --y 32 64
+uv run process --field-source z-contiguous --dataset /path/to/simulations/plt0008703 --jobname sigma13.v2 --x 64 128 --y 32 64
 uv run plot --dataset /path/to/simulations/plt0008703 --jobname sigma13.v2 --x 64 128 --y 32 64
 ```
 
@@ -235,7 +235,7 @@ batch plot, repeat the selected `--jobname`, configuration and x/y overrides.
 CLI overrides do not persist or write YAML:
 
 ```bash
-uv run process --config /path/to/emission.yaml --dataset /path/to/run1/ --jobname sigma13.v2 --x 64 66 --y 32 34 --no-plot
+uv run process --field-source z-contiguous --config /path/to/emission.yaml --dataset /path/to/run1/ --jobname sigma13.v2 --x 64 66 --y 32 34 --no-plot
 uv run plot --config /path/to/emission.yaml --all --jobname sigma13.v2 --x 64 66 --y 32 34 --pdf --untitled
 ```
 
@@ -262,7 +262,7 @@ are additive report fields; numerical array formats and scientific calculations
 are unchanged. Table hashes govern reuse of a saved result, while physical
 compatibility checks for loading a table remain unchanged.
 
-For null `prepared_z_fields`, the owned temporary copy is removed and its
+With the explicit z source and null `prepared_z_fields`, its temporary copy is removed and its
 random path is not needed for reuse. An explicit prepared cache adds its
 manifest, raw field file states, original-source identity and optional metadata
 sidecar SHA to `input_identity`; it must still match when reusing those results.
@@ -280,19 +280,46 @@ Omitted settings use the same defaults shown in the shared YAML:
 
 | Setting | Meaning | Default |
 |---|---|---|
-| `slab_nx` | Number of x cells read per slab, retaining selected y and full z | 8 |
+| `field_source` | Original full-z native tiles in RAM; explicit z-contiguous supports regional/reference runs | native-columns |
+| `slab_nx` | Number of x cells per slab in the explicit z source | 8 |
 | `query_chunk` | Maximum cells in one table-query batch | 131,072 |
-| `chunk_workers` | Concurrent query batches within the loaded slab | 16 |
+| `chunk_workers` | Concurrent query batches within the loaded tile/slab | 16 |
 | `spectral_workers` | One compiled integration thread per template batch; batch parallelism uses chunk_workers | 1 |
 | `z_reader_threads` | Shared reader/complete-column derivation pool size | 32 |
 | `z_read_workers` | Simultaneous raw-field file streams before derivation | 5 |
 | `histogram_merge_threads` | Ordered main profile merge; direct-template accepts null or one | 1 |
-| `prepared_z_fields` | Absolute existing read-only field cache, or owned temporary conversion | null |
+| `prepared_z_fields` | Keep null for native-columns; explicit z source may reuse an absolute cache | null |
 | `field_cache_slabs`, `field_cache_gib` | Retained native-reader settings; unused by bounded eager process | 16, 12 |
 
-### Prepared or temporary z-contiguous fields
+### Original native-column fields
 
-`dataset` always names the original snapshot. With `prepared_z_fields: null`,
+The default `field_source: native-columns` reads regular level-zero FAB columns
+directly from the original snapshot into one full-z RAM tile. It writes no field
+cache. The gradient pass uses original momenta and global neighbour faces before
+releasing x/y momenta; density/z momentum storage is then reused for physical
+density/velocity, temperature is reused, and the two column arrays are filled.
+Six read-only fields feed unchanged physical and Gaussian batches.
+
+Processing requires the complete box, `direct-template`, `max_slabs: null` and
+`prepared_z_fields: null`. `query_chunk` must contain complete z columns and
+align with original y rows and native tile boundaries. Geometry/alignment is
+checked after opening metadata, before reading cell fields. Unsupported cases
+raise, with no automatic switch to another source. Shared configuration loaders
+remain usable by auxiliary tools that have their own regional read paths.
+
+Only small finished products may wait across tiles to preserve original global
+batch merge order. Raw/derived arrays and unfinished Gaussian queues are released
+before the next tile. A conservative preflight and 20 GiB process RSS guard
+include concurrent workers and pending products. Read statistics distinguish
+unique five-field payload, actual API requests including neighbour rereads and
+RAM layout; they do not claim to measure physical storage traffic.
+
+### Explicit prepared or temporary z-contiguous fields
+
+Select `field_source: z-contiguous` or `--field-source z-contiguous` for regional
+processing, limited slabs or retained Gaussian comparison methods.
+
+`dataset` always names the original snapshot. In this explicit source, with `prepared_z_fields: null`,
 process converts density, temperature and three momentum-density fields into
 five raw float64 `.npy` arrays with original `(Nx, Ny, Nz)` C-order geometry.
 It assembles/writes one complete field at a time, preserving raw units and
@@ -303,6 +330,7 @@ and removed on success/failure, before plotting or the next snapshot.
 To use an existing compatible cache, set an absolute path:
 
 ```yaml
+field_source: z-contiguous
 prepared_z_fields: /absolute/path/to/prepared_fields
 ```
 
@@ -407,6 +435,7 @@ to assess interpolation error, especially for narrow profiles and weak wings.
 The previous sparse default is retained as an explicit reference:
 
 ```yaml
+field_source: z-contiguous
 spectral_method: histogram-layered
 gaussian_grid: null
 histogram_merge_threads: 1
@@ -424,8 +453,8 @@ are not converted by a CLI override.
 Explicit reference methods remain available:
 
 ```bash
-uv run process --jobname reference-exact --spectral-method exact
-uv run process --jobname reference-lut --spectral-method linear-lut
+uv run process --field-source z-contiguous --jobname reference-exact --spectral-method exact
+uv run process --field-source z-contiguous --jobname reference-lut --spectral-method linear-lut
 ```
 
 `exact` calls SciPy's double-precision erf. `linear-lut` uses the retained 1D
@@ -441,7 +470,12 @@ input/source identity; choose another jobname/results root for a comparison.
 
 ### Memory, concurrency and progress
 
-The bounded eager reader opens up to five field streams, reads the current
+The default native-column reader uses up to five read workers to gather one
+full-z native tile and the necessary original neighbour faces. Up to 32 tasks
+derive its physical fields before batch work starts. Finished products merge
+in original global order, even when tile order differs.
+
+The explicit z source's bounded eager reader opens up to five field streams, reads the current
 x slab plus its two periodic x neighbours, and closes those files before
 derivation. Raw buffers retain native full y and full z; selecting fewer y
 cells reduces derivation/products but not those full-y reads. The same
@@ -453,15 +487,16 @@ Concurrency belongs to distinct phases, not one multiplied worker count:
 
 | Phase and owner | Default | Work sharing |
 |---|---|---|
-| Raw-field I/O, reader pool | 5 streams in the 32-thread pool | One stream per field; derivation waits for all reads |
-| Fused derivation, same reader pool | Up to 32 tasks | Disjoint complete `(x,y)` columns; no batch processing yet |
-| Emission/products, batch pool | Up to 16 batches | Immutable views of one derived slab; original ordered main merge |
+| Raw-field I/O, reader pool | Up to 5 workers | Native FAB field/halo reads and RAM gather; derivation waits |
+| Fused derivation | Up to 32 tasks | Disjoint complete `(x,y)` columns; no batch processing yet |
+| Emission/products, batch pool | Up to 16 batches | Immutable views of one derived tile; original ordered main merge |
 | Gaussian queries, same batch pool | Up to 16 batches, one compiled thread each | Original-cell template lookup after physical preparation finishes |
 | Main profile merge | One main thread | Original batch/group order; no node store or final expansion |
 
 Reader derivation finishes before physical batches start. Each bounded wave
-finishes physical preparation, Gaussian queries and the ordered main merge
-before its successor. These phases do not multiply into a nested worker count.
+finishes physical preparation and Gaussian queries before its successor.
+Native tiles may retain only finished products awaiting original merge order.
+These phases do not multiply into a nested worker count.
 The explicit node methods keep their own supported merge/expansion teams.
 
 All fifteen extensions build with normal setuptools and pinned native-build
@@ -474,16 +509,19 @@ Memory limits for legacy field groups are not total process RSS controls.
 Current raw slab buffers, six derived arrays, owned Gaussian input waves,
 templates and result arrays have separate lifetimes.
 More workers can increase memory and need not reduce full process time.
-`max_slabs: 1` makes an explicitly partial diagnostic run; omit it to finish the
+With the explicit z source, `max_slabs: 1` makes a partial diagnostic run; omit it to finish the
 selected region/full snapshot.
 
-The terminal reports input loading, cache preparation, field reading, fused
+The native path prints tile bounds and updates status after each finished tile.
+The explicit z path reports input loading, cache preparation, field reading, fused
 derivation, batch stages, ordered merges, output construction, checks and save.
 A ten-second observer reports active stages without reading arrays. A computed
 batch waiting for an earlier one is distinct from a merged batch; completion
 advances only after the original ordered merge.
 
-`processing_timings` separates eager field reading from `fused_derivation` and
+`processing_timings.native_columns` describes original reads, RAM derivation,
+ordered pending products and memory. Gradient and combined units/columns passes
+have separate clocks. The explicit z source separates eager field reading from `fused_derivation` and
 from batch compute/ordered merge. Foreground/shielding columns and gradients
 share that fused pass, so their old individual callback categories do not
 provide independently measured costs on this route. `field_preprocessing`
@@ -493,20 +531,22 @@ must not be added as if sequential.
 
 Gaussian tables/geometry and their synthetic arithmetic gate are prepared
 before the process clock. The clock starts before identity checks, metadata
-construction/restoration and physical DESPOTIC/Cloudy/dust table loading. Only
-actually-created z conversion time is deducted; existing-cache validation,
+construction/restoration and physical DESPOTIC/Cloudy/dust table loading.
+The default source excludes Gaussian preparation only: every original read,
+neighbour operation and RAM rearrangement is timed. For the explicit z source,
+only actually-created conversion time is additionally deducted; existing-cache validation,
 sidecar restoration, reader/unit/NPY-header setup, all payload reads, derivation,
 emission, products, expansion, conservation checks, saves and cleanup remain
 timed. No snapshot object or cell result is precomputed outside this boundary.
 `processing_timings.z_conversion_seconds` and
 `gaussian_table_build_seconds_excluded` record the separate costs.
 
-Cell ETA covers the slab loop. `emission_report.json.elapsed_seconds` stops at
+Cell ETA covers the tile/slab calculation loop. `emission_report.json.elapsed_seconds` stops at
 report construction; final `status.json.elapsed_seconds` also includes result
 writing and reader/cache cleanup. Use final status for one snapshot's numerical
 process. CLI startup, run discovery and optional subsequent plotting have their
-own durations. Temporary conversion and Gaussian preparation are excluded in
-both report/status process durations.
+own durations. Gaussian preparation is excluded in both report/status durations;
+only the explicit z source additionally excludes actual temporary conversion.
 
 ## Select an x-y region
 
@@ -515,6 +555,7 @@ or use `--x START STOP` and `--y START STOP` on both commands.
 Keep the same `results_dir`; process and plot automatically select a region folder:
 
 ```yaml
+field_source: z-contiguous
 x_index_range: [64, 128]
 y_index_range: [32, 96]
 ```
@@ -593,11 +634,11 @@ missing emission. A zero total luminosity gives a `null` fraction. This diagnost
 does not exclude high-temperature cells or change their emission. Older results
 do not contain this section; plotting does not require it.
 
-After cache validation or owned conversion, processing eagerly reads one
-bounded x slab of raw fields, derives its selected complete columns, then
-queries table batches and accumulates images, 2D histogram increments and gas
-phases. It releases raw fields before batch work and derived core arrays after
-that slab's ordered merges; no grouped multi-slab payload is retained.
+Default processing reads one native full-z tile, derives physical fields in
+reused RAM allocations, then queries table batches and accumulates images,
+spectra and gas phases. Cell arrays are released before the next tile; only
+small finished products may wait for original global merge order. The explicit
+z source reads bounded slabs after cache validation/conversion.
 No full-snapshot emissivity cube is saved.
 Before saving, it also prepares per-area spectra, peak-normalized line/gas
 profiles, gas-channel centres, image display masks and colour limits. Raw arrays and both

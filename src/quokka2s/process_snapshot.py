@@ -16,6 +16,7 @@ from quokka2s.physics.cell_emission import CellEmissionCalculator
 from quokka2s.run_settings import (
     ProcessSettings,
     SPECTRAL_METHODS,
+    FIELD_SOURCES,
     add_plot_arguments,
     add_run_selection_arguments,
     load_plot_config,
@@ -23,7 +24,7 @@ from quokka2s.run_settings import (
 )
 from quokka2s.processing_inputs import (
     load_processing_inputs,
-    prepare_z_contiguous_snapshot,
+    prepare_processing_snapshot,
 )
 from quokka2s.result_files import write_emission_results, write_status
 from quokka2s.result_metadata import ResultMetadata
@@ -291,8 +292,12 @@ def report_snapshot_progress(config, products, began, completed_slabs,
     )
 
 
-def process_snapshot(config, snapshot, emission_calculator, products, began, *, status_began=None):
-    """Read, accumulate, and release one slab at a time.
+def process_snapshot(config, snapshot, emission_calculator, products, began, *, status_began=None, native_column_reader=None):
+    """Read bounded fields, accumulate products and retain original batch order.
+
+    Native columns are the default: original full-z XY tiles are derived in
+    RAM and finished products wait for their original batch merge position.
+    The explicit z-contiguous source retains the bounded x-slab implementation.
 
     config supplies slab/batch sizes, workers, and max_slabs. snapshot supplies
     grid geometry and read_slab(); emission_calculator holds the shared readers.
@@ -302,6 +307,20 @@ def process_snapshot(config, snapshot, emission_calculator, products, began, *, 
     status_began, when supplied, starts the complete process clock, excluding
     separately measured z conversion and prebuilt Gaussian templates.
     Final product checks and saving happen in main()."""
+    if config.field_source == "native-columns":
+        from .native_column_process import process_native_columns
+        if native_column_reader is None:
+            raise ValueError("native-columns requires its explicitly prepared original-field reader")
+        return process_native_columns(
+            config=config,
+            snapshot=snapshot,
+            reader=native_column_reader,
+            emission_calculator=emission_calculator,
+            products=products,
+            accumulate_batch=accumulate_batch,
+            began=began,
+            status_began=status_began,
+        )
     # 1. Select index windows only; no simulation fields are loaded yet.
     selected_slabs = select_slabs_to_process(config, snapshot)
     total_slabs = len(selected_slabs)  # Full run: 32 slabs for Nx=256, slab_nx=8.
@@ -401,7 +420,7 @@ def print_run_settings(config, config_path: Path) -> None:
         f'Execution: slab_nx={config.slab_nx}; query_chunk={config.query_chunk:,}; '
         f'chunk_workers={config.chunk_workers}; spectral_workers={config.spectral_workers}; '
         f'field_cache_slabs={config.field_cache_slabs}; field_cache_gib={config.field_cache_gib}; '
-        f'spectral_method={config.spectral_method}',
+        f'spectral_method={config.spectral_method}; field_source={config.field_source}',
         flush=True,
     )
 
@@ -445,12 +464,13 @@ def run_one_snapshot(config: ProcessSettings, config_path: Path) -> None:
         state='running',
     )
     try:
-        stage = 'preparing z-contiguous fields'
-        with prepare_z_contiguous_snapshot(
+        stage = 'preparing ' + config.field_source + ' fields'
+        with prepare_processing_snapshot(
             snapshot=snapshot,
             dataset_path=config.dataset,
             work_directory=config.output_dir.parent,
             source_identity=input_identity['snapshot_files'],
+            field_source=config.field_source,
             prepared_directory=config.prepared_z_fields,
             reader_threads=config.z_reader_threads,
             read_workers=config.z_read_workers,
@@ -467,12 +487,15 @@ def run_one_snapshot(config: ProcessSettings, config_path: Path) -> None:
                 products=products,
                 began=calculation_began,
                 status_began=began,
+                native_column_reader=preprocessing.get('native_column_reader'),
             )
             processing_timings['input_loading_seconds'] = input_loading_seconds
             processing_timings['z_conversion_seconds'] = preprocessing['conversion_seconds']
             processing_timings['z_cache_validation_seconds'] = preprocessing['preprocessing_seconds'] if preprocessing['cache_reused'] else 0.0
-            processing_timings['z_reader_initialization_seconds'] = preprocessing['reader_initialization_seconds']
-            processing_timings['z_conversion_excluded_from_process'] = True
+            processing_timings['field_reader_initialization_seconds'] = preprocessing['reader_initialization_seconds']
+            processing_timings['z_reader_initialization_seconds'] = preprocessing['reader_initialization_seconds'] if config.field_source == "z-contiguous" else 0.0
+            processing_timings['z_conversion_excluded_from_process'] = config.field_source == "z-contiguous"
+            processing_timings['field_source'] = config.field_source
             processing_timings['gaussian_table_build_seconds_excluded'] = gaussian_table_seconds
             stage = 'building results'
             print('Outputs: building image, spectrum and gas-phase results...', flush=True)
@@ -498,28 +521,51 @@ def run_one_snapshot(config: ProcessSettings, config_path: Path) -> None:
                 began=began,
                 processing_timings=processing_timings,
             )
-            cache_identity = preprocessing['identity']
-            report['field_preprocessing'] = {
-                'method': 'disk-z-contiguous-bounded-eager-fused',
-                'snapshot_metadata': preprocessing['identity']['snapshot_metadata'],
-                'metadata_sidecar_write': preprocessing['metadata_sidecar_write'],
-                'prepared_cache_reused': preprocessing['cache_reused'],
-                'reader_threads': config.z_reader_threads,
-                'read_workers': config.z_read_workers,
-                'bounded_eager_reading': dict(preprocessing['reader_statistics']),
-                'fused_derivation': dict(preprocessing['derivation_statistics']),
-                'conversion_excluded_from_process': True,
-                'seconds': preprocessing['preprocessing_seconds'],
-                'shape': cache_identity['shape'],
-                'fields': list(cache_identity['fields']),
-                'stored_dtype': cache_identity['stored_dtype'],
-                'layout': cache_identity['layout'],
-                'cache_file_bytes': sum(
-                    record['size_bytes']
-                    for record in cache_identity['fields'].values()
-                ),
-                'retention': 'retained explicit cache' if preprocessing['cache_reused'] else 'temporary; removed when snapshot processing exits',
-            }
+            if config.field_source == "native-columns":
+                native = processing_timings['native_columns']
+                report['field_preprocessing'] = {
+                    'method': 'original-native-columns-inplace-ram',
+                    'field_source': config.field_source,
+                    'disk_copy_created': False,
+                    'conversion_excluded_from_process': False,
+                    'seconds': 0.0,
+                    'shape': list(prepared_snapshot.shape),
+                    'fields': ['gasDensity', 'temperature', 'x-GasMomentum', 'y-GasMomentum', 'z-GasMomentum'],
+                    'source_stored_dtype': native['read_statistics']['native_dtype'],
+                    'source_layout': native['source_layout'],
+                    'ram_dtype': 'float64',
+                    'ram_layout': native['ram_layout'],
+                    'cache_file_bytes': 0,
+                    'reader_threads': config.z_reader_threads,
+                    'read_workers': config.z_read_workers,
+                    'native_reading': native['read_statistics'],
+                    'memory_plan': native['memory_plan'],
+                    'ordered_finished_products': native['ordered_finished_products'],
+                    'retention': 'one RAM tile; released before reading the next tile',
+                }
+            else:
+                cache_identity = preprocessing['identity']
+                report['field_preprocessing'] = {
+                    'method': 'disk-z-contiguous-bounded-eager-fused',
+                    'snapshot_metadata': preprocessing['identity']['snapshot_metadata'],
+                    'metadata_sidecar_write': preprocessing['metadata_sidecar_write'],
+                    'prepared_cache_reused': preprocessing['cache_reused'],
+                    'reader_threads': config.z_reader_threads,
+                    'read_workers': config.z_read_workers,
+                    'bounded_eager_reading': dict(preprocessing['reader_statistics']),
+                    'fused_derivation': dict(preprocessing['derivation_statistics']),
+                    'conversion_excluded_from_process': True,
+                    'seconds': preprocessing['preprocessing_seconds'],
+                    'shape': cache_identity['shape'],
+                    'fields': list(cache_identity['fields']),
+                    'stored_dtype': cache_identity['stored_dtype'],
+                    'layout': cache_identity['layout'],
+                    'cache_file_bytes': sum(
+                        record['size_bytes']
+                        for record in cache_identity['fields'].values()
+                    ),
+                    'retention': 'retained explicit cache' if preprocessing['cache_reused'] else 'temporary; removed when snapshot processing exits',
+                }
             if processing_input_identity(config=config) != input_identity:
                 raise ValueError('Processing inputs or source files changed during calculation')
             report['input_identity'] = input_identity
@@ -581,6 +627,12 @@ def main(argv=None):
         help="Override Gaussian method; direct-template is the default",
     )
     parser.add_argument(
+        "--field-source",
+        choices=FIELD_SOURCES,
+        default=None,
+        help="Override field source; native-columns reads original plt into RAM by default",
+    )
+    parser.add_argument(
         "--no-plot",
         action="store_true",
         help="Save numerical products only; draw them later with plot --all",
@@ -596,6 +648,7 @@ def main(argv=None):
             x_index_range=args.x_index_range,
             y_index_range=args.y_index_range,
             spectral_method=args.spectral_method,
+            field_source=args.field_source,
         )
         plot_defaults = None
         if not args.no_plot:

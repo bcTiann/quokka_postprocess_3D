@@ -36,8 +36,9 @@ def build_processing_report(
     runs from began to report construction, before saving; final status.json
     includes saving time. Luminosities are erg/s and dispersions km/s.
     processing_timings optionally holds the process loop's per-slab and total
-    wall seconds. Its five read-stage totals do not overlap; the columns total
-    is a subtotal, and field reading includes cache fills and unit conversion.
+    wall seconds. Native-column timings separate original reads, gradient and
+    combined units/columns passes. The explicit z source retains its eager
+    read/derivation categories; nested worker times are not wall-time fractions.
     """
     from quokka2s.physics import settings as cfg
 
@@ -87,6 +88,7 @@ def build_processing_report(
         'image_shape': list(products.images.native_xy_shape),
         'velocity_channels': VELOCITY_CHANNELS,
         'execution': {
+            'field_source': config.field_source,
             'slab_nx': config.slab_nx,
             'query_chunk': config.query_chunk,
             'chunk_workers': config.chunk_workers,

@@ -3,14 +3,27 @@
 The Python production workflow defaults to `direct-template`: original cells
 interpolate preintegrated fractional-mean/log-sigma probabilities and immediately
 multiply and accumulate their own luminosities. No node brightness store is
-created. A bounded eager reader supplies
-z-contiguous raw fields. Process validates
-an explicit read-only `prepared_z_fields` cache or creates/removes its own
-temporary copy when that setting is null. Snapshot metadata/physical inputs and
-all numerical work remain timed; only Gaussian preparation and actual z
-conversion are excluded. Process calculates/saves before invoking plot by
+created. The default `field_source: native-columns` reads original full-z tiles
+into bounded RAM without writing a converted field copy. Snapshot metadata,
+physical inputs, original reads, RAM rearrangement and all numerical work remain
+timed; only Gaussian preparation is excluded. Process calculates/saves before invoking plot by
 default. Plot reads only saved products. Table-building and auxiliary figures
 have their own commands.
+
+The original-plotfile route uses:
+[native_column_reader.py](../src/quokka2s/native_column_reader.py) reads bounded
+full-z native tiles and raw global neighbour faces without writing a cache;
+[native_column_fields.py](../src/quokka2s/native_column_fields.py) derives six
+physical fields using reused raw allocations;
+[native_column_process.py](../src/quokka2s/native_column_process.py) restores
+original batch merge order using only finished product partials. The full
+original-file read and derivation cost remains inside process time. This route
+currently accepts only aligned full-box direct-template processing on regular
+level-zero FABs. Explicit `field_source: z-contiguous` supports regions, limited
+slabs and retained integration methods. It validates a read-only
+`prepared_z_fields` cache or creates/removes a temporary copy when null; only
+that source excludes its actual conversion cost. Unsupported native-column
+settings raise instead of silently switching sources.
 
 `pyproject.toml` declares dependencies; `uv.lock` records the resolved versions
 and source identities. uv creates `.venv` with `uv sync` and selects it for
@@ -59,20 +72,26 @@ Plot does not import these processing extensions to draw saved arrays.
    and x/y ranges explicitly on the command line. The bundled emission tables
    are defaults.
 2. [process_snapshot.py](../src/quokka2s/process_snapshot.py): select one snapshot
-   or a run inventory, read inputs, process slabs, build/check/save results,
+   or a run inventory, read inputs, process tiles, build/check/save results,
    then draw each saved result unless `--no-plot` is selected.
 3. [processing_inputs.py](../src/quokka2s/processing_inputs.py) restores supplied
    [snapshot_metadata.py](../src/quokka2s/snapshot_metadata.py) geometry/units or
-   opens yt, then loads physical tables inside process time. It validates a
-   read-only prepared cache or scopes an owned temporary
+   opens yt, then loads physical tables inside process time.
+   `prepare_processing_snapshot()` owns the default
+   [native_column_reader.py](../src/quokka2s/native_column_reader.py), while
+   [native_column_fields.py](../src/quokka2s/native_column_fields.py) derives
+   complete columns in reused allocations. The native driver keeps original
+   query boundaries and merges small finished products in global batch order;
+   field arrays are released before the next tile is read.
+   The explicit z source validates a prepared cache or scopes an owned
    [z_contiguous_cache.py](../src/quokka2s/z_contiguous_cache.py) conversion.
-   [bounded_z_reader.py](../src/quokka2s/bounded_z_reader.py) eagerly reads only
+   Its [bounded_z_reader.py](../src/quokka2s/bounded_z_reader.py) eagerly reads
    the current x slab plus x neighbours, full native y and full z, with five
    file streams. Its 32-thread pool then derives selected complete columns via
    [physics/_slab_derive.pyx](../src/quokka2s/physics/_slab_derive.pyx), filling six
    core arrays and releasing all raw slab fields before batches begin. The
-   default path uses neither mmap nor multi-slab grouped field retention.
-   [snapshot_reader.py](../src/quokka2s/snapshot_reader.py) dispatches this path
+   eager z path uses neither mmap nor multi-slab grouped field retention.
+   [snapshot_reader.py](../src/quokka2s/snapshot_reader.py) dispatches this explicit path
    while keeping native block/NumPy references for independent utilities.
    `slab.iter_batches()` yields read-only views; consume them before releasing
    the slab. Up to 16 batches run concurrently and merge in input order.
@@ -84,8 +103,9 @@ Plot does not import these processing extensions to draw saved arrays.
    reuses the established line availability/width grouping and full moments.
    It retains original-cell mu/sigma/luminosity arrays only for one bounded
    worker wave. [template_batches.py](../src/quokka2s/products/gaussian/template_batches.py)
-   finishes physical preparation, Gaussian queries and ordered merging before
-   the next wave. [template_table.py](../src/quokka2s/products/gaussian/template_table.py)
+   finishes physical preparation and Gaussian queries in bounded waves. The
+   native driver may defer only finished product merges to preserve global
+   order. [template_table.py](../src/quokka2s/products/gaussian/template_table.py)
    prepares fractional-mean/log-sigma integrated-bin templates outside process
    timing; [template_engine.py](../src/quokka2s/products/gaussian/template_engine.py)
    calls [_template_integrate.pyx](../src/quokka2s/products/gaussian/_template_integrate.pyx)
@@ -186,9 +206,10 @@ Incomplete, conflicting and legacy outputs without identity are preserved and
 reported; legacy outputs remain drawable with plot. Batch failures
 are summarized and return a nonzero exit status. There is no slab checkpoint
 or simultaneous processing of multiple snapshots.
-`process_progress.py` owns the timestamped slab/batch console display and its
-ten-second heartbeat. It stores stage labels and counters, without cell arrays
-or changes to numerical scheduling and merge order.
+`process_progress.py` owns the explicit z source's timestamped slab/batch display
+and ten-second heartbeat. The native-column source prints tile bounds and
+updates status after each finished tile. Neither observer changes numerical
+scheduling or merge order.
 Explicit x/y ranges add a shared region subdirectory, for example
 `region_x64-66_y64-66/`; an omitted or `null` axis is named `all`. Both axes
 omitted or `null` keep the full-box result directory.
@@ -201,9 +222,9 @@ density pass saves exact cumulative columns at z faces; its descending pass
 visits every selected column at each z before moving down and clearing that
 layer's native-field cache. Four owned range fields preserve complete z-column
 physics without retaining full-snapshot arrays. It reuses block metadata,
-file reads and unit stages in `native_snapshot_reader.py`. Emission processing retains its six fields,
-x slabs and existing reduction order; `slab_nx` and `max_slabs` remain emission
-settings.
+file reads and unit stages in `native_snapshot_reader.py`. Emission processing
+retains six physical fields for the current tile and the original batch
+reduction order; `slab_nx` and `max_slabs` apply to its explicit z source.
 `table_input_statistics.py` accumulates named scalar ranges;
 `table_input_range_check.py` compares them with current
 axes. `table_input_files.py` owns safe output and completed-scan reuse. The

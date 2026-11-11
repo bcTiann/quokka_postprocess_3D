@@ -1,7 +1,7 @@
 # quokka2s — QUOKKA emission post-processing
 
-Process one QUOKKA snapshot or a run directory by preparing or reusing
-z-contiguous fields, calculating emission products, then drawing images and
+Process one QUOKKA snapshot or a run directory by reading original native
+columns into bounded RAM, calculating emission products, then drawing images and
 spectra from the saved arrays. On Setonix, use the short
 [Setonix guide](docs/setonix.md).
 
@@ -81,36 +81,47 @@ uv run process
 ```
 
 This uses the YAML settings and draws figures after saving each snapshot's
-numerical products. Before cell calculations, process reads the original plt
-without modifying it and writes five temporary z-contiguous `.npy` fields beside
-the selected `processed/` directory. It then reads bounded slabs through five
-field streams, derives complete-z columns and velocity gradients, and calculates
-images and spectra. Set `prepared_z_fields` to an existing validated cache to
-reuse it read-only; `null` creates the temporary copy. Process removes only the
-copy it created, including after failure. Snapshots are processed sequentially.
+numerical products. The default `field_source: native-columns` reads full-z
+native tiles from the original plt without modifying it or writing a converted
+copy. It arranges each tile in RAM, derives columns and velocity gradients,
+calculates its products, then releases its cell arrays before reading the next
+tile. Small finished products wait only when needed to preserve the original
+batch merge order. Snapshots are processed sequentially.
 
-Conversion holds one float64 field in memory at a time: `8 × Nx × Ny × Nz`
+This path requires a full box, regular level-zero FABs, `direct-template`,
+aligned complete-column batches, `max_slabs: null` and `prepared_z_fields: null`.
+Unsupported settings raise; there is no automatic source change. Process uses
+a conservative memory preflight and a 20 GiB process RSS guard. All original
+reads, required neighbour rereads, RAM rearrangement and field derivation remain
+timed. Only Gaussian template preparation is outside the default process clock.
+
+The explicit `--field-source z-contiguous` path supports regional calculations,
+limited slabs and retained Gaussian comparison methods. It validates an existing
+`prepared_z_fields` cache read-only or, with `null`, writes five temporary `.npy`
+fields beside results and removes only its own copy on success or failure.
+That conversion holds one float64 field at a time: `8 × Nx × Ny × Nz`
 bytes. Its five files need about `40 × Nx × Ny × Nz` bytes of temporary space on the
 results filesystem, in addition to saved products. For a `512 × 512 × 4096`
 snapshot this is 8 GiB per conversion buffer and about 40 GiB on disk. Slab
 buffers, derived fields and concurrent calculations add to process memory.
 
 To limit the emission calculation to a small x/y region, run
-`uv run process --x 64 66 --y 64 66`: x/y indices 64 and 65, with complete z
+`uv run process --field-source z-contiguous --x 64 66 --y 64 66`:
+x/y indices 64 and 65, with complete z
 columns. A new regional calculation still converts the complete snapshot first;
 the region does not reduce conversion time, its full-field memory buffer or
 temporary disk space. Ranges include the start and exclude the stop. Each supplied CLI axis
 overrides its YAML range; omitted axes keep their YAML settings.
 
-Process prints each slab's x/y/z bounds and completed batches. During long
-reads or calculations, timestamped status messages appear about every ten
-seconds, including each active batch's current stage and elapsed time.
+The native-column path prints tile bounds and updates `status.json` after each
+finished tile. The explicit z-contiguous path prints slab/batch progress and
+timestamped status messages about every ten seconds during long stages.
 It reads the snapshot and tables without modifying them, and saves under
 `results_dir/jobname/snapshot_name/processed/`. Explicit x/y ranges add, for
 example, `region_x64-66_y64-66/` before `processed/`. A full box has no region
 folder. Complete results with matching settings and saved input/source identity
-are reused after product-integrity checks, before input loading or conversion;
-the deleted working copy is not needed for reuse. Incomplete, conflicting or legacy
+are reused after product-integrity checks, before input loading;
+any deleted working copy is not needed for reuse. Incomplete, conflicting or legacy
 `processed/` directories are reported without being overwritten. Legacy results
 remain drawable with plot. Use a fresh results root for a separate calculation;
 see the [reuse rules](docs/usage.md#completed-result-reuse).
@@ -204,7 +215,7 @@ snapshot without editing `dataset`, supply its absolute path and the same
 region to both commands:
 
 ```bash
-uv run process --dataset /path/to/simulations/plt0008703 --jobname sigma13.v2 --x 64 66 --y 64 66
+uv run process --field-source z-contiguous --dataset /path/to/simulations/plt0008703 --jobname sigma13.v2 --x 64 66 --y 64 66
 uv run plot --dataset /path/to/simulations/plt0008703 --jobname sigma13.v2 --x 64 66 --y 64 66
 ```
 
@@ -214,8 +225,9 @@ option supplied, the YAML dataset and group are used. Tables, workers and output
 root continue to come from YAML. Single-snapshot plot uses only the dataset
 folder name to locate saved products; the original simulation is not needed.
 Process records its effective settings in `emission_report.json`.
-The process defaults are eight x cells per slab, 131,072 cells per batch,
-16 concurrent batches, five field streams and 32 column-derivation tasks.
+The process defaults are original native full-z tiles, 131,072 cells per batch,
+16 concurrent batches, five field-read workers and 32 column-derivation tasks.
+The eight-x-cell `slab_nx` setting applies to the explicit z-contiguous source.
 Gaussian integration defaults to `direct-template`: each original cell directly
 interpolates four preintegrated fractional-mean/log-sigma templates, multiplies
 their channel probabilities by its luminosity and adds the small spectrum.
@@ -230,9 +242,11 @@ with `gaussian_grid: {sigma_max: 8192.0}`. Nonflat phase transition spacing is a
 is finer near narrow-profile channel transitions. Physical width and missingness
 rules are unchanged. Bounded physical-preparation/query waves finish and merge
 in original batch order. Retained `histogram-layered`, `histogram-2d`, `exact`
-and `linear-lut` methods are explicit comparisons. Process timing excludes
-raw-field conversion and Gaussian preparation; reading, physical lookups, all products, checks and saving
-remain timed. See the [processing settings](docs/usage.md#processing-settings).
+and `linear-lut` methods are explicit comparisons requiring
+`--field-source z-contiguous`. Default process timing excludes Gaussian preparation only;
+reading, physical lookups, all products, checks and saving remain timed.
+The explicit z-contiguous path additionally records and excludes actual cache
+conversion. See the [processing settings](docs/usage.md#processing-settings).
 Final logs and `spectral_report.*.template_coverage` record outside-row counts,
 observed sigma ranges, per-line fallback luminosities and direct integration work.
 

@@ -231,6 +231,47 @@ class TemplateIntegratedSpectra(HistogramIntegratedSpectra):
         self._query_intervals.clear()
         self._addition_intervals.clear()
 
+    def record_finished_query_wave(
+        self, *, partials, physical_ns, gaussian_ns, owned_input_bytes,
+    ):
+        """Record finished worker queries before their ordered sums are ready.
+
+        Native XY tiles can finish batches out of global order. Transfer only
+        clock intervals here; finished numerical products remain worker-owned
+        until the original batch order permits their merge.
+        """
+        if self._query_intervals or self._addition_intervals:
+            raise RuntimeError("Record pending main merges before the next query wave")
+        for partial in partials:
+            spectra = partial.spectra
+            if not spectra._queue_finished or spectra._queue_failed or spectra._groups:
+                raise RuntimeError("Record only completed Gaussian worker queues")
+            self._query_intervals.extend(spectra._query_intervals)
+            self._addition_intervals.extend(spectra._addition_intervals)
+            spectra._query_intervals.clear()
+            spectra._addition_intervals.clear()
+        self.record_completed_wave(
+            physical_ns=physical_ns,
+            gaussian_ns=gaussian_ns,
+            merge_ns=0,
+            owned_input_bytes=owned_input_bytes,
+        )
+
+    def record_finished_profile_merges(self, merge_ns):
+        """Add actual ordered-merge activity without counting another wave.
+
+        Call after a synchronous group of main-accumulator merges, outside
+        worker query execution. Query intervals were consumed when those
+        workers finished, even if their numerical results waited in memory.
+        """
+        if self._query_intervals:
+            raise RuntimeError("A delayed product merge retained worker query intervals")
+        self._timing["query_and_profile_addition_ns"] += elapsed_union_ns(
+            self._addition_intervals,
+        )
+        self._timing["ordered_product_merge_wave_ns"] += merge_ns
+        self._addition_intervals.clear()
+
     def timing_summary(self):
         """Return actual activity union, broader wave wall and diagnostic call sums."""
         if self._query_intervals or self._addition_intervals:

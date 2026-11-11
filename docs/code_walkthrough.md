@@ -12,13 +12,38 @@ uv run plot
 
 Before calculating cells, process prepares its integrated Gaussian templates separately
 from the process clock. It then opens the original snapshot metadata and physical
-tables inside that clock. `prepared_z_fields` optionally selects an absolute
-existing z-contiguous field cache: it is validated and read without changing or
-deleting it. With `None`/YAML `null`, process writes its own temporary five-field
-cache beside results, then removes that owned copy on success or failure.
-The original snapshot is always read-only. A fresh conversion assembles one full
-raw field at a time, even for an x/y region; later slab reads are bounded.
-Completed-result reuse runs first and creates no working copy.
+tables inside that clock. The default source reads original fields into RAM;
+it writes no converted cache. The original snapshot is always read-only.
+Completed-result reuse runs first, before loading fields or tables.
+
+The default `field_source: native-columns` setting reads original
+FAB payloads through [native_column_reader.py](../src/quokka2s/native_column_reader.py).
+It creates no z-contiguous files. Each regular native XY tile is assembled into
+five owned full-z arrays in RAM. Independent raw neighbour faces retain the
+original global XY boundary conditions. The gradient pass finishes before
+[native_column_fields.py](../src/quokka2s/native_column_fields.py) releases x/y
+momenta, reuses density/z momentum for physical density/velocity, and allocates
+the two column-density fields. Temperature is reused unchanged.
+
+[native_column_process.py](../src/quokka2s/native_column_process.py) keeps the
+original batch boundaries and numerical merge order, even when native tiles
+finish those batches in a different order. Only finished small product partials
+wait for their original batch ID; cell fields and unfinished Gaussian queues do
+not wait across tiles. Query intervals are recorded when workers finish, while
+later ordered merges record only their actual merge activity. All native reads,
+face-cache preparation, RAM rearrangement and derivation count toward process
+time. API-requested bytes include additional neighbour reads; they are not a
+measurement of physical disk traffic. This route requires a complete box,
+regular level-zero FABs, direct templates and aligned full-z batches; unsupported
+settings raise before cell processing. The memory plan and process RSS guard
+cover tile arrays, concurrent work and waiting finished products.
+
+Select `--field-source z-contiguous` for a region, `max_slabs`, or a retained
+Gaussian reference method. In that explicit source, `prepared_z_fields` selects
+an absolute existing cache read-only; `null` makes a temporary five-field copy
+beside results and removes it on success or failure. A fresh conversion still
+assembles each full raw field even for a small region. Its actual conversion
+cost is recorded separately and excluded from that source's process clock.
 
 From the repository root, both read the default `configs/emission.yaml`.
 Use `--config PATH` to select another file. Each runs directly;
@@ -29,7 +54,7 @@ Both also accept an absolute `--dataset` path, paired `--jobname` and
 `--x START STOP` / `--y START STOP` overrides, for example:
 
 ```bash
-uv run process --dataset /path/to/simulations/plt0008703 --jobname sigma13.v2 --x 64 128 --y 32 64
+uv run process --field-source z-contiguous --dataset /path/to/simulations/plt0008703 --jobname sigma13.v2 --x 64 128 --y 32 64
 uv run plot --dataset /path/to/simulations/plt0008703 --jobname sigma13.v2 --x 64 128 --y 32 64
 ```
 
@@ -130,7 +155,7 @@ The package has five purpose-specific folders:
 | Prepare Gaussian tables | `products.gaussian.template_engine.prepare_template_engine()` | Integrated fractional-mean/log-sigma templates and an arithmetic check; before process |
 | Open inputs | `processing_inputs.load_processing_inputs(config)` | Fresh/restored `snapshot` metadata and `emission_calculator`, inside process time |
 | Create output arrays | `EmissionProducts(...)` | Initially empty image, spectrum, and gas-phase accumulators |
-| Prepare fields | `processing_inputs.prepare_z_contiguous_snapshot()` | Validated existing fields or an owned temporary cache, plus its bounded eager reader |
+| Prepare field source | `processing_inputs.prepare_processing_snapshot()` | Original-file native-column reader by default; an explicit z source owns or validates its cache |
 | Process cells | `process_snapshot()` | The accumulated numerical results |
 | Build outputs | `products.build_outputs()` | Image, spectrum and gas-phase arrays and summaries |
 | Add interpretation | `ResultMetadata.from_processing_inputs()` then `outputs.add_metadata()` | Selected pixel coordinates, region and ordered dust metadata |
@@ -157,8 +182,10 @@ before calculation and rechecked before
 saving as additive report metadata. These table hashes govern result reuse,
 without changing table-domain compatibility. Legacy results without identity
 are preserved and cannot be reused by process, but remain drawable by plot.
-Its console observer, [process_progress.py](../src/quokka2s/process_progress.py),
-records batch numbers, stage labels and timestamps only. A heartbeat thread
+The native-column path prints tile bounds and writes status after each finished
+tile. The explicit z source's console observer,
+[process_progress.py](../src/quokka2s/process_progress.py), records batch
+numbers, stage labels and timestamps only. Its heartbeat thread
 reports long reads/calculations about every ten seconds; workers update their
 own batch stage and completion advances after the original ordered merge.
 The observer never reads or retains cell arrays and does not schedule work.
@@ -176,11 +203,12 @@ The objects group related variables; they are not extra copies of the snapshot:
   `processing_area_cm2`, and `processing_xy_origin` describe the selected region.
   `snapshot.native_reader` holds file locations and units from yt or the
   restored metadata sidecar.
-  Process uses a prepared snapshot whose `field_reader` is a `BoundedEagerReader`
-  for z-contiguous raw fields. It owns only the current slab inputs, performs
-  direct file reads rather than mmap/group prefetch, and releases them before
-  returning the six derived arrays. The original native-block reader remains
-  available to independent table/figure utilities. With a supplied metadata
+  Default process owns a separate `NativeColumnReader` for original payloads
+  and immutable neighbour faces. `snapshot.native_reader` remains the original
+  geometry/unit reader. The explicit z source uses a prepared snapshot whose
+  `field_reader` is a `BoundedEagerReader`, owning only current slab inputs and
+  releasing them after derivation. The original native-block reader remains
+  available to independent table/figure utilities. With an explicitly supplied z metadata
   sidecar, geometry/units/native descriptors are restored without `yt.load` or
   native header rescanning; restoration remains inside process time.
 - `emission_calculator` is a `CellEmissionCalculator`. It holds the DESPOTIC
@@ -245,7 +273,33 @@ Its build-snapshot shape and cell count are historical metadata; they need not
 match the current snapshot. Final checks verify cell accounting and luminosity
 conservation. Follow the slab and batch calculations below before studying each check.
 
-## 2. Read one slab: `snapshot_reader.read_slab()`
+## 2. Read full-z tiles, or explicit z-contiguous slabs
+
+The default follows `native_column_process.process_native_columns()`:
+
+1. Validate regular full-box FAB geometry and original query-batch alignment.
+   A batch contains complete z columns, divides the full y row and fits the
+   native tile's y range without cutting an original batch.
+2. `NativeColumnReader.read_tile()` reads five original raw fields and required
+   global neighbour faces. Native x-fastest FAB values are gathered into owned
+   float64 C-order XYZ arrays with z contiguous in RAM. No converted file is written.
+3. `derive_native_column_tile()` computes the gradient before dropping x/y
+   momentum, converts density and z momentum in place, reuses temperature and
+   fills the two column-density arrays. All columns use complete native z.
+4. The returned `SlabArrays` contains six read-only flattened physical fields,
+   with original global x/y origins and cell IDs. Workers process the unchanged
+   `query_chunk` batches through bounded physical and Gaussian waves.
+5. `OrderedFinishedPartials` merges small finished products in original global
+   batch order. Only those products may wait across tiles; all raw/derived cell
+   arrays and batch views are released before the next tile is read.
+
+All original reads, neighbour preparation, gather and derivation are timed.
+`processing_timings.native_columns` records those costs, source byte requests,
+memory accounting and actual process RSS. Gradient and combined in-place
+units/columns passes have separate clocks; foreground and shielding columns
+are not falsely reported as independently timed operations.
+
+### Explicit `field_source: z-contiguous` source
 
 The reader accepts three-dimensional uniform level-0 grids. It reads `(Nx, Ny, Nz)`,
 cell widths and volume from the current snapshot. A full slab has shape
@@ -285,7 +339,7 @@ for x_start, x_stop in slab_windows(
 For a selected region, pass its global x bounds instead. The last window may be
 shorter than `slab_nx`; neighbour selection still belongs to `read_slab()`.
 
-Process enters `prepare_z_contiguous_snapshot()` after loading fresh metadata
+With this source, process enters `prepare_z_contiguous_snapshot()` after loading metadata
 and physical tables. Its [z_contiguous_cache.py](../src/quokka2s/z_contiguous_cache.py)
 converter writes complete C-order float64 XYZ arrays for density, temperature
 and three momentum densities when no prepared cache is supplied. A supplied
@@ -293,7 +347,7 @@ and three momentum densities when no prepared cache is supplied. A supplied
 identity. Its optional `snapshot_metadata.json` contains only geometry, units
 and native block descriptors, never cell values or derived fields.
 
-The active [bounded_z_reader.py](../src/quokka2s/bounded_z_reader.py) path then:
+The [bounded_z_reader.py](../src/quokka2s/bounded_z_reader.py) path then:
 
 1. Read the five fields with up to `z_read_workers=5` concurrent file streams.
    Each stream uses one to three contiguous `readinto` ranges covering the slab's
@@ -316,7 +370,7 @@ batch preparation. Up to 16 batches then prepare unchanged emission/products.
 The same workers query their owned original-cell Gaussians in the next phase,
 then the main thread merges small profiles in original order. Only this bounded
 wave's Gaussian vectors survive preparation; they are released after querying.
-No node store or final expansion exists in the default route. One-worker mode
+No node store or final expansion exists in either direct-template route. One-worker mode
 uses the same wave path. These worker phases do not multiply one another.
 
 `field_cache_slabs`/`field_cache_gib` remain accepted for the original native
@@ -337,8 +391,8 @@ report is assembled before writing itself. Cell ETA starts at the slab loop.
 ### Original native reader for utilities and references
 
 The following native-block selection and NumPy-derived-field path remains useful
-for independent table/figure utilities and as a reference. It is not the default
-bounded eager process route described above.
+for independent table/figure utilities and as a reference. It differs from both
+the default native-column process and the explicit eager z source described above.
 
 In [native_snapshot_reader.py](../src/quokka2s/native_snapshot_reader.py),
 `NativeSnapshotReader` uses yt's native block bounds, payload offsets, field
@@ -709,17 +763,24 @@ tables and accumulated products remain for the next slab.
 
 ## 5. Then read concurrency and saving
 
-Start with `process_snapshot()`: `select_slabs_to_process()` returns only index
+Start with `process_snapshot()`: the default dispatches into
+`native_column_process.process_native_columns()`. Each tile finishes its worker
+queries before releasing its fields. The finished-partial sink preserves the
+original global batch merge order across tiles. Its timing hooks consume query
+intervals immediately and record delayed numerical merges separately.
+
+For the explicit z source, `select_slabs_to_process()` returns only index
 windows (32 for this snapshot), and `count_cells_in_slabs()` counts their core
 cells. With one shared worker pool, the main loop calls `process_one_slab()`
 and then `report_snapshot_progress()` for each window.
 
-For the default, follow `process_one_slab()` into
+Both sources call
 `template_batches.process_template_batches()`. `chunk_workers` limits the wave
 size, including when it is 1. Workers first call the same `accumulate_batch()`
 used by retained references. Gaussian inputs survive only this bounded physical
 wave. The next phase queries them; the main thread merges in batch order via
-`EmissionProducts.merge()`. Each slab is finished before the next one is read.
+`EmissionProducts.merge()`. The z source merges each slab before its next read;
+the native source can retain only finished small products until their turn.
 The retained reference methods keep the original serial/parallel batch helpers.
 
 `processing_timings.gaussian` separates query-plus-addition elapsed union from
@@ -800,10 +861,10 @@ form:
 | `input_tables` | DESPOTIC, Cloudy, and dust table paths |
 | `snapshot_grid` | Grid shape and cell widths in cm |
 | `physical_settings` | `X_H`, column mean, and column directions |
-| `execution` | Slab size, query-batch size, and worker counts |
+| `execution` | Field source, slab size, query-batch size, and worker counts |
 | Counts, masses, and conservation checks | Per-line missing emissivities, unavailable gas temperatures, luminosity sums, and spectral-window losses |
 | `cold_gas_luminosity_by_despotic_temperature` | Cold-branch Halpha/HI/CII light above four TD thresholds, corresponding total light, and intrinsic/attenuated fractions |
-| `elapsed_seconds` | Process time through report construction, excluding Gaussian build and actual z conversion; final `status.json` also includes saving and cleanup |
+| `elapsed_seconds` | Process time through report construction, excluding Gaussian build; the explicit z source also excludes actual conversion. Final `status.json` includes saving and cleanup |
 
 `write_emission_results()` receives only the output directory, finished payloads
 and report. It writes three uncompressed NPZ files and `emission_report.json`; it does not

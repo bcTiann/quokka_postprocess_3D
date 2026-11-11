@@ -115,6 +115,50 @@ def prepare_z_contiguous_snapshot(
             reader.close()
 
 
+@contextmanager
+def prepare_processing_snapshot(
+    *, snapshot: Snapshot, dataset_path: Path, work_directory: Path,
+    source_identity: dict, field_source: str = "native-columns",
+    prepared_directory: Path | None = None, reader_threads: int = 8,
+    read_workers: int = 5,
+):
+    """Own the explicitly selected field reader; never mix the two sources.
+
+    The native-column reader retains only original-file descriptors and small
+    immutable neighbour faces between tiles. Snapshot.native_reader remains
+    the original metadata reader, so unit and global geometry access is intact.
+    No native-column initialization/read cost is excluded from process timing.
+    """
+    if field_source == "z-contiguous":
+        with prepare_z_contiguous_snapshot(
+            snapshot=snapshot,
+            dataset_path=dataset_path,
+            work_directory=work_directory,
+            source_identity=source_identity,
+            prepared_directory=prepared_directory,
+            reader_threads=reader_threads,
+            read_workers=read_workers,
+        ) as prepared:
+            yield prepared
+        return
+    if field_source != "native-columns":
+        raise ValueError("Unsupported processing field source: " + str(field_source))
+    if prepared_directory is not None:
+        raise ValueError("native-columns cannot use prepared_z_fields")
+    from .native_column_reader import NativeColumnReader
+
+    initialized = time.monotonic()
+    with NativeColumnReader(snapshot.native_reader, read_workers=read_workers) as reader:
+        initialization_seconds = time.monotonic() - initialized
+        yield snapshot, {
+            "native_column_reader": reader,
+            "conversion_seconds": 0.0,
+            "preprocessing_seconds": 0.0,
+            "cache_reused": False,
+            "reader_initialization_seconds": initialization_seconds,
+        }
+
+
 def print_snapshot_summary(snapshot: Snapshot) -> None:
     """Print native geometry and selected indices using snapshot metadata only.
 

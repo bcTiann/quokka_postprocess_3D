@@ -57,14 +57,18 @@ class ProcessSettings:
     spectral_method defaults to direct original-cell integrated-bin templates.
     Fractional mean position is interpolated separately on each natural-log
     sigma layer; integer-bin mean shifts reuse those templates. Default width
-    coverage is 1e-5 to 1024 km/s; uncovered inputs raise. gaussian_grid can
-    override the template geometry without changing the fixed observation bins.
+    coverage is 1e-5 to 1024 km/s; valid uncovered widths use direct integrals.
+    gaussian_grid can override template geometry without changing observation bins.
     histogram_merge_threads=None selects one ordered main merge thread for
     direct-template and histogram-layered. The histogram-2d reference selects four
     OpenMP threads when available, otherwise one; unsupported teams raise.
     Exact/linear-lut remain explicit internal comparison methods, not fallbacks.
-    field_cache_slabs limits adjacent shared reads, while field_cache_gib limits
-    retained converted field arrays in GiB; neither is a total process RSS limit.
+    field_source defaults to native-columns: original full-z FAB columns are
+    read into RAM without a disk copy. Processing requires a full box, regular
+    FABs, direct-template and aligned batches; auxiliary tools may use these
+    settings without running that processing path. The explicit z-contiguous
+    source supports regions and retained comparison methods. Its slab/cache
+    settings bound field retention, not total process RSS.
     """
 
     dataset: Path
@@ -89,6 +93,7 @@ class ProcessSettings:
     z_read_workers: int = 5
     field_cache_slabs: int = 16
     field_cache_gib: int = 12
+    field_source: str = "native-columns"
 
 
 @dataclass(frozen=True)
@@ -135,6 +140,7 @@ _PLOT_DEFAULTS = {
 _FIGURE_FORMATS = ("png", "pdf")
 _FIGURE_STYLES = ("untitled", "titled")
 SPECTRAL_METHODS = ("direct-template", "histogram-layered", "histogram-2d", "exact", "linear-lut")
+FIELD_SOURCES = ("z-contiguous", "native-columns")
 _ALLOWED_SETTINGS = (
     _RUN_REQUIRED_SETTINGS
     | set(_PROCESS_DEFAULTS)
@@ -401,6 +407,7 @@ def load_process_config(
     x_index_range: list[int] | None = None,
     y_index_range: list[int] | None = None,
     spectral_method: str | None = None,
+    field_source: str | None = None,
 ) -> ProcessSettings:
     """Read processing settings and derive the selected processed/ directory.
 
@@ -421,6 +428,7 @@ def load_process_config(
         x_index_range=x_index_range,
         y_index_range=y_index_range,
         spectral_method=spectral_method,
+        field_source=field_source,
     )
 
 
@@ -432,6 +440,7 @@ def load_process_configs(
     x_index_range: list[int] | None = None,
     y_index_range: list[int] | None = None,
     spectral_method: str | None = None,
+    field_source: str | None = None,
 ) -> list[ProcessSettings]:
     """Select one snapshot or the direct plt+digits children of a run directory.
 
@@ -451,6 +460,7 @@ def load_process_configs(
         x_index_range=x_index_range,
         y_index_range=y_index_range,
         spectral_method=spectral_method,
+        field_source=field_source,
     )
     if is_snapshot_name(selected.snapshot_name) or (selected.dataset / "Header").is_file():
         return [selected]
@@ -468,6 +478,7 @@ def load_process_configs(
             x_index_range=x_index_range,
             y_index_range=y_index_range,
             spectral_method=spectral_method,
+            field_source=field_source,
         )
         if config.output_dir.resolve().is_relative_to(selected.dataset):
             raise ValueError("results_dir must be outside the input run directory")
@@ -484,6 +495,7 @@ def _process_settings(
     x_index_range: list[int] | None,
     y_index_range: list[int] | None,
     spectral_method: str | None,
+    field_source: str | None = None,
 ) -> ProcessSettings:
     """Validate one snapshot's paths, index ranges and calculation settings."""
     run = read_run_selection(
@@ -507,6 +519,10 @@ def _process_settings(
         values[name] = _positive_int(name, values[name], nullable=name in ("max_slabs", "histogram_merge_threads"))
     if spectral_method is not None:
         values["spectral_method"] = spectral_method
+    if field_source is not None:
+        values["field_source"] = field_source
+    if values["field_source"] not in FIELD_SOURCES:
+        raise ValueError(f"field_source must be one of {', '.join(FIELD_SOURCES)}")
     if (
         type(values["spectral_method"]) is not str
         or values["spectral_method"] not in SPECTRAL_METHODS
