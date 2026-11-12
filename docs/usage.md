@@ -282,12 +282,12 @@ Omitted settings use the same defaults shown in the shared YAML:
 |---|---|---|
 | `field_source` | Original full-z native tiles in RAM; explicit z-contiguous supports regional/reference runs | native-columns |
 | `slab_nx` | Number of x cells per slab in the explicit z source | 8 |
-| `query_chunk` | Maximum cells in one table-query batch | 131,072 |
-| `chunk_workers` | Concurrent query batches within the loaded tile/slab | 16 |
+| `query_chunk` | Maximum cells in one table-query batch | 262,144 |
+| `chunk_workers` | Concurrent query batches within the loaded tile/slab | 8 |
 | `spectral_workers` | Per-batch spectral workers; direct-template requires one and uses chunk_workers for batch parallelism | 1 |
 | `z_reader_threads` | Shared reader/complete-column derivation pool size | 32 |
 | `z_read_workers` | Simultaneous raw-field file streams before derivation | 5 |
-| `histogram_merge_threads` | Ordered NumPy main profile merge; accepts null or one | 1 |
+| `histogram_merge_threads` | Main profile/sparse-corner merge; accepts null or one | 1 |
 | `prepared_z_fields` | Keep null for native-columns; explicit z source may reuse an absolute cache | null |
 | `field_cache_slabs`, `field_cache_gib` | Retained native-reader settings; unused by bounded eager process | 16, 12 |
 
@@ -398,12 +398,12 @@ mean into the window never mistakes an unstored supported bin for zero.
 
 The kernel locates two sigma layers and, separately on each, two phase knots.
 Linear interpolation in phase and in `ln(sigma)` supplies four nonnegative
-weights. Their weighted template probabilities are multiplied by that cell's
-luminosity accounts and reduced into small profiles. NumPy evaluates bounded
-blocks of cells by 400 bins; it never allocates a whole-snapshot probability
-matrix or a cell-by-bin-by-account array.
-No global or batch luminosity-node accumulator is created. No luminosity
-threshold drops cells. Stored template corners have individual five-sigma
+weights. NumPy/SciPy sum the weighted cell luminosities by identical template
+row and integer-bin shift, keeping line, dust and temperature accounts separate.
+Workers return independent sparse increments; the main thread combines them in
+binary levels and expands occupied corners once at the end. No new grid or
+interpolation approximation is added. No whole-snapshot cell-by-channel matrix
+or retained original-cell arrays are created. No luminosity threshold drops cells. Stored template corners have individual five-sigma
 supports and are not renormalized. Valid sigmas outside prepared coverage use
 stable original-cell direct bin integrals, also truncated at +/-5sigma without
 renormalization. No luminosity threshold drops those cells. Invalid coordinates,
@@ -430,8 +430,10 @@ memory; it changes coverage rather than clipping physical widths.
 
 For each bounded wave of up to `chunk_workers` batches, the existing emission,
 image, gas-phase and full-moment preparation finishes first. Workers then query
-their owned original-cell Gaussians; the main thread merges in original batch
-order. Original-cell inputs are released after that wave. `chunk_workers: 1`
+their owned original-cell Gaussians into sparse corner accounts and directly
+integrate uncovered widths; the main thread consumes increments in original
+batch order. Original-cell inputs are released after that wave. Only sparse
+corner subtotals survive across waves, until final covered-template expansion. `chunk_workers: 1`
 uses the same wave and merge order on one worker. There is no nested spectral
 thread team; `spectral_workers` must be 1, and the main merge accepts null or 1.
 
@@ -439,10 +441,17 @@ thread team; `spectral_workers` must be 1, and the main merge accepts null or 1.
 union of template-query and real spectrum-addition intervals: parallel overlap
 counts once. It excludes independent analytic endpoint accounts. The separate
 `gaussian_wave_seconds_including_analytic_accounts_and_scheduling` includes
-query task dispatch, analytic accounts, bookkeeping and release. Worker call
-sums are diagnostic and are not wall time or divided by worker count. The
-complete process time continues to include initialization, field reads,
-physical calculations, numerical products, checking and saving.
+deposition dispatch, analytic accounts, bookkeeping and input release.
+`snapshot_corner_main_merge_seconds` is included in the ordered product-merge
+wave time. `snapshot_corner_finalization_seconds` separately includes final CSR
+merge/decode, template reads, luminosity multiplication and addition to spectra.
+`gaussian_total_seconds_including_corner_store` combines deposition waves,
+main sparse merges and final expansion; do not add its main merges a second
+time to product-merge timings. `all_deferred_groups_finished` becomes true only
+after final expansion. Reports refresh these timings after output construction.
+Worker call sums are diagnostic, not wall time or divided by worker count.
+The complete process time includes initialization, field reads, physical
+calculations, all numerical work, checks and saving.
 
 Analytic window references use the original cells, whereas the queried spectra
 interpolate template corners with their own supports. The signed residual
@@ -508,9 +517,9 @@ Concurrency belongs to distinct phases, not one multiplied worker count:
 |---|---|---|
 | Raw-field I/O, reader pool | Up to 5 workers | Native FAB field/halo reads and RAM gather; derivation waits |
 | Array field derivation | Up to 32 tasks | Disjoint complete `(x,y)` columns; no batch processing yet |
-| Emission/products, batch pool | Up to 16 batches | Immutable views of one derived tile; main merge after each wave |
-| Gaussian queries, same batch pool | Up to 16 batches | Bounded NumPy original-cell template blocks after physical preparation finishes |
-| Main profile merge | One main thread | Tile order, then original batch/group order; no node store or final expansion |
+| Emission/products, batch pool | Up to 8 batches | Immutable views of one derived tile; main merge after each wave |
+| Gaussian preparation, same batch pool | Up to 8 batches | NumPy/SciPy corner deposition and uncovered-width integration after physical preparation |
+| Sparse corner merge and final expansion | One main thread | Consume original batch/group order; merge CSR subtotals, then expand each occupied corner once |
 
 Reader derivation finishes before physical batches start. Each bounded wave
 finishes physical preparation and Gaussian queries before its successor.

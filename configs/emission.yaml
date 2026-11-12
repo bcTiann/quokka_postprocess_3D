@@ -33,8 +33,8 @@ y_index_range: null
 # Requires full-box direct-template processing and complete-column batch alignment.
 # Select z-contiguous explicitly for regional/limited/reference-method process.
 field_source: native-columns
-query_chunk: 131072
-chunk_workers: 16
+query_chunk: 262144
+chunk_workers: 8
 spectral_workers: 1
 slab_nx: 8
 # Slab/cache settings apply to the explicit z-contiguous source and utilities.

@@ -44,11 +44,18 @@ class LineVelocityMoments:
         emitting_cells = luminosity_erg_s > 0.0
         if not np.any(emitting_cells):
             return cls()
-        luminosity = luminosity_erg_s[emitting_cells]
-        velocity = velocity_kms[emitting_cells]
+        if np.all(emitting_cells):
+            # Most prepared groups emit in every row; reuse those input vectors.
+            luminosity = luminosity_erg_s
+            velocity = velocity_kms
+            selected_width = thermal_width_kms
+        else:
+            luminosity = luminosity_erg_s[emitting_cells]
+            velocity = velocity_kms[emitting_cells]
+            selected_width = thermal_width_kms[emitting_cells]
         # Use the same 1 cm/s Gaussian-width floor as the channel kernel.
         thermal_width = np.maximum(
-            thermal_width_kms[emitting_cells],
+            selected_width,
             MINIMUM_GAUSSIAN_WIDTH_KMS,
         )
         total_luminosity = float(np.sum(luminosity, dtype=np.float64))

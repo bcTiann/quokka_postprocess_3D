@@ -152,16 +152,20 @@ For one cell, let `beta=log(sigma/sigma_low)/log(sigma_high/sigma_low)` and let
 `alpha_low`, `alpha_high` be its two layer-specific phase fractions. The four
 template weights are `(1-beta)*(1-alpha_low)`, `(1-beta)*alpha_low`,
 `beta*(1-alpha_high)` and `beta*alpha_high`. They are nonnegative and sum to one.
-The weighted channel probability is multiplied by each of that cell's own
-luminosity accounts, then added directly to the spectrum. Intrinsic/attenuated,
-line and cold/hot accounts remain separate. Only physically identical widths
-share geometry. There is no node luminosity histogram or cell-brightness cut.
+For corner q and account p, accumulate H[q,p] = sum_i weight[i,q] * L[i,p],
+where q identifies an existing template row and integer-bin shift. The final
+channel luminosity is sum_q probability[q,j] * H[q,p]. This is the same linear
+four-corner interpolation with a different floating-point summation order.
+Intrinsic/attenuated, line and cold/hot accounts remain separate. There is no
+cell-brightness cut or additional grid approximation.
 
-The immutable table is prepared outside process time. NumPy evaluates lookup
-and four-corner interpolation in bounded cell-by-400 arrays, then reduces their
-luminosity-weighted contributions into small profiles. Stored probabilities are
-zero outside each corner's support; evaluating all channels in a block does not
-replace that union with an exact original-cell support mask.
+The immutable table is prepared outside process time. Worker batches use NumPy
+coordinates and standard SciPy CSR matrices for weighted corner luminosities.
+The main thread merges sparse subtotals in binary levels, then expands occupied
+corners once in bounded blocks. All deposition, sparse merges, final lookup and
+luminosity multiplication remain inside process timing. Original-cell arrays
+survive only one bounded wave. Stored probabilities are zero outside each
+corner's own support; no original-cell support mask replaces that union.
 Each stored corner Gaussian truncates at its own `mu_node +/-5sigma_node`
 without renormalization. Original batch contents and width groups are unchanged.
 Finished products merge in deterministic native-tile order, with ascending
@@ -204,13 +208,15 @@ These methods are explicit references, never an automatic fallback.
 The [usage settings](usage.md#spectral-integration) describe selection and reuse.
 
 The bounded reader uses five I/O streams followed by up to 32 complete-column
-derivation tasks in the same pool. Up to 16 batch workers prepare unchanged
-emission/products for one bounded wave. Those same workers then query original
-Gaussian templates and release owned inputs. One main thread merges the wave
-in original batch order before the next wave starts. There is no final node
-expansion or nested spectral pool in the default. Project calculations use
-NumPy/SciPy rather than custom compiled extensions. The main histogram merge is
-ordered; independent node or query blocks use their stated Python worker pools.
+derivation tasks in the same pool. Up to eight batch workers prepare unchanged
+emission/products for one bounded wave. Those workers then deposit the original
+four template corners and directly integrate uncovered widths. They release
+owned cell inputs after that wave. One main thread consumes increments in
+original batch/group order and merges sparse CSR subtotals in binary levels.
+Final template expansion occurs after every original cell has been processed;
+it remains timed and is reported separately. There is no nested spectral pool.
+Project calculations use NumPy/SciPy without custom compiled extensions.
+Independent retained reference methods use their stated Python worker pools.
 
 Gaussian template preparation/validation and actual z-copy conversion
 are separately measured outside process elapsed time. Input identity, metadata

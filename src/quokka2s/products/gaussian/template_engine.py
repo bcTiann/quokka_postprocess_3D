@@ -8,6 +8,7 @@ Each call owns its output; concurrent workers share only the immutable table.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import threading
 from time import perf_counter, perf_counter_ns
 
 import numpy as np
@@ -50,6 +51,9 @@ class TemplateEngine:
             raise ValueError("Require one to 400 template output channels")
         self.lookup_tables = table
         self.portable_backend = "numpy-original-cell-templates"
+        self._corner_specs = {}
+        self._corner_spec_lock = threading.Lock()
+        self._corner_worker_context = threading.local()
         # Reuse exact results from the existing reference, not a new tail rule.
         self._clipped_interior_mass = float(interval_probability(-table.Z, table.Z))
         self._full_window_saturation = 12.0
@@ -58,6 +62,32 @@ class TemplateEngine:
         probe = interval_probability(probe_lower, probe_upper)
         if probe.tobytes() != np.ones(probe.shape, dtype=np.float64).tobytes():
             raise RuntimeError("Original-cell interval reference does not saturate at +/-12")
+
+    def prepare_corner_store(self, profile_count=40):
+        """Share immutable corner/shift indexing; allocate no snapshot luminosity."""
+        if type(profile_count) is not int or profile_count < 1:
+            raise ValueError("Corner-store profile_count must be a positive integer")
+        if profile_count not in self._corner_specs:
+            with self._corner_spec_lock:
+                if profile_count not in self._corner_specs:
+                    from .corner_store import CornerStoreSpec
+                    self._corner_specs[profile_count] = CornerStoreSpec(
+                        self.lookup_tables,
+                        profile_count=profile_count,
+                    )
+        return self._corner_specs[profile_count]
+
+    def corner_deposit_engine(self, profile_count=40):
+        """Reuse call-local deposit engines per worker and profile layout."""
+        if not hasattr(self._corner_worker_context, "engines"):
+            self._corner_worker_context.engines = {}
+        engines = self._corner_worker_context.engines
+        if profile_count not in engines:
+            from .corner_store import CornerDepositEngine
+            engines[profile_count] = CornerDepositEngine(
+                spec=self.prepare_corner_store(profile_count=profile_count),
+            )
+        return engines[profile_count]
 
     def validate_prepared_state(self):
         """Refuse table mutation after preparation outside the process clock."""
@@ -308,4 +338,5 @@ def prepare_template_engine(grid_parameters=None):
     parameters = {} if grid_parameters is None else dict(grid_parameters)
     table = FractionalGaussianTable(**parameters)
     engine = TemplateEngine(table=table)
+    engine.prepare_corner_store()
     return engine, perf_counter() - began

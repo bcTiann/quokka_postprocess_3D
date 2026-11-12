@@ -499,7 +499,13 @@ def run_one_snapshot(config: ProcessSettings, config_path: Path) -> None:
             processing_timings['gaussian_table_build_seconds_excluded'] = gaussian_table_seconds
             stage = 'building results'
             print('Outputs: building image, spectrum and gas-phase results...', flush=True)
+            output_build_began = time.monotonic()
             outputs = products.build_outputs()
+            processing_timings['output_construction_seconds'] = time.monotonic() - output_build_began
+            if config.spectral_method == 'direct-template':
+                # Final sparse-corner expansion belongs to Gaussian process time.
+                # Refresh the loop summary after build_outputs has finished it.
+                processing_timings['gaussian'] = products.spectra.timing_summary()
             metadata = ResultMetadata.from_processing_inputs(
                 snapshot=prepared_snapshot,
                 emission_calculator=emission_calculator,

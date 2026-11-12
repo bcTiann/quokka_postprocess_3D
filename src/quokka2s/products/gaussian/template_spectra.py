@@ -1,8 +1,8 @@
-"""Accumulate original-cell spectra from immutable integrated-bin templates.
+"""Coalesce identical prepared-template corners in a snapshot-wide SciPy CSR.
 
-Workers keep one bounded batch's owned mu/sigma/luminosity vectors until its
-Gaussian wave finishes. Small profiles, endpoint accounts and complete moments
-merge in deterministic tile order, with batches ordered within each tile.
+Workers release original-cell vectors after their bounded deposition wave.
+Original-cell accounts, complete moments and physical products still merge in
+batch order. The unique covered corners expand once before output preparation.
 """
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from types import SimpleNamespace
 import numpy as np
 
 from .accounting import add_cutoff_accounts, update_cutoff_report
+from .corner_store import BinaryCornerStore, check_corner_memory
 from .spectra import HistogramIntegratedSpectra
 from .template_coverage import TemplateCoverageTotals, print_template_coverage
 from ..integrated_spectra import IntegratedSpectra
@@ -45,14 +46,14 @@ class GaussianBatchGroup:
     luminosity: np.ndarray
 
 class TemplateIntegratedSpectra(HistogramIntegratedSpectra):
-    """Reuse established cell grouping and moments without node deposition."""
+    """Keep original Gaussian rules while summing identical template corners."""
 
     def __init__(self, line_keys, velocity_edges_kms, *, engine, batch_partial=False,
                  workers=1, cell_chunk=8192, merge_threads=None):
         if merge_threads is not None and (type(merge_threads) is not int or merge_threads != 1):
             raise ValueError("Direct templates merge ordered batch profiles with one main thread")
         if workers != 1:
-            raise ValueError("Direct templates use one native integration thread per batch")
+            raise ValueError("Direct templates use one NumPy query caller per batch")
         IntegratedSpectra.__init__(
             self,
             line_keys=line_keys,
@@ -109,8 +110,23 @@ class TemplateIntegratedSpectra(HistogramIntegratedSpectra):
             "coverage_statistics_seconds": 0.0,
         }
 
+        self._corner_spec = engine.prepare_corner_store(profile_count=self.profile_count)
+        self._corner_increments = []
+        self._corner_store = None
+        self._corner_failed = False
+        self._corner_finalized = False
+        self._corner_final_metrics = {}
+        self._corner_main_merge_ns = 0
+        self._corner_final_ns = 0
+        self._corner_init_ns = 0
+        self._maximum_worker_increment_bytes = 0
+        if not batch_partial:
+            began = perf_counter_ns()
+            self._corner_store = BinaryCornerStore(self._corner_spec)
+            self._corner_init_ns = perf_counter_ns() - began
+
     def add_batch(self, cells, emission):
-        """Prepare unchanged masks, full moments and a bounded Gaussian queue."""
+        """Prepare unchanged masks, full moments and a bounded original-cell queue."""
         if not self.batch_partial or self._queue_finished or self._queue_failed:
             raise RuntimeError("Prepare each template batch through a fresh worker partial")
         began = perf_counter()
@@ -125,8 +141,8 @@ class TemplateIntegratedSpectra(HistogramIntegratedSpectra):
     ):
         """Implement the shared width-group hook by retaining original cells.
 
-        The hook name is inherited from the shared optimized grouping code; no
-        histogram or interpolation-node luminosities are allocated here.
+        The shared preparation hook retains owned inputs only until the next
+        bounded worker wave deposits their existing four template corners.
         """
         if not self.batch_partial or self._queue_finished or self._queue_failed:
             raise RuntimeError("Cannot append Gaussians after this worker queue finishes")
@@ -156,44 +172,62 @@ class TemplateIntegratedSpectra(HistogramIntegratedSpectra):
         return np.zeros((self.velocity_edges_kms.size - 1, luminosity_matrix.shape[1]))
 
     def finish_gaussians(self):
-        """Query each prepared original-cell group once, then release its inputs."""
+        """Deposit exact template corners, retain original accounts and drop cells."""
         if not self.batch_partial or self._queue_finished or self._queue_failed:
-            raise RuntimeError("Finish each prepared Gaussian worker queue exactly once")
+            raise RuntimeError("Finish each prepared Gaussian worker exactly once")
         try:
+            worker = self.engine.corner_deposit_engine(profile_count=self.profile_count)
             for group in self._groups:
-                result = self.engine.integrate(group.centers, group.sigmas, group.luminosity)
+                result, increment, metrics = worker.deposit(
+                    group.centers,
+                    group.sigmas,
+                    group.luminosity,
+                    group.profile_ids,
+                )
                 expected_shape = (self.velocity_edges_kms.size - 1, group.profile_ids.size)
                 if result.profiles.shape != expected_shape:
-                    raise ValueError("Gaussian result does not match its original profile IDs")
+                    raise ValueError("Fallback profiles do not match original profile IDs")
                 self._query_intervals.append(result.query_interval_ns)
-                addition_started = perf_counter_ns()
+                began = perf_counter_ns()
                 profiles = self.dL_dv.reshape(self.profile_count, -1)
                 profiles[group.profile_ids] += result.profiles.T
-                self._addition_intervals.append((addition_started, perf_counter_ns()))
+                self._corner_increments.append(increment)
+                del increment
+                self._addition_intervals.append((began, perf_counter_ns()))
                 self._full_window_luminosity[group.profile_ids] += result.full_window
                 self._clipped_window_luminosity[group.profile_ids] += result.clipped_window
+                self._coverage.add_group(result.coverage, group.profile_ids)
                 for name, value in result.statistics.items():
                     self.direct_statistics[name] = self.direct_statistics.get(name, 0) + value
-                self._coverage.add_group(result.coverage, group.profile_ids)
                 self._groups_finished += 1
             if self._groups_finished != self._groups_prepared:
-                raise AssertionError("A prepared original-cell Gaussian group was omitted")
+                raise AssertionError("A prepared original-cell width group was omitted")
             self._queue_finished = True
         except BaseException:
             self._queue_failed = True
+            self._corner_failed = True
+            self._corner_increments.clear()
             raise
         finally:
-            self.release_gaussian_inputs()
+            self._release_original_cell_inputs()
         return self
 
-    def release_gaussian_inputs(self):
-        """Drop owned input vectors after success or failure of their bounded wave."""
+    def _release_original_cell_inputs(self):
+        """Drop only original-cell vectors after deposition, retaining CSR output."""
         self._groups.clear()
         self._input_owner_ids.clear()
         self._owned_input_bytes = 0
 
+    def release_gaussian_inputs(self):
+        """Release original inputs and any abandoned worker CSR increments."""
+        self._release_original_cell_inputs()
+        if self.batch_partial:
+            self._corner_increments.clear()
+
     def merge(self, other):
         """Preserve ordered profile, luminosity, count, moment and endpoint sums."""
+        if self._corner_finalized or self._corner_failed or other._corner_failed:
+            raise RuntimeError("Cannot merge failed or finalized corner spectra")
         if self.batch_partial or self._finalized or other._finalized:
             raise RuntimeError("Merge unfinalized template partials into the main accumulator")
         if self.engine is not other.engine or self.line_keys != other.line_keys:
@@ -202,6 +236,12 @@ class TemplateIntegratedSpectra(HistogramIntegratedSpectra):
             raise RuntimeError("Finish every Gaussian group before the ordered global merge")
         if self.spectral_method != other.spectral_method:
             raise ValueError("Cannot merge spectra calculated with different methods")
+        pending_bytes = sum(
+            matrix.data.nbytes + matrix.indices.nbytes + matrix.indptr.nbytes
+            for matrix in other._corner_increments
+        )
+        self._maximum_worker_increment_bytes = max(self._maximum_worker_increment_bytes, pending_bytes)
+        check_corner_memory("before snapshot corner increment merge")
         began = perf_counter()
         addition_started = perf_counter_ns()
         self.dL_dv += other.dL_dv
@@ -219,6 +259,18 @@ class TemplateIntegratedSpectra(HistogramIntegratedSpectra):
         self._addition_intervals.extend(other._addition_intervals)
         other._query_intervals.clear()
         other._addition_intervals.clear()
+        merge_started = perf_counter_ns()
+        try:
+            for increment in other._corner_increments:
+                self._corner_store.add(increment)
+            other._corner_increments.clear()
+        except BaseException:
+            self._corner_failed = True
+            raise
+        merge_finished = perf_counter_ns()
+        self._corner_main_merge_ns += merge_finished - merge_started
+        self._addition_intervals.append((merge_started, merge_finished))
+        check_corner_memory("after snapshot corner increment merge")
         return self
 
     def record_completed_wave(self, *, physical_ns, gaussian_ns, merge_ns, owned_input_bytes):
@@ -245,7 +297,7 @@ class TemplateIntegratedSpectra(HistogramIntegratedSpectra):
         if self._query_intervals or self._addition_intervals:
             raise RuntimeError("Summarize template timing after its ordered wave merge")
         timing = self._timing
-        return {
+        result = {
             "query_and_profile_addition_seconds": timing["query_and_profile_addition_ns"] / 1e9,
             "query_and_profile_addition_ns": timing["query_and_profile_addition_ns"],
             "query_call_elapsed_sum_seconds": timing["query_call_elapsed_sum_ns"] / 1e9,
@@ -263,11 +315,56 @@ class TemplateIntegratedSpectra(HistogramIntegratedSpectra):
             "whole_snapshot_cell_arrays_retained": False,
         }
 
+        result.update({
+            "original_cell_deposit_calls": timing["query_calls"],
+            "original_cell_deposit_groups_finished": result["all_deferred_groups_finished"],
+            "final_corner_expansion_pending": not self._corner_finalized,
+            "all_deferred_groups_finished": result["all_deferred_groups_finished"] and self._corner_finalized,
+            "snapshot_corner_store_initialization_seconds": self._corner_init_ns / 1e9,
+            "snapshot_corner_main_merge_seconds": self._corner_main_merge_ns / 1e9,
+            "snapshot_corner_finalization_seconds": self._corner_final_ns / 1e9,
+            "maximum_single_worker_increment_csr_bytes": self._maximum_worker_increment_bytes,
+            "gaussian_total_seconds_including_corner_store": result["gaussian_wave_seconds_including_analytic_accounts_and_scheduling"] + (self._corner_init_ns + self._corner_main_merge_ns + self._corner_final_ns) / 1e9,
+            "activity_scope": "Original-cell validation/corner deposition, CSR additions and outside-width fallback; final covered query is separate",
+            "finalization_scope": "Final CSR merge/decode, stored-corner lookup, contraction, profile addition and memory guards",
+            "snapshot_corner_store": self._corner_final_metrics if self._corner_finalized else self._corner_store.statistics(),
+            "timing_note": "CSR main merge is inside ordered_product_merge_wave_seconds; finalization is inside output construction. Do not add these overlapping totals twice.",
+        })
+        return result
+
+    def finalize_corner_spectra(self):
+        """Expand unique covered corners once; original outside profiles exist."""
+        if self.batch_partial or self._corner_failed:
+            raise RuntimeError("Finalize only a successful main corner store")
+        if self._corner_finalized:
+            return self._corner_final_metrics
+        if self._groups or self._query_intervals or self._addition_intervals:
+            raise RuntimeError("Finish and record every worker wave before finalization")
+        began = perf_counter_ns()
+        try:
+            check_corner_memory("before final snapshot corner expansion")
+            self.engine.validate_prepared_state()
+            covered, metrics = self._corner_store.finalize()
+            expected_shape = (self.velocity_edges_kms.size - 1, self.profile_count)
+            if covered.shape != expected_shape or not np.isfinite(covered).all():
+                raise FloatingPointError("Final corner profiles must have finite[channel,account] values")
+            self.dL_dv.reshape(self.profile_count, -1)[:] += covered.T
+            del covered
+            self._corner_store = None
+            check_corner_memory("after final snapshot corner expansion")
+        except BaseException:
+            self._corner_failed = True
+            raise
+        self._corner_final_ns = perf_counter_ns() - began
+        self._corner_final_metrics = dict(metrics)
+        self._corner_finalized = True
+        return self._corner_final_metrics
+
     def build_output(self, projected_area_cm2):
         """Save standard products and independent original-cell cutoff references."""
         if self.batch_partial:
             raise RuntimeError("Merge worker profiles before building template output")
-        self.engine.validate_prepared_state()
+        self.finalize_corner_spectra()
         self._finalized = True
         payload, report = IntegratedSpectra.build_output(self, projected_area_cm2=projected_area_cm2)
         coverage = self._coverage.summary(
@@ -278,16 +375,18 @@ class TemplateIntegratedSpectra(HistogramIntegratedSpectra):
         statistics = {
             **self.direct_statistics,
             "coordinate_rule": "original-cell-template-query",
-            "histogram_allocated": False,
-            "node_records_created": 0,
-            "cell_by_channel_probability_matrix_allocated": self.direct_statistics.get("template_subbatches", 0) > 0,
-            "probability_matrix_scope": "Bounded NumPy subbatches, at most maximum_probability_rows x channels; never cells x channels x profiles or a whole snapshot",
+            "histogram_allocated": True,
+            "new_parameter_grid_allocated": False,
+            "node_records_created": self._corner_final_metrics["unique_snapshot_corner_nodes"],
+            "cell_by_channel_probability_matrix_allocated": self.direct_statistics.get("fallback_probability_intervals", 0) > 0,
+            "probability_matrix_scope": "Bounded final unique-corner supports and original outside-width fallback blocks; no covered-cell probability matrix or saved cell queues",
             "maximum_probability_rows": self.engine.maximum_probability_rows,
             "maximum_direct_probability_rows": self.engine.maximum_direct_probability_rows,
-            "maximum_single_probability_array_bytes": self.engine.maximum_probability_rows * (self.velocity_edges_kms.size - 1) * 8,
+            "maximum_single_fallback_probability_array_bytes": self.engine.maximum_probability_rows * (self.velocity_edges_kms.size - 1) * 8,
             "probability_memory_scope": "Size of one bounded float64 probability array; additional interpolation gathers, integer indices and direct-interval scratch are allocated per worker. This is not query or process peak memory.",
-            "work_counter_scope": "Dense bounded NumPy channel work, including zero-valued channel entries and luminosity accounts",
-            "integration": "Original-cell four-corner template query; valid out-of-table widths use stable direct bin integrals",
+            "work_counter_scope": "Original-cell deposit/fallback work; covered unique-corner expansion work is reported separately",
+            "snapshot_corner_expansion": self._corner_final_metrics,
+            "integration": "Original four template corners; identical template-row/integer-shift luminosities coalesce in SciPy CSR before one covered expansion; outside widths use stable original-cell integrals",
             "cutoff_sigma": 5.0,
             "cutoff_applies_to": self.engine.cutoff_applies_to,
             "renormalized": False,
@@ -295,7 +394,7 @@ class TemplateIntegratedSpectra(HistogramIntegratedSpectra):
             "timing_scope": "integration/accounting/add_batch durations sum overlapping worker calls; see processing_timings.gaussian for elapsed union and wave wall",
             "spectral_add_batch_scope": "Shared availability masks, direct owned luminosity queues and stable full moments; Gaussian queries occur in the next wave",
             "lookup_table": self.engine.lookup_tables.info(),
-            "portable_backend": self.engine.portable_backend,
+            "portable_backend": "numpy-scipy-snapshot-template-corners",
         }
         accounting_engine = SimpleNamespace(
             coordinate_rule="original-cell",
@@ -327,7 +426,9 @@ class TemplateIntegratedSpectra(HistogramIntegratedSpectra):
             dust_report["merge_backend"] = {
                 "selected_threads": 1,
                 "batch_group_order_unchanged": True,
-                "storage": "Small channel profiles and endpoint vectors; no parameter-node accumulator",
+                "storage": "Standard SciPy CSR binary levels; original template-row/integer-shift keys and original profiles",
+                "floating_sum_tree_changed": True,
+                "new_interpolation_grid": False,
             }
         print_template_coverage(coverage, self.direct_statistics)
         return payload, report

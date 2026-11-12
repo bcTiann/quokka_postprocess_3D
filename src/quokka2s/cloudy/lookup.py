@@ -135,6 +135,40 @@ def _brackets(
     return lower, upper, fraction
 
 
+def _weighted_corners(brackets):
+    """Yield eight table indices and (Q,) weights in NH/nH/T corner order."""
+    query_count = brackets[0][0].size
+    for corner in product((0, 1), repeat=3):
+        indices = []
+        weight = np.ones(query_count)
+        for side, (lower, upper, fraction) in zip(corner, brackets):
+            indices.append(upper if side else lower)
+            weight *= fraction if side else 1.0 - fraction
+        yield tuple(indices), weight
+
+
+def _sum_corner_fields(values, corners, selected):
+    """Sum selected queries for all lines, returning shape (L, R).
+
+    values has shape (L, N_NH, N_nH, N_T); selected is a (Q,) query mask.
+    Advanced table indexing produces contiguous query rows after transposing
+    to (R, L). Keep that layout during all eight additions, then return its
+    transpose. The per-query corner addition order remains unchanged.
+    """
+    all_selected = bool(np.all(selected))
+    output = np.zeros((int(np.count_nonzero(selected)), values.shape[0]))
+    for indices, weight in corners:
+        if all_selected:
+            selected_indices = indices
+            selected_weight = weight
+        else:
+            selected_indices = tuple(index[selected] for index in indices)
+            selected_weight = weight[selected]
+        gathered = values[(slice(None), *selected_indices)].T
+        output += gathered * selected_weight[:, None]
+    return output.T
+
+
 class CloudyLookup:
     """Trilinear lookup in shielding NH, hydrogen density and temperature.
 
@@ -412,10 +446,71 @@ class CloudyLookup:
             hydrogen_density_cm3=hydrogen_density_cm3,
             shielding_NH_cm2=shielding_NH_cm2,
         )
-        nodes = self.inspect_interpolation_nodes(coordinates=coordinates)
-        return self.interpolate_available_emissivity_per_nH2(
-            coordinates=coordinates,
-            nodes=nodes,
+        corners = tuple(_weighted_corners(coordinates.brackets))
+        query_count = coordinates.points.shape[0]
+
+        # Reinspect public masks on each query; they are not immutable caches.
+        zero_lines = np.flatnonzero(
+            np.any(self.zero_emission_table_nodes, axis=(1, 2, 3)),
+        )
+        zero_table = self.zero_emission_table_nodes[zero_lines]
+        shared_failures = all(
+            np.array_equal(mask, self.failed_table_nodes[0])
+            for mask in self.failed_table_nodes
+        )
+        failure_table = (
+            self.failed_table_nodes[:1]
+            if shared_failures else self.failed_table_nodes
+        )
+        has_failures = bool(np.any(failure_table))
+        zero_small = np.zeros((zero_lines.size, query_count), dtype=bool)
+        failure_weight = np.zeros((failure_table.shape[0], query_count))
+        for indices, weight in corners:
+            if zero_lines.size:
+                zero_small |= (
+                    zero_table[(slice(None), *indices)]
+                    & (weight[None, :] > TOUCH_EPS)
+                )
+            if has_failures:
+                failure_weight += (
+                    failure_table[(slice(None), *indices)] * weight[None, :]
+                )
+        failed_queries = np.any(failure_weight > TOUCH_EPS, axis=0)
+        zero_support = np.zeros((len(self.line_keys), query_count), dtype=bool)
+        zero_support[zero_lines] = zero_small
+        retained = ~failed_queries
+        need_linear = np.any(zero_support, axis=0) & retained
+        need_logarithmic = np.any(~zero_support, axis=0) & retained
+        emissivity_per_nH2 = np.full(zero_support.shape, np.nan)
+
+        if np.any(need_logarithmic):
+            logarithmic = np.moveaxis(self._log_interpolator.values, -1, 0)
+            emissivity_per_nH2[:, need_logarithmic] = np.power(
+                10.0,
+                _sum_corner_fields(
+                    values=logarithmic,
+                    corners=corners,
+                    selected=need_logarithmic,
+                ),
+            )
+        if np.any(need_linear):
+            linear = _sum_corner_fields(
+                values=self.emissivity_per_nH2,
+                corners=corners,
+                selected=need_linear,
+            )
+            emissivity_per_nH2[:, need_linear] = np.where(
+                zero_support[:, need_linear],
+                linear,
+                emissivity_per_nH2[:, need_linear],
+            )
+        return CloudyQueryResult(
+            emissivity_per_nH2=emissivity_per_nH2.reshape(
+                (len(self.line_keys), *coordinates.shape),
+            ),
+            attenuation_column_below_table=coordinates.below_column.reshape(coordinates.shape),
+            attenuation_column_above_table=coordinates.above_column.reshape(coordinates.shape),
+            failed_queries=failed_queries.reshape(coordinates.shape),
         )
 
     def sample(
@@ -469,19 +564,8 @@ class CloudyLookup:
         shape = (len(self.line_keys), query_count)
         zero_support = np.zeros(shape, dtype=bool)
         failure_weight = np.zeros(shape)
-        brackets = coordinates.brackets
-
         # 0 selects the lower node; 1 selects the upper node on each axis.
-        for corner in product((0, 1), repeat=3):
-            indices = []
-            weight = np.ones(query_count)
-            for side, (lower, upper, fraction) in zip(corner, brackets):
-                if side == 0:
-                    indices.append(lower)
-                    weight = weight * (1.0 - fraction)
-                else:
-                    indices.append(upper)
-                    weight = weight * fraction
+        for indices, weight in _weighted_corners(coordinates.brackets):
             table_index = (slice(None), *indices)
             line_weights = weight[None, :]
             zero_support |= self.zero_emission_table_nodes[table_index] & (line_weights > TOUCH_EPS)

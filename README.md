@@ -229,16 +229,17 @@ option supplied, the YAML dataset and group are used. Tables, workers and output
 root continue to come from YAML. Single-snapshot plot uses only the dataset
 folder name to locate saved products; the original simulation is not needed.
 Process records its effective settings in `emission_report.json`.
-The process defaults are original native full-z tiles, 131,072 cells per batch,
-16 concurrent batches, five field-read workers and 32 column-derivation tasks.
+The process defaults are original native full-z tiles, 262,144 cells per batch,
+eight concurrent batches, five field-read workers and 32 column-derivation tasks.
 The eight-x-cell `slab_nx` setting applies to the explicit z-contiguous source.
-Gaussian integration defaults to `direct-template`: each original cell directly
-interpolates four preintegrated fractional-mean/log-sigma templates, multiplies
-their channel probabilities by its luminosity and adds the small spectrum.
-Integer-bin mean shifts reuse the same fractional templates. No luminosity-node
-histogram or whole-snapshot probability matrix is allocated. NumPy evaluates
-bounded cell-by-400 blocks in float64, preserving each template node's five-sigma
-support without renormalization.
+Gaussian integration defaults to `direct-template`: each original cell locates
+four preintegrated fractional-mean/log-sigma templates and assigns its luminosity
+with the existing interpolation weights. Identical template-row/integer-shift
+contributions are summed using standard SciPy sparse matrices. After all batches,
+each occupied template position is expanded once into the 400-bin spectrum.
+This rearranges linear sums without introducing another interpolation grid.
+No whole-snapshot cell-by-channel matrix or original-cell queue is retained.
+Each template keeps its own five-sigma support without renormalization.
 The table's default sigma coverage is `1e-5` to `1024 km/s`, with natural-log
 spacing `0.03125`. Valid widths outside that table use original-cell stable bin
 integration with the same five-sigma cutoff and no brightness omission threshold.
