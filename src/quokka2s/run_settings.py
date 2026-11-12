@@ -52,7 +52,7 @@ class ProcessSettings:
     Paths are absolute. Slab/query sizes count cells; workers count threads.
     Omitted execution settings use the same defaults as the shipped YAML.
     Each concurrent batch can use spectral_workers integration threads.
-    Defaults use eight concurrent batches and one integration thread per batch.
+    Defaults use 32 concurrent batches and one integration thread per batch.
     Index ranges are [start, stop), or None for the full native axis.
     spectral_method defaults to direct original-cell integrated-bin templates.
     Fractional mean position is interpolated separately on each natural-log
@@ -79,7 +79,7 @@ class ProcessSettings:
     dust_opacity_table: Path = DEFAULT_DRAINE_TABLE
     slab_nx: int = 8
     query_chunk: int = 262_144
-    chunk_workers: int = 8
+    chunk_workers: int = 32
     spectral_workers: int = 1
     max_slabs: int | None = None
     x_index_range: tuple[int, int] | None = None

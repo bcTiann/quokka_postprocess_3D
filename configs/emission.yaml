@@ -34,7 +34,9 @@ y_index_range: null
 # Select z-contiguous explicitly for regional/limited/reference-method process.
 field_source: native-columns
 query_chunk: 262144
-chunk_workers: 8
+# Sized for this bundled 256x256x2048 snapshot. Larger full-z tiles may need
+# fewer concurrent batches to pass the unchanged 20-GiB process memory plan.
+chunk_workers: 32
 spectral_workers: 1
 slab_nx: 8
 # Slab/cache settings apply to the explicit z-contiguous source and utilities.

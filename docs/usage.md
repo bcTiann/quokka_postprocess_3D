@@ -283,13 +283,20 @@ Omitted settings use the same defaults shown in the shared YAML:
 | `field_source` | Original full-z native tiles in RAM; explicit z-contiguous supports regional/reference runs | native-columns |
 | `slab_nx` | Number of x cells per slab in the explicit z source | 8 |
 | `query_chunk` | Maximum cells in one table-query batch | 262,144 |
-| `chunk_workers` | Concurrent query batches within the loaded tile/slab | 8 |
+| `chunk_workers` | Concurrent query batches within the loaded tile/slab | 32 |
 | `spectral_workers` | Per-batch spectral workers; direct-template requires one and uses chunk_workers for batch parallelism | 1 |
 | `z_reader_threads` | Shared reader/complete-column derivation pool size | 32 |
 | `z_read_workers` | Simultaneous raw-field file streams before derivation | 5 |
-| `histogram_merge_threads` | Main profile/corner-array merge; accepts null or one | 1 |
+| `histogram_merge_threads` | Ordered main product merge; accepts null or one | 1 |
 | `prepared_z_fields` | Keep null for native-columns; explicit z source may reuse an absolute cache | null |
 | `field_cache_slabs`, `field_cache_gib` | Retained native-reader settings; unused by bounded eager process | 16, 12 |
+
+The 32-batch setting is sized for the bundled `256 x 256 x 2048` snapshot.
+Larger native full-z tiles, including the large Setonix simulations, require a
+smaller `chunk_workers` value to fit the existing 20-GiB process memory plan.
+The plan includes the current field tile and reserves worker space proportional
+to `chunk_workers * query_chunk`; it refuses an oversized run before cell reads.
+Reduce concurrency for those inputs rather than disabling the memory guard.
 
 ### Original native-column fields
 
@@ -534,9 +541,9 @@ Concurrency belongs to distinct phases, not one multiplied worker count:
 |---|---|---|
 | Raw-field I/O, reader pool | Up to 5 workers | Native FAB field/halo reads and RAM gather; derivation waits |
 | Array field derivation | Up to 32 tasks | Disjoint complete `(x,y)` columns; no batch processing yet |
-| Emission/products, batch pool | Up to 8 batches | Immutable views of one derived tile; main merge after each wave |
-| Gaussian preparation, same batch pool | Up to 8 batches | Raw corners, independent accounts and uncovered-width integrals |
-| Profile accumulation, same batch pool | Up to 8 workers | Disjoint profile planes; original batch/group order within each profile |
+| Emission/products, batch pool | Up to 32 batches | Immutable views of one derived tile; main merge after each wave |
+| Gaussian preparation, same batch pool | Up to 32 batches | Raw corners, independent accounts and uncovered-width integrals |
+| Profile accumulation, same batch pool | Up to 32 workers | Disjoint profile planes; original batch/group order within each profile |
 | Ordered small-product merge and final convolution | One main thread | Merge original products in order; convolve each occupied template row |
 
 Reader derivation finishes before physical batches start. Each bounded wave

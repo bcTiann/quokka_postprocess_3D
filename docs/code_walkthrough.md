@@ -370,11 +370,11 @@ The [bounded_z_reader.py](../src/quokka2s/bounded_z_reader.py) path then:
    original periodic x/y and one-sided outer-z neighbours.
 4. Return flattened read-only `SlabArrays` and release all five raw slab inputs.
    No mmap, full-snapshot payload owner or multi-slab group survives this step.
-5. Process up to `chunk_workers=8` immutable 262144-cell batch views, merge in
+5. Process up to `chunk_workers=32` immutable 262144-cell batch views, merge in
    original order, then release the six arrays before reading the next slab.
 
 The 32-column and five-I/O settings share one pool and finish before physical
-batch preparation. Up to eight batches then prepare unchanged emission/products.
+batch preparation. Up to 32 batches then prepare unchanged emission/products.
 The same workers prepare unsorted original-cell corner terms in the next phase;
 uncovered widths use direct integration. A term records an existing template
 row/integer-shift slot, a cell index and the original interpolation weight.
@@ -659,12 +659,13 @@ products.phases.add_batch(cells=cells, emission=emission)
 products.record_batch(cells=cells, emission=emission)
 ```
 
-Images read each named line and select its available cell positions.
-[`CompactImageAccumulator`](../src/quokka2s/products/compact_images.py) maps each
-cell to a local z-column ID, then uses `np.bincount` to sum `epsilon * volume`
-for that line and dust state. Only the touched columns are retained. Unique
-pixel IDs allow ordinary NumPy indexed addition into the main image, without
-a custom compiled image kernel. This also supports partial first/last columns.
+Images read each named line and use its intrinsic missing mask for both dust
+states. [`CompactImageAccumulator`](../src/quokka2s/products/compact_images.py)
+first multiplies each cell's emissivity by volume. Complete z columns reshape
+that luminosity into `[column,z]` and sum with the available-cell mask. Partial
+first/last columns retain `np.bincount` with per-cell column IDs. Only touched
+columns are retained. Their unique pixel IDs allow ordinary NumPy indexed
+addition into the main image, without a custom compiled image kernel.
 Spectra group lines with identical selections and thermal widths. Default
 template preparation writes original-cell mu, sigma and luminosity directly
 into bounded batch queues. Workers then distribute these luminosities among
@@ -850,8 +851,8 @@ and then `report_snapshot_progress()` for each window.
 Both sources call
 `template_batches.process_template_batches()`. `chunk_workers` limits the wave
 size, including when it is 1. Workers first call the same `accumulate_batch()`
-used by retained references. The defaults are eight batches of at most
-262144 cells, keeping at most 2097152 cells in a full wave. The direct-template
+used by retained references. The defaults are 32 batches of at most
+262144 cells, keeping at most 8388608 cells in a full wave. The direct-template
 branch fills its owned C-order luminosity queues from selected emissivity
 fields. Stable NumPy full moments reuse those queues in two passes, avoiding
 branch-wide luminosity/temperature matrices and repeated temporary vectors.

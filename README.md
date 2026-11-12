@@ -230,7 +230,7 @@ root continue to come from YAML. Single-snapshot plot uses only the dataset
 folder name to locate saved products; the original simulation is not needed.
 Process records its effective settings in `emission_report.json`.
 The process defaults are original native full-z tiles, 262,144 cells per batch,
-eight concurrent batches, five field-read workers and 32 column-derivation tasks.
+32 concurrent batches, five field-read workers and 32 column-derivation tasks.
 The eight-x-cell `slab_nx` setting applies to the explicit z-contiguous source.
 Gaussian integration defaults to `direct-template`: each original cell locates
 four preintegrated fractional-mean/log-sigma templates and assigns its luminosity

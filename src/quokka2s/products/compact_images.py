@@ -64,9 +64,11 @@ class CompactImageAccumulator:
             raise ValueError("Image batch y columns lie outside the processing region")
         self.pixel_ids = np.ascontiguousarray(local_x * self.native_xy_shape[1] + local_y)
         self.column_sums = np.zeros((2, len(self.line_keys), column_count), dtype=np.float64)
-        # All z cells in one sightline share a compact column ID. Include the
-        # first z offset so batches can start or end inside a column.
-        cell_columns = (batch_start % depth + np.arange(count, dtype=np.int64)) // depth
+        full_columns = batch_start % depth == 0 and count % depth == 0
+        if not full_columns:
+            # Partial columns need original per-cell column IDs, including the
+            # first z offset when the batch starts inside a sightline.
+            cell_columns = (batch_start % depth + np.arange(count, dtype=np.int64)) // depth
         for line_index, line_key in enumerate(self.line_keys):
             line = emission.lines[line_key]
             intrinsic = line.intrinsic_emissivity_erg_s_cm3
@@ -77,15 +79,28 @@ class CompactImageAccumulator:
                     raise ValueError("Compact images require contiguous float64 line arrays")
             if missing.shape != (count,) or missing.dtype != np.dtype(np.bool_) or not missing.flags.c_contiguous:
                 raise ValueError("Compact images require a contiguous per-line Boolean missing mask")
-            retained_cells = np.flatnonzero(~missing)
-            retained_columns = cell_columns[retained_cells]
-            for dust_index, emissivity in enumerate((intrinsic, attenuated)):
-                luminosity = emissivity[retained_cells] * cells.cell_volume_cm3
-                self.column_sums[dust_index, line_index] = np.bincount(
-                    retained_columns,
-                    weights=luminosity,
-                    minlength=column_count,
-                )
+            if full_columns:
+                retained = (~missing).reshape(column_count, depth)
+                for dust_index, emissivity in enumerate((intrinsic, attenuated)):
+                    # Preserve each cell's luminosity multiplication before
+                    # reducing its z column. Both dust states use this line's
+                    # intrinsic missing mask; available attenuated NaNs remain.
+                    luminosity = (emissivity * cells.cell_volume_cm3).reshape(column_count, depth)
+                    self.column_sums[dust_index, line_index] = np.sum(
+                        luminosity,
+                        axis=1,
+                        where=retained,
+                    )
+            else:
+                retained_cells = np.flatnonzero(~missing)
+                retained_columns = cell_columns[retained_cells]
+                for dust_index, emissivity in enumerate((intrinsic, attenuated)):
+                    luminosity = emissivity[retained_cells] * cells.cell_volume_cm3
+                    self.column_sums[dust_index, line_index] = np.bincount(
+                        retained_columns,
+                        weights=luminosity,
+                        minlength=column_count,
+                    )
         self._added = True
         self.compact_statistics.update({
             "add_batch_calls": 1,

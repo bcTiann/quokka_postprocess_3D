@@ -44,7 +44,8 @@ and table-building tools.
 The package contains Python calculations built from NumPy/SciPy operations,
 without custom Cython extensions or compiler scripts. This includes physical
 table interpolation, derived fields, direct templates and the retained Gaussian
-comparison methods. `np.bincount` accumulates compact line-of-sight images.
+comparison methods. Compact line-of-sight images sum complete z columns with
+each line's missing mask; partial columns retain `np.bincount` accumulation.
 Independent batches and reader tasks use Python thread pools; the main thread
 merges small profiles in batch order. Numerical libraries retain their own
 installed implementations and CPU dispatch. Plot reads only prepared arrays.
@@ -95,7 +96,7 @@ installed implementations and CPU dispatch. Plot reads only prepared arrays.
    [snapshot_reader.py](../src/quokka2s/snapshot_reader.py) dispatches this explicit path
    while keeping native block/NumPy references for independent utilities.
    `slab.iter_batches()` yields read-only views; consume them before releasing
-   the slab. Up to eight batches run concurrently and merge in input order.
+   the slab. Up to 32 batches run concurrently and merge in input order.
 4. [cell_emission.py](../src/quokka2s/physics/cell_emission.py): obtain each named
    line's emissivity and temperature, then apply foreground dust.
    [table_interpolation.py](../src/quokka2s/table_interpolation.py) applies the

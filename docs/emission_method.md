@@ -219,11 +219,12 @@ These methods are explicit references, never an automatic fallback.
 The [usage settings](usage.md#spectral-integration) describe selection and reuse.
 
 The bounded reader uses five I/O streams followed by up to 32 complete-column
-derivation tasks in the same pool. Up to eight batch workers prepare unchanged
-emission/products for one bounded wave. Those workers then deposit the original
-four template corners and directly integrate uncovered widths. They release
-owned cell inputs after that wave. One main thread consumes increments in
-original batch/group order and adds corner luminosities to NumPy shift rows.
+derivation tasks in the same pool. Up to 32 batch workers prepare unchanged
+emission/products for one bounded wave. Those workers then prepare the original
+four template corners and directly integrate uncovered widths. The same pool
+adds corner luminosities into disjoint NumPy profile planes, preserving original
+batch/group order within each profile. All writers join before wave-local
+luminosity is released. One main thread merges the remaining small products.
 Final template convolution occurs after every original cell has been processed;
 it remains timed and is reported separately. There is no nested spectral pool.
 Project calculations use NumPy/SciPy without custom compiled extensions.
