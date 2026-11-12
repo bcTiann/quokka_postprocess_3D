@@ -1,8 +1,8 @@
 """Accumulate original-cell spectra from immutable integrated-bin templates.
 
 Workers keep one bounded batch's owned mu/sigma/luminosity vectors until its
-Gaussian wave finishes. Only small profiles, endpoint accounts and complete
-moments are merged into the main accumulator, in the original batch order.
+Gaussian wave finishes. Small profiles, endpoint accounts and complete moments
+merge in deterministic tile order, with batches ordered within each tile.
 """
 from __future__ import annotations
 
@@ -43,11 +43,6 @@ class GaussianBatchGroup:
     centers: np.ndarray
     sigmas: np.ndarray
     luminosity: np.ndarray
-
-    @property
-    def array_bytes(self):
-        return self.profile_ids.nbytes + self.centers.nbytes + self.sigmas.nbytes + self.luminosity.nbytes
-
 
 class TemplateIntegratedSpectra(HistogramIntegratedSpectra):
     """Reuse established cell grouping and moments without node deposition."""
@@ -245,47 +240,6 @@ class TemplateIntegratedSpectra(HistogramIntegratedSpectra):
         self._query_intervals.clear()
         self._addition_intervals.clear()
 
-    def record_finished_query_wave(
-        self, *, partials, physical_ns, gaussian_ns, owned_input_bytes,
-    ):
-        """Record finished worker queries before their ordered sums are ready.
-
-        Native XY tiles can finish batches out of global order. Transfer only
-        clock intervals here; finished numerical products remain worker-owned
-        until the original batch order permits their merge.
-        """
-        if self._query_intervals or self._addition_intervals:
-            raise RuntimeError("Record pending main merges before the next query wave")
-        for partial in partials:
-            spectra = partial.spectra
-            if not spectra._queue_finished or spectra._queue_failed or spectra._groups:
-                raise RuntimeError("Record only completed Gaussian worker queues")
-            self._query_intervals.extend(spectra._query_intervals)
-            self._addition_intervals.extend(spectra._addition_intervals)
-            spectra._query_intervals.clear()
-            spectra._addition_intervals.clear()
-        self.record_completed_wave(
-            physical_ns=physical_ns,
-            gaussian_ns=gaussian_ns,
-            merge_ns=0,
-            owned_input_bytes=owned_input_bytes,
-        )
-
-    def record_finished_profile_merges(self, merge_ns):
-        """Add actual ordered-merge activity without counting another wave.
-
-        Call after a synchronous group of main-accumulator merges, outside
-        worker query execution. Query intervals were consumed when those
-        workers finished, even if their numerical results waited in memory.
-        """
-        if self._query_intervals:
-            raise RuntimeError("A delayed product merge retained worker query intervals")
-        self._timing["query_and_profile_addition_ns"] += elapsed_union_ns(
-            self._addition_intervals,
-        )
-        self._timing["ordered_product_merge_wave_ns"] += merge_ns
-        self._addition_intervals.clear()
-
     def timing_summary(self):
         """Return actual activity union, broader wave wall and diagnostic call sums."""
         if self._query_intervals or self._addition_intervals:
@@ -336,7 +290,7 @@ class TemplateIntegratedSpectra(HistogramIntegratedSpectra):
             "renormalized": False,
             "accounting_scope": "Independent original-cell analytic endpoint intervals",
             "timing_scope": "integration/accounting/add_batch durations sum overlapping worker calls; see processing_timings.gaussian for elapsed union and wave wall",
-            "spectral_add_batch_scope": "Shared availability masks, full moments, luminosity packing and owned queue copies; Gaussian queries occur in the next wave",
+            "spectral_add_batch_scope": "Shared availability masks, direct owned luminosity queues and stable full moments; Gaussian queries occur in the next wave",
             "lookup_table": self.engine.lookup_tables.info(),
             "portable_backend": self.engine.portable_backend,
         }

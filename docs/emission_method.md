@@ -163,8 +163,12 @@ most 400 temporary coefficients for one original cell. Adjacent supported channe
 values use contiguous template storage. Only bins supported by a nonzero-weight
 corner are visited; no exact original-cell support mask replaces this union.
 Each stored corner Gaussian truncates at its own `mu_node +/-5sigma_node`
-without renormalization. All batches and width groups retain their original
-ordered numerical merge. Normal builds disable fast-math and implicit FMA.
+without renormalization. Original batch contents and width groups are unchanged.
+Finished products merge in deterministic native-tile order, with ascending
+batches within each tile; floating-point reductions can round differently from
+a full-grid batch walk. Full moments use an anchored centroid followed by a
+centered second pass, never subtraction of nearly equal raw second moments.
+Normal builds disable fast-math and implicit FMA.
 
 The existing complete moments retain original-cell Gaussians and full support.
 Independent original-cell analytic endpoint references separately provide the

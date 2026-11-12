@@ -19,7 +19,7 @@ It retains no file-descriptor cache, mapped arrays or tiny-row read path;
 [native_column_fields.py](../src/quokka2s/native_column_fields.py) derives six
 physical fields using reused raw allocations;
 [native_column_process.py](../src/quokka2s/native_column_process.py) restores
-original batch merge order using only finished product partials. The full
+deterministic native-tile order, merging each finished wave immediately. The full
 original-file read and derivation cost remains inside process time. This route
 currently accepts only aligned full-box direct-template processing on regular
 level-zero FABs. Explicit `field_source: z-contiguous` supports regions, limited
@@ -87,7 +87,7 @@ Plot does not import these processing extensions to draw saved arrays.
    [native_column_reader.py](../src/quokka2s/native_column_reader.py), while
    [native_column_fields.py](../src/quokka2s/native_column_fields.py) derives
    complete columns in reused allocations. The native driver keeps original
-   query boundaries and merges small finished products in global batch order;
+   query boundaries and merges finished waves in deterministic tile order;
    field arrays are released before the next tile is read.
    The explicit z source validates a prepared cache or scopes an owned
    [z_contiguous_cache.py](../src/quokka2s/z_contiguous_cache.py) conversion.
@@ -106,12 +106,14 @@ Plot does not import these processing extensions to draw saved arrays.
 5. [emission_products.py](../src/quokka2s/products/emission_products.py) sends each
    batch to images, spectra and gas phases. The default
    [template_spectra.py](../src/quokka2s/products/gaussian/template_spectra.py)
-   reuses the established line availability/width grouping and full moments.
+   reuses the established line availability/width grouping. Direct queues
+   are filled from source emissivities without full branch matrices, and
+   stable native two-pass full moments reuse their final luminosity rows.
    It retains original-cell mu/sigma/luminosity arrays only for one bounded
    worker wave. [template_batches.py](../src/quokka2s/products/gaussian/template_batches.py)
    finishes physical preparation and Gaussian queries in bounded waves. The
-   native driver may defer only finished product merges to preserve global
-   order. [template_table.py](../src/quokka2s/products/gaussian/template_table.py)
+   native driver immediately merges each finished wave; no partials wait
+   across tiles. [template_table.py](../src/quokka2s/products/gaussian/template_table.py)
    prepares fractional-mean/log-sigma integrated-bin templates outside process
    timing; [template_engine.py](../src/quokka2s/products/gaussian/template_engine.py)
    calls [_template_integrate.pyx](../src/quokka2s/products/gaussian/_template_integrate.pyx)

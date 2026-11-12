@@ -64,6 +64,14 @@ class TemplateEngine:
             "output_bins": table.output_bin_indices,
         }
         native.validate_table(**self.native_parameters)
+        # Reuse exact results from the existing reference, not a new tail rule.
+        self._clipped_interior_mass = float(interval_probability(-table.Z, table.Z))
+        self._full_window_saturation = 12.0
+        probe_lower = np.array([-np.inf, -12.0, np.nextafter(-12.0, -np.inf)])
+        probe_upper = np.array([np.inf, 12.0, np.nextafter(12.0, np.inf)])
+        probe = interval_probability(probe_lower, probe_upper)
+        if probe.tobytes() != np.ones(probe.shape, dtype=np.float64).tobytes():
+            raise RuntimeError("Original-cell interval reference does not saturate at +/-12")
         self.gate_result = self._check_prepared_arithmetic()
 
     def validate_prepared_state(self):
@@ -212,6 +220,33 @@ class TemplateEngine:
             first_cell = stop_cell
         return channel_mass, counters, probability_seconds
 
+    def _original_window_probabilities(self, lower, upper):
+        """Reuse saturated/full-cutoff masses; retain stable boundary integrals."""
+        saturated = (lower <= -self._full_window_saturation) & (upper >= self._full_window_saturation)
+        if np.any(saturated):
+            full = np.ones(lower.shape, dtype=np.float64)
+            remaining = ~saturated
+            if np.any(remaining):
+                full[remaining] = interval_probability(lower[remaining], upper[remaining])
+        else:
+            full = interval_probability(lower, upper)
+        cutoff = self.lookup_tables.Z
+        interior = (lower <= -cutoff) & (upper >= cutoff)
+        if np.any(interior):
+            clipped = np.full(lower.shape, self._clipped_interior_mass, dtype=np.float64)
+            boundary = ~interior
+            if np.any(boundary):
+                clipped[boundary] = interval_probability(
+                    np.clip(lower[boundary], -cutoff, cutoff),
+                    np.clip(upper[boundary], -cutoff, cutoff),
+                )
+        else:
+            clipped = interval_probability(
+                np.clip(lower, -cutoff, cutoff),
+                np.clip(upper, -cutoff, cutoff),
+            )
+        return full, clipped
+
     def integrate(self, centers, sigmas, luminosity):
         """Query original cells, multiply luminosities and accumulate profiles.
 
@@ -221,6 +256,11 @@ class TemplateEngine:
         that interval; both timings are retained separately.
         """
         query_started_ns = perf_counter_ns()
+        owned_account_inputs = all(
+            isinstance(values, np.ndarray) and values.dtype == np.float64
+            and values.flags.c_contiguous and values.flags.owndata
+            for values in (centers, sigmas, luminosity)
+        )
         centers, sigmas, logarithms = self._prepare_coordinates(
             centers, sigmas, require_coverage=False,
         )
@@ -254,16 +294,19 @@ class TemplateEngine:
         accounting_began = perf_counter()
         positive = luminosity > 0.0
         active = np.any(positive, axis=1)
-        account_centers = centers[active]
-        account_sigmas = sigmas[active]
-        account_luminosity = luminosity[active]
+        if owned_account_inputs and np.all(active):
+            account_centers = centers
+            account_sigmas = sigmas
+            account_luminosity = luminosity
+        else:
+            account_centers = centers[active]
+            account_sigmas = sigmas[active]
+            account_luminosity = luminosity[active]
         with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
             lower = (self.lookup_tables.edges[0] - account_centers) / account_sigmas
             upper = (self.lookup_tables.edges[-1] - account_centers) / account_sigmas
-        full_probability = interval_probability(lower, upper)
-        clipped_probability = interval_probability(
-            np.clip(lower, -self.lookup_tables.Z, self.lookup_tables.Z),
-            np.clip(upper, -self.lookup_tables.Z, self.lookup_tables.Z),
+        full_probability, clipped_probability = self._original_window_probabilities(
+            lower, upper,
         )
         full_window = np.einsum("i,ip->p", full_probability, account_luminosity, optimize=False)
         clipped_window = np.einsum("i,ip->p", clipped_probability, account_luminosity, optimize=False)

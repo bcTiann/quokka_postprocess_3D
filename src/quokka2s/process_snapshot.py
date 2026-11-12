@@ -296,7 +296,7 @@ def process_snapshot(config, snapshot, emission_calculator, products, began, *, 
     """Read bounded fields, accumulate products and retain original batch order.
 
     Native columns are the default: original full-z XY tiles are derived in
-    RAM and finished products wait for their original batch merge position.
+    RAM; finished waves merge immediately in deterministic native-tile order.
     The explicit z-contiguous source retains the bounded x-slab implementation.
 
     config supplies slab/batch sizes, workers, and max_slabs. snapshot supplies
@@ -540,7 +540,7 @@ def run_one_snapshot(config: ProcessSettings, config_path: Path) -> None:
                     'read_workers': config.z_read_workers,
                     'native_reading': native['read_statistics'],
                     'memory_plan': native['memory_plan'],
-                    'ordered_finished_products': native['ordered_finished_products'],
+                    'finished_products': native['finished_products'],
                     'retention': 'one RAM tile; released before reading the next tile',
                 }
             else:

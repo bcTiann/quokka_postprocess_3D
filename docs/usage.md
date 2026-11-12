@@ -313,10 +313,11 @@ checked after opening metadata, before reading cell fields. Unsupported cases
 raise, with no automatic switch to another source. Shared configuration loaders
 remain usable by auxiliary tools that have their own regional read paths.
 
-Only small finished products may wait across tiles to preserve original global
-batch merge order. Raw/derived arrays and unfinished Gaussian queues are released
-before the next tile. A conservative preflight and 20 GiB process RSS guard
-include concurrent workers and pending products. Read statistics distinguish
+Finished products merge immediately in deterministic native-tile order, with
+ascending batches within each tile. Original batch contents remain unchanged;
+floating-point sums across tiles may round differently from a full-grid batch
+walk. Raw/derived arrays and Gaussian queues release before the next tile.
+A conservative preflight and 20 GiB process RSS guard include concurrent workers. Read statistics distinguish
 unique five-field payload, actual API requests including neighbour rereads and
 RAM layout; they do not claim to measure physical storage traffic.
 For `B` equal-size FABs, `B0` in the first tile, and `F` bytes per native field,
@@ -506,13 +507,13 @@ Concurrency belongs to distinct phases, not one multiplied worker count:
 |---|---|---|
 | Raw-field I/O, reader pool | Up to 5 workers | Native FAB field/halo reads and RAM gather; derivation waits |
 | Fused derivation | Up to 32 tasks | Disjoint complete `(x,y)` columns; no batch processing yet |
-| Emission/products, batch pool | Up to 16 batches | Immutable views of one derived tile; original ordered main merge |
+| Emission/products, batch pool | Up to 16 batches | Immutable views of one derived tile; main merge after each wave |
 | Gaussian queries, same batch pool | Up to 16 batches, one compiled thread each | Original-cell template lookup after physical preparation finishes |
-| Main profile merge | One main thread | Original batch/group order; no node store or final expansion |
+| Main profile merge | One main thread | Tile order, then original batch/group order; no node store or final expansion |
 
 Reader derivation finishes before physical batches start. Each bounded wave
 finishes physical preparation and Gaussian queries before its successor.
-Native tiles may retain only finished products awaiting original merge order.
+No completed product partials wait across native tiles.
 These phases do not multiply into a nested worker count.
 The explicit node methods keep their own supported merge/expansion teams.
 
@@ -537,7 +538,7 @@ batch waiting for an earlier one is distinct from a merged batch; completion
 advances only after the original ordered merge.
 
 `processing_timings.native_columns` describes original reads, RAM derivation,
-ordered pending products and memory. Gradient and combined units/columns passes
+immediately merged products and memory. Gradient and combined units/columns passes
 have separate clocks. The explicit z source separates eager field reading from `fused_derivation` and
 from batch compute/ordered merge. Foreground/shielding columns and gradients
 share that fused pass, so their old individual callback categories do not
@@ -654,7 +655,7 @@ do not contain this section; plotting does not require it.
 Default processing reads one native full-z tile, derives physical fields in
 reused RAM allocations, then queries table batches and accumulates images,
 spectra and gas phases. Cell arrays are released before the next tile; only
-small finished products may wait for original global merge order. The explicit
+finished waves merge immediately in deterministic native-tile order. The explicit
 z source reads bounded slabs after cache validation/conversion.
 No full-snapshot emissivity cube is saved.
 Before saving, it also prepares per-area spectra, peak-normalized line/gas

@@ -85,8 +85,9 @@ numerical products. The default `field_source: native-columns` reads full-z
 native tiles from the original plt without modifying it or writing a converted
 copy. It arranges each tile in RAM, derives columns and velocity gradients,
 calculates its products, then releases its cell arrays before reading the next
-tile. Small finished products wait only when needed to preserve the original
-batch merge order. Snapshots are processed sequentially.
+tile. Finished products merge immediately in fixed native-tile order, with
+batches ordered within each tile. This can change floating-point rounding
+compared with a full-grid batch walk. Snapshots are processed sequentially.
 
 Core fields and density/x-momentum/y-momentum neighbour data use the same
 complete-FAB-field `np.fromfile` reads. NumPy copies native x-contiguous values

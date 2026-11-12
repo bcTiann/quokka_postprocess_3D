@@ -1,9 +1,9 @@
 # cython: language_level=3, boundscheck=False, wraparound=False, initializedcheck=False
-"""Prepare final cold/hot spectral inputs without packed full-group copies.
+"""Prepare spectral groups from read-only cell and per-line source arrays.
 
-The caller owns the original read-only cell and per-line arrays. Returned
-temperature/luminosity matrices have shape (Nline, Nbranch) and Fortran order,
-matching the frozen branch arrays and their NumPy axis-1 reduction order.
+Direct templates select branch rows and fill their final owned C-order queues.
+Retained reference methods prepare (Nline, Nbranch) Fortran-order matrices to
+preserve their original NumPy reduction order.
 """
 
 import numpy as np
@@ -11,6 +11,316 @@ cimport numpy as cnp
 
 from libc.math cimport isfinite
 from libc.stdint cimport int64_t
+
+
+def prepare_branch_rows(
+    const int64_t[::1] available_rows,
+    const cnp.npy_bool[:] cold_cells,
+    const double[:] velocity_kms,
+    double speed_of_light_kms,
+):
+    """Return owned row IDs and velocities for cold/hot available cells.
+
+    Source vectors have the original batch shape (B,). Both selected branches
+    retain increasing original cell order; their one-dimensional outputs own
+    contiguous memory and can survive after the input batch is released.
+    """
+    cdef Py_ssize_t position
+    cdef Py_ssize_t row
+    cdef Py_ssize_t cold_count = 0
+    cdef Py_ssize_t hot_count = 0
+    cdef Py_ssize_t cold_position = 0
+    cdef Py_ssize_t hot_position = 0
+    cdef int error_kind = 0
+    cdef int64_t[::1] cold_rows
+    cdef int64_t[::1] hot_rows
+    cdef double[::1] cold_velocity
+    cdef double[::1] hot_velocity
+
+    if cold_cells.shape[0] != velocity_kms.shape[0]:
+        raise ValueError("The branch mask must match the original cell shape")
+    with nogil:
+        for position in range(available_rows.shape[0]):
+            row = available_rows[position]
+            if row < 0 or row >= velocity_kms.shape[0]:
+                error_kind = 1
+                break
+            if not isfinite(velocity_kms[row]):
+                error_kind = 2
+                break
+            if (
+                velocity_kms[row] <= -speed_of_light_kms
+                or velocity_kms[row] >= speed_of_light_kms
+            ):
+                error_kind = 3
+                break
+            if cold_cells[row]:
+                cold_count += 1
+            else:
+                hot_count += 1
+    if error_kind == 1:
+        raise IndexError("An available cell index is outside the input batch")
+    if error_kind == 2:
+        raise ValueError("velocity_kms must be finite")
+    if error_kind == 3:
+        raise ValueError("The nonrelativistic profile requires abs(velocity) < c")
+
+    cold_rows_owner = np.empty(cold_count, dtype=np.int64)
+    hot_rows_owner = np.empty(hot_count, dtype=np.int64)
+    cold_velocity_owner = np.empty(cold_count, dtype=np.float64)
+    hot_velocity_owner = np.empty(hot_count, dtype=np.float64)
+    cold_rows = cold_rows_owner
+    hot_rows = hot_rows_owner
+    cold_velocity = cold_velocity_owner
+    hot_velocity = hot_velocity_owner
+    with nogil:
+        for position in range(available_rows.shape[0]):
+            row = available_rows[position]
+            if cold_cells[row]:
+                cold_rows[cold_position] = row
+                cold_velocity[cold_position] = velocity_kms[row]
+                cold_position += 1
+            else:
+                hot_rows[hot_position] = row
+                hot_velocity[hot_position] = velocity_kms[row]
+                hot_position += 1
+    return (
+        (cold_rows_owner, cold_velocity_owner),
+        (hot_rows_owner, hot_velocity_owner),
+    )
+
+
+def validate_branch_emission(
+    const int64_t[::1] rows,
+    tuple intrinsic_fields,
+    tuple attenuated_fields,
+    tuple temperature_fields,
+    double cell_volume_cm3,
+    Py_ssize_t original_count,
+):
+    """Check selected source values and identify lines with nonzero light.
+
+    Unavailable cells are deliberately not read. Returned flags have shape
+    (Nline,); each line retains its own source temperature and both dust states.
+    """
+    cdef Py_ssize_t line_index
+    cdef Py_ssize_t position
+    cdef Py_ssize_t row
+    cdef const double[:] intrinsic
+    cdef const double[:] attenuated
+    cdef const double[:] temperature
+    cdef double intrinsic_luminosity
+    cdef double attenuated_luminosity
+    cdef int error_kind
+    cdef cnp.npy_bool[::1] emitting
+
+    if cell_volume_cm3 <= 0.0 or not isfinite(cell_volume_cm3):
+        raise ValueError("Require finite positive cell_volume_cm3")
+    if (
+        len(attenuated_fields) != len(intrinsic_fields)
+        or len(temperature_fields) != len(intrinsic_fields)
+    ):
+        raise ValueError("Each line requires intrinsic, attenuated and temperature fields")
+    owner = np.zeros(len(intrinsic_fields), dtype=np.bool_)
+    emitting = owner
+    for line_index in range(len(intrinsic_fields)):
+        intrinsic = intrinsic_fields[line_index]
+        attenuated = attenuated_fields[line_index]
+        temperature = temperature_fields[line_index]
+        if (
+            intrinsic.shape[0] != original_count
+            or attenuated.shape[0] != original_count
+            or temperature.shape[0] != original_count
+        ):
+            raise ValueError("Per-line fields must match the original cell shape")
+        error_kind = 0
+        with nogil:
+            for position in range(rows.shape[0]):
+                row = rows[position]
+                if not isfinite(temperature[row]) or temperature[row] < 0.0:
+                    error_kind = 1
+                    break
+                intrinsic_luminosity = intrinsic[row]
+                attenuated_luminosity = attenuated[row]
+                if (
+                    not isfinite(intrinsic_luminosity)
+                    or not isfinite(attenuated_luminosity)
+                    or intrinsic_luminosity < 0.0
+                    or attenuated_luminosity < 0.0
+                ):
+                    error_kind = 2
+                    break
+                intrinsic_luminosity = intrinsic_luminosity * cell_volume_cm3
+                attenuated_luminosity = attenuated_luminosity * cell_volume_cm3
+                if (
+                    not isfinite(intrinsic_luminosity)
+                    or not isfinite(attenuated_luminosity)
+                ):
+                    error_kind = 3
+                    break
+                if intrinsic_luminosity != 0.0 or attenuated_luminosity != 0.0:
+                    emitting[line_index] = True
+        if error_kind == 1:
+            raise ValueError("temperatures_K must be finite and nonnegative")
+        if error_kind == 2:
+            raise ValueError("emissivity must be finite and nonnegative")
+        if error_kind == 3:
+            raise ValueError("emissivity times volume must remain finite")
+    return owner
+
+
+def selected_temperatures_equal(
+    const int64_t[::1] rows,
+    const double[:] first_temperature_K,
+    const double[:] second_temperature_K,
+):
+    """Compare temperatures only on a validated available cold/hot branch."""
+    cdef Py_ssize_t position
+    cdef Py_ssize_t row
+    cdef bint equal = True
+
+    with nogil:
+        for position in range(rows.shape[0]):
+            row = rows[position]
+            if first_temperature_K[row] != second_temperature_K[row]:
+                equal = False
+                break
+    return equal
+
+
+def prepare_direct_group_luminosity(
+    const int64_t[::1] rows,
+    tuple intrinsic_fields,
+    tuple attenuated_fields,
+    const int64_t[::1] shared_lines,
+    double cell_volume_cm3,
+):
+    """Fill the final owned (Nbranch, 2*Nshared) C-order template queue.
+
+    Sources have already passed validate_branch_emission(). Intrinsic columns
+    precede attenuated columns, retaining the supplied shared-line order.
+    """
+    cdef Py_ssize_t line_index
+    cdef Py_ssize_t shared_index
+    cdef Py_ssize_t position
+    cdef Py_ssize_t row
+    cdef const double[:] source
+    cdef double[:, ::1] destination
+
+    owner = np.empty(
+        (rows.shape[0], 2 * shared_lines.shape[0]),
+        dtype=np.float64,
+        order="C",
+    )
+    destination = owner
+    for shared_index in range(shared_lines.shape[0]):
+        line_index = shared_lines[shared_index]
+        source = intrinsic_fields[line_index]
+        with nogil:
+            for position in range(rows.shape[0]):
+                row = rows[position]
+                destination[position, shared_index] = source[row] * cell_volume_cm3
+        source = attenuated_fields[line_index]
+        with nogil:
+            for position in range(rows.shape[0]):
+                row = rows[position]
+                destination[position, shared_lines.shape[0] + shared_index] = (
+                    source[row] * cell_volume_cm3
+                )
+    return owner
+
+
+def calculate_centered_full_moments(
+    const double[::1] velocity_kms,
+    const double[::1] thermal_width_kms,
+    const double[:, ::1] luminosity,
+    double minimum_width_kms,
+):
+    """Return (Nprofile, 3) full luminosity, centroid and centered second moment.
+
+    Two passes anchor each profile at its first positive-luminosity velocity.
+    The second sums L*((v-anchor-mean_offset)**2 + max(sigma,sigma_min)**2),
+    avoiding cancellation from subtracting raw second moments. Native serial
+    sums may differ from NumPy pairwise sums by floating-point roundoff. Return
+    None on nonfinite arithmetic so the caller can retain NumPy's original
+    warning and nonfinite-result behavior on exceptional inputs.
+    """
+    cdef Py_ssize_t row
+    cdef Py_ssize_t profile
+    cdef Py_ssize_t profile_count = luminosity.shape[1]
+    cdef double weights[12]
+    cdef double offsets[12]
+    cdef double anchors[12]
+    cdef double means[12]
+    cdef double seconds[12]
+    cdef double light
+    cdef double offset
+    cdef double difference
+    cdef double thermal_variance
+    cdef double sigma
+    cdef double bulk_variance
+    cdef double total_variance
+    cdef double[:, ::1] output
+    cdef bint finite = True
+
+    if (
+        profile_count < 1
+        or profile_count > 12
+        or velocity_kms.shape[0] != luminosity.shape[0]
+        or thermal_width_kms.shape[0] != velocity_kms.shape[0]
+    ):
+        raise ValueError("Require matching vectors and one to twelve profiles")
+    owner = np.zeros((profile_count, 3), dtype=np.float64)
+    output = owner
+    with nogil:
+        for profile in range(profile_count):
+            weights[profile] = 0.0
+            offsets[profile] = 0.0
+            anchors[profile] = 0.0
+            means[profile] = 0.0
+            seconds[profile] = 0.0
+        for row in range(velocity_kms.shape[0]):
+            for profile in range(profile_count):
+                light = luminosity[row, profile]
+                if light <= 0.0:
+                    continue
+                if weights[profile] == 0.0:
+                    anchors[profile] = velocity_kms[row]
+                offset = velocity_kms[row] - anchors[profile]
+                weights[profile] = weights[profile] + light
+                offsets[profile] = offsets[profile] + light * offset
+        for profile in range(profile_count):
+            if not isfinite(weights[profile]) or not isfinite(offsets[profile]):
+                finite = False
+            if weights[profile] > 0.0:
+                means[profile] = offsets[profile] / weights[profile]
+        for row in range(velocity_kms.shape[0]):
+            sigma = thermal_width_kms[row]
+            if sigma < minimum_width_kms:
+                sigma = minimum_width_kms
+            thermal_variance = sigma * sigma
+            for profile in range(profile_count):
+                light = luminosity[row, profile]
+                if light <= 0.0:
+                    continue
+                offset = velocity_kms[row] - anchors[profile]
+                difference = offset - means[profile]
+                bulk_variance = difference * difference
+                total_variance = bulk_variance + thermal_variance
+                seconds[profile] = seconds[profile] + light * total_variance
+        for profile in range(profile_count):
+            output[profile, 0] = weights[profile]
+            if weights[profile] > 0.0:
+                output[profile, 1] = anchors[profile] + means[profile]
+                output[profile, 2] = seconds[profile]
+                if (
+                    not isfinite(output[profile, 1])
+                    or not isfinite(seconds[profile])
+                ):
+                    finite = False
+    if not finite:
+        return None
+    return owner
 
 
 def prepare_available_group(

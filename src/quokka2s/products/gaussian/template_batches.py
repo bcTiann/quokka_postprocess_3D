@@ -7,17 +7,17 @@ from time import perf_counter_ns
 
 def process_template_batches(
     *, config, snapshot, emission_calculator, products, slab, executor,
-    accumulate_batch, progress=None, finished_partial_sink=None,
+    accumulate_batch, progress=None, after_wave=None,
 ):
     """Keep at most chunk_workers Gaussian input queues within the current slab.
 
     The ordinary accumulate_batch function computes the same physical products,
     available-line grouping and complete moments. Each worker then queries its
-    owned Gaussians. Both worker results and final product sums retain the
-    original batch order. A one-worker configuration follows this same path.
-    An optional sink receives (finished_partial, original_first_cell_id) for
-    native tile reads. It must merge finished products in original batch order
-    and record the actual main merge time separately.
+    owned Gaussians. Results merge in the current slab's batch order. Native
+    tiles are visited in their deterministic XY order; sums across tiles may
+    therefore differ in floating-point rounding from a full-grid batch walk.
+    A one-worker configuration follows this same path. after_wave optionally
+    checks process memory after each bounded worker wave completes.
     """
     from ..emission_products import EmissionProducts
 
@@ -98,13 +98,6 @@ def process_template_batches(
                 raise AssertionError("A Gaussian wave omitted one or more prepared groups")
             if any(partial.spectra._groups for partial in partials):
                 raise AssertionError("A completed Gaussian wave retained its input vectors")
-            if finished_partial_sink is not None:
-                products.spectra.record_finished_query_wave(
-                    partials=partials,
-                    physical_ns=physical_finished - physical_started,
-                    gaussian_ns=gaussian_finished - gaussian_started,
-                    owned_input_bytes=owned_input_bytes,
-                )
             merge_started = perf_counter_ns()
             for batch_number, cells, partial in zip(batch_numbers, wave_cells, partials):
                 products.failure_context = {
@@ -112,21 +105,19 @@ def process_template_batches(
                     "last_cell_id": cells.last_cell_id,
                 }
                 if progress is not None:
-                    progress.set_stage(batch_number, "merging products in original batch order")
-                if finished_partial_sink is None:
-                    products.merge(partial)
-                else:
-                    finished_partial_sink(partial, cells.first_cell_id)
+                    progress.set_stage(batch_number, "merging completed batch products")
+                products.merge(partial)
                 if progress is not None:
                     progress.batch_merged(batch_number, cells.cell_count)
             merge_finished = perf_counter_ns()
-            if finished_partial_sink is None:
-                products.spectra.record_completed_wave(
-                    physical_ns=physical_finished - physical_started,
-                    gaussian_ns=gaussian_finished - gaussian_started,
-                    merge_ns=merge_finished - merge_started,
-                    owned_input_bytes=owned_input_bytes,
-                )
+            products.spectra.record_completed_wave(
+                physical_ns=physical_finished - physical_started,
+                gaussian_ns=gaussian_finished - gaussian_started,
+                merge_ns=merge_finished - merge_started,
+                owned_input_bytes=owned_input_bytes,
+            )
+            if after_wave is not None:
+                after_wave()
         except BaseException:
             # Wait only for this bounded wave before releasing every surviving
             # partial; no failed task is resubmitted or reused in another wave.

@@ -26,17 +26,17 @@ momenta, reuses density/z momentum for physical density/velocity, and allocates
 the two column-density fields. Temperature is reused unchanged.
 
 [native_column_process.py](../src/quokka2s/native_column_process.py) keeps the
-original batch boundaries and numerical merge order, even when native tiles
-finish those batches in a different order. Only finished small product partials
-wait for their original batch ID; cell fields and unfinished Gaussian queues do
-not wait across tiles. Query intervals are recorded when workers finish, while
-later ordered merges record only their actual merge activity. All native reads,
+original batch boundaries and merges finished products immediately in fixed
+native-tile order, with batches ordered within each tile. No completed products
+wait for a different tile. This permits floating-point rounding differences
+compared with a full-grid batch walk. Query and main-merge intervals are
+summarized together after each bounded wave. All native reads,
 face-cache preparation, RAM rearrangement and derivation count toward process
 time. API-requested bytes include additional neighbour reads; they are not a
 measurement of physical disk traffic. This route requires a complete box,
 regular level-zero FABs, direct templates and aligned full-z batches; unsupported
 settings raise before cell processing. The memory plan and process RSS guard
-cover tile arrays, concurrent work and waiting finished products.
+cover tile arrays and concurrent work.
 
 Select `--field-source z-contiguous` for a region, `max_slabs`, or a retained
 Gaussian reference method. In that explicit source, `prepared_z_fields` selects
@@ -293,9 +293,11 @@ The default follows `native_column_process.process_native_columns()`:
 4. The returned `SlabArrays` contains six read-only flattened physical fields,
    with original global x/y origins and cell IDs. Workers process the unchanged
    `query_chunk` batches through bounded physical and Gaussian waves.
-5. `OrderedFinishedPartials` merges small finished products in original global
-   batch order. Only those products may wait across tiles; all raw/derived cell
-   arrays and batch views are released before the next tile is read.
+5. The main thread merges finished products immediately in deterministic
+   native-tile order and ascending batch order within the tile. The full-grid
+   query batches are unchanged, but the order of floating-point sums across
+   tiles can differ. No finished-product waiting store is allocated. All
+   raw/derived cell arrays and batch views release before the next tile read.
 
 All original reads, neighbour preparation, gather and derivation are timed.
 `processing_timings.native_columns` records those costs, source byte requests,
@@ -774,9 +776,8 @@ tables and accumulated products remain for the next slab.
 
 Start with `process_snapshot()`: the default dispatches into
 `native_column_process.process_native_columns()`. Each tile finishes its worker
-queries before releasing its fields. The finished-partial sink preserves the
-original global batch merge order across tiles. Its timing hooks consume query
-intervals immediately and record delayed numerical merges separately.
+queries and merges finished products before releasing its fields. Tile visit
+order is deterministic; no delayed products or Gaussian inputs survive a tile.
 
 For the explicit z source, `select_slabs_to_process()` returns only index
 windows (32 for this snapshot), and `count_cells_in_slabs()` counts their core
@@ -786,10 +787,13 @@ and then `report_snapshot_progress()` for each window.
 Both sources call
 `template_batches.process_template_batches()`. `chunk_workers` limits the wave
 size, including when it is 1. Workers first call the same `accumulate_batch()`
-used by retained references. Gaussian inputs survive only this bounded physical
-wave. The next phase queries them; the main thread merges in batch order via
+used by retained references. The default direct-template branch fills its
+final owned C-order luminosity queues directly from the selected emissivity
+fields. Stable native full moments reuse those queues in two passes, avoiding
+branch-wide luminosity/temperature matrices and repeated temporary vectors.
+Gaussian inputs survive only this bounded physical wave. The next phase queries them; the main thread merges in batch order via
 `EmissionProducts.merge()`. The z source merges each slab before its next read;
-the native source can retain only finished small products until their turn.
+the native source also merges each completed wave immediately.
 The retained reference methods keep the original serial/parallel batch helpers.
 
 `processing_timings.gaussian` separates query-plus-addition elapsed union from
