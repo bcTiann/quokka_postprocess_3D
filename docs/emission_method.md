@@ -160,9 +160,11 @@ Intrinsic/attenuated, line and cold/hot accounts remain separate. There is no
 cell-brightness cut or additional grid approximation.
 
 The immutable table is prepared outside process time. Worker batches use NumPy
-coordinates and standard SciPy CSR matrices for weighted corner luminosities.
-The main thread merges sparse subtotals in binary levels, then expands occupied
-corners once in bounded blocks. All deposition, sparse merges, final lookup and
+coordinates and standard SciPy CSR products for weighted corner luminosities.
+The main thread adds unique-corner increments into NumPy arrays. Every stored
+template row with B bins has K+B-1 possible integer shifts overlapping K observed
+bins; each account stores just that row-specific interval. Direct NumPy
+convolution in valid mode maps its accumulated shift luminosities to K channels. All deposition, indexed additions, convolution and
 luminosity multiplication remain inside process timing. Original-cell arrays
 survive only one bounded wave. Stored probabilities are zero outside each
 corner's own support; no original-cell support mask replaces that union.
@@ -212,8 +214,8 @@ derivation tasks in the same pool. Up to eight batch workers prepare unchanged
 emission/products for one bounded wave. Those workers then deposit the original
 four template corners and directly integrate uncovered widths. They release
 owned cell inputs after that wave. One main thread consumes increments in
-original batch/group order and merges sparse CSR subtotals in binary levels.
-Final template expansion occurs after every original cell has been processed;
+original batch/group order and adds corner luminosities to NumPy shift rows.
+Final template convolution occurs after every original cell has been processed;
 it remains timed and is reported separately. There is no nested spectral pool.
 Project calculations use NumPy/SciPy without custom compiled extensions.
 Independent retained reference methods use their stated Python worker pools.

@@ -70,8 +70,8 @@ class TemplateEngine:
         if profile_count not in self._corner_specs:
             with self._corner_spec_lock:
                 if profile_count not in self._corner_specs:
-                    from .corner_store import CornerStoreSpec
-                    self._corner_specs[profile_count] = CornerStoreSpec(
+                    from .corner_store import RaggedCornerSpec
+                    self._corner_specs[profile_count] = RaggedCornerSpec(
                         self.lookup_tables,
                         profile_count=profile_count,
                     )

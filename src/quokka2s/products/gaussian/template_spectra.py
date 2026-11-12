@@ -1,8 +1,8 @@
-"""Coalesce identical prepared-template corners in a snapshot-wide SciPy CSR.
+"""Coalesce identical prepared-template corners in a profile-major NumPy accounts.
 
 Workers release original-cell vectors after their bounded deposition wave.
 Original-cell accounts, complete moments and physical products still merge in
-batch order. The unique covered corners expand once before output preparation.
+batch order. The covered corner rows convolve once before output preparation.
 """
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from types import SimpleNamespace
 import numpy as np
 
 from .accounting import add_cutoff_accounts, update_cutoff_report
-from .corner_store import BinaryCornerStore, check_corner_memory
+from .corner_store import RaggedCornerStore, check_corner_memory
 from .spectra import HistogramIntegratedSpectra
 from .template_coverage import TemplateCoverageTotals, print_template_coverage
 from ..integrated_spectra import IntegratedSpectra
@@ -122,7 +122,7 @@ class TemplateIntegratedSpectra(HistogramIntegratedSpectra):
         self._maximum_worker_increment_bytes = 0
         if not batch_partial:
             began = perf_counter_ns()
-            self._corner_store = BinaryCornerStore(self._corner_spec)
+            self._corner_store = RaggedCornerStore(self._corner_spec)
             self._corner_init_ns = perf_counter_ns() - began
 
     def add_batch(self, cells, emission):
@@ -178,7 +178,7 @@ class TemplateIntegratedSpectra(HistogramIntegratedSpectra):
         try:
             worker = self.engine.corner_deposit_engine(profile_count=self.profile_count)
             for group in self._groups:
-                result, increment, metrics = worker.deposit(
+                result, increment = worker.deposit(
                     group.centers,
                     group.sigmas,
                     group.luminosity,
@@ -213,13 +213,13 @@ class TemplateIntegratedSpectra(HistogramIntegratedSpectra):
         return self
 
     def _release_original_cell_inputs(self):
-        """Drop only original-cell vectors after deposition, retaining CSR output."""
+        """Drop only original-cell vectors after deposition, retaining compact output."""
         self._groups.clear()
         self._input_owner_ids.clear()
         self._owned_input_bytes = 0
 
     def release_gaussian_inputs(self):
-        """Release original inputs and any abandoned worker CSR increments."""
+        """Release original inputs and any abandoned compact worker increments."""
         self._release_original_cell_inputs()
         if self.batch_partial:
             self._corner_increments.clear()
@@ -237,8 +237,8 @@ class TemplateIntegratedSpectra(HistogramIntegratedSpectra):
         if self.spectral_method != other.spectral_method:
             raise ValueError("Cannot merge spectra calculated with different methods")
         pending_bytes = sum(
-            matrix.data.nbytes + matrix.indices.nbytes + matrix.indptr.nbytes
-            for matrix in other._corner_increments
+            sum(values.nbytes for values in increment)
+            for increment in other._corner_increments
         )
         self._maximum_worker_increment_bytes = max(self._maximum_worker_increment_bytes, pending_bytes)
         check_corner_memory("before snapshot corner increment merge")
@@ -262,7 +262,7 @@ class TemplateIntegratedSpectra(HistogramIntegratedSpectra):
         merge_started = perf_counter_ns()
         try:
             for increment in other._corner_increments:
-                self._corner_store.add(increment)
+                self._corner_store.add(*increment)
             other._corner_increments.clear()
         except BaseException:
             self._corner_failed = True
@@ -323,17 +323,17 @@ class TemplateIntegratedSpectra(HistogramIntegratedSpectra):
             "snapshot_corner_store_initialization_seconds": self._corner_init_ns / 1e9,
             "snapshot_corner_main_merge_seconds": self._corner_main_merge_ns / 1e9,
             "snapshot_corner_finalization_seconds": self._corner_final_ns / 1e9,
-            "maximum_single_worker_increment_csr_bytes": self._maximum_worker_increment_bytes,
+            "maximum_single_worker_increment_bytes": self._maximum_worker_increment_bytes,
             "gaussian_total_seconds_including_corner_store": result["gaussian_wave_seconds_including_analytic_accounts_and_scheduling"] + (self._corner_init_ns + self._corner_main_merge_ns + self._corner_final_ns) / 1e9,
-            "activity_scope": "Original-cell validation/corner deposition, CSR additions and outside-width fallback; final covered query is separate",
-            "finalization_scope": "Final CSR merge/decode, stored-corner lookup, contraction, profile addition and memory guards",
+            "activity_scope": "Original-cell validation/corner coalescing, indexed main additions and outside-width fallback; final convolution is separate",
+            "finalization_scope": "Touched-row selection, stored-template convolution, profile addition and memory guards",
             "snapshot_corner_store": self._corner_final_metrics if self._corner_finalized else self._corner_store.statistics(),
-            "timing_note": "CSR main merge is inside ordered_product_merge_wave_seconds; finalization is inside output construction. Do not add these overlapping totals twice.",
+            "timing_note": "Corner main additions are inside ordered_product_merge_wave_seconds; final convolution is inside output construction. Do not add these overlapping totals twice.",
         })
         return result
 
     def finalize_corner_spectra(self):
-        """Expand unique covered corners once; original outside profiles exist."""
+        """Convolve accumulated corner rows once; original outside profiles exist."""
         if self.batch_partial or self._corner_failed:
             raise RuntimeError("Finalize only a successful main corner store")
         if self._corner_finalized:
@@ -378,15 +378,19 @@ class TemplateIntegratedSpectra(HistogramIntegratedSpectra):
             "histogram_allocated": True,
             "new_parameter_grid_allocated": False,
             "node_records_created": self._corner_final_metrics["unique_snapshot_corner_nodes"],
+            "node_records_created_scope": "Occupied row/shift keys; allocated dense capacity is corner_account_slots",
+            "corner_account_capacity_bytes": self._corner_spec.account_bytes,
+            "corner_account_slots": self._corner_spec.slot_count,
+            "corner_account_layout": "profile-major [original account, row-specific valid integer shift]",
             "cell_by_channel_probability_matrix_allocated": self.direct_statistics.get("fallback_probability_intervals", 0) > 0,
-            "probability_matrix_scope": "Bounded final unique-corner supports and original outside-width fallback blocks; no covered-cell probability matrix or saved cell queues",
+            "probability_matrix_scope": "Only original outside-width fallback blocks use cell/channel matrices; covered rows use convolution without saved cell queues",
             "maximum_probability_rows": self.engine.maximum_probability_rows,
             "maximum_direct_probability_rows": self.engine.maximum_direct_probability_rows,
             "maximum_single_fallback_probability_array_bytes": self.engine.maximum_probability_rows * (self.velocity_edges_kms.size - 1) * 8,
-            "probability_memory_scope": "Size of one bounded float64 probability array; additional interpolation gathers, integer indices and direct-interval scratch are allocated per worker. This is not query or process peak memory.",
-            "work_counter_scope": "Original-cell deposit/fallback work; covered unique-corner expansion work is reported separately",
+            "probability_memory_scope": "Fallback probability-block bound only; per-group key/interpolation arrays and the declared dense corner-account capacity are separate. These are not process RSS measurements.",
+            "work_counter_scope": "Original-cell deposit/fallback work; covered row-convolution work is reported separately",
             "snapshot_corner_expansion": self._corner_final_metrics,
-            "integration": "Original four template corners; identical template-row/integer-shift luminosities coalesce in SciPy CSR before one covered expansion; outside widths use stable original-cell integrals",
+            "integration": "Original four template corners; identical row/shift luminosities coalesce in profile-major NumPy accounts before stored-row convolution; outside widths use stable original-cell integrals",
             "cutoff_sigma": 5.0,
             "cutoff_applies_to": self.engine.cutoff_applies_to,
             "renormalized": False,
@@ -394,7 +398,7 @@ class TemplateIntegratedSpectra(HistogramIntegratedSpectra):
             "timing_scope": "integration/accounting/add_batch durations sum overlapping worker calls; see processing_timings.gaussian for elapsed union and wave wall",
             "spectral_add_batch_scope": "Shared availability masks, direct owned luminosity queues and stable full moments; Gaussian queries occur in the next wave",
             "lookup_table": self.engine.lookup_tables.info(),
-            "portable_backend": "numpy-scipy-snapshot-template-corners",
+            "portable_backend": "numpy-scipy-ragged-corner-convolution",
         }
         accounting_engine = SimpleNamespace(
             coordinate_rule="original-cell",
@@ -426,7 +430,7 @@ class TemplateIntegratedSpectra(HistogramIntegratedSpectra):
             dust_report["merge_backend"] = {
                 "selected_threads": 1,
                 "batch_group_order_unchanged": True,
-                "storage": "Standard SciPy CSR binary levels; original template-row/integer-shift keys and original profiles",
+                "storage": "Profile-major NumPy rows; each stored template allocates only integer shifts overlapping the observation window",
                 "floating_sum_tree_changed": True,
                 "new_interpolation_grid": False,
             }

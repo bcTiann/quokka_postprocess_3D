@@ -375,10 +375,10 @@ The 32-column and five-I/O settings share one pool and finish before physical
 batch preparation. Up to eight batches then prepare unchanged emission/products.
 The same workers deposit their original-cell luminosities onto existing
 template corners in the next phase; uncovered widths use direct integration.
-The main thread merges the finished batches and combines sparse corner sums
-through an ordered binary reduction. Original-cell Gaussian vectors survive
-only this bounded wave. After all cells, occupied template rows are expanded
-once into the final spectrum. One-worker mode uses the same wave path. These
+The main thread merges the finished batches and adds compact corner sums
+to profile-major NumPy arrays. Original-cell Gaussian vectors survive
+only this bounded wave. After all cells, direct NumPy convolution maps each
+occupied template row to the final spectrum. One-worker mode uses the same wave path. These
 worker phases do not multiply one another.
 
 `field_cache_slabs`/`field_cache_gib` remain accepted for the original native
@@ -714,11 +714,11 @@ go through a rebinned image. The default `direct-template` route is:
    availability mask and luminosity.
 5. Main input-light, count, full-moment and analytic endpoint accounts merge
    in batch order. [corner_store.py](../src/quokka2s/products/gaussian/corner_store.py)
-   combines sparse corner sums through an ordered binary reduction.
-   Original-cell Gaussian vectors are released before the next wave; only
-   occupied corner sums survive. After all cells, each unique row/shift is
-   expanded once into the observed 400 channels and multiplied by its
-   accumulated account luminosities. This distributes the same four template
+   adds compact unique-corner arrays to profile-major NumPy accounts. Each
+   B-bin stored template has K+B-1 integer shifts that can overlap the K-bin
+   observation. Its account arrays cover exactly those shifts. Original-cell
+   vectors are released before the next wave. After all cells, direct NumPy
+   convolution in valid mode produces exactly K observed channel values. This distributes the same four template
    terms before summing, with floating-point reduction differences.
 6. Outside sigma coverage, `template_engine.py` calculates stable original-cell
    bin probabilities in bounded outside-only blocks and accumulates them
@@ -824,7 +824,7 @@ branch-wide luminosity/temperature matrices and repeated temporary vectors.
 Gaussian inputs survive only this bounded physical wave. The next phase
 accumulates existing template corners and calculates original-cell endpoint
 accounts/direct fallbacks. The main thread merges in batch order via
-`EmissionProducts.merge()`, including ordered binary combination of the sparse
+`EmissionProducts.merge()`, including ordered indexed addition of the compact
 corner sums. The z source merges each slab before its next read; the native
 source also merges each completed wave immediately. Final expansion runs once
 after the last wave.
@@ -834,7 +834,7 @@ The retained reference methods keep the original serial/parallel batch helpers.
 whole Gaussian-wave wall time including independent analytic accounts and
 scheduling. The sum of overlapping worker call times is a diagnostic, not wall
 time. Timing lists are summarized and cleared after each completed wave.
-Corner-store initialization, main binary merging and final expansion have
+Corner-array initialization, main indexed addition and final convolution have
 separate clocks. `gaussian_total_seconds_including_corner_store` includes these
 snapshot-wide costs; per-wave deposit time alone is not the complete Gaussian
 cost. `final_corner_expansion_pending` remains true until finalization, and

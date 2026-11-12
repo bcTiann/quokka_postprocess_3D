@@ -1,9 +1,9 @@
 # Repository directories and reading order
 
 The Python production workflow defaults to `direct-template`: original cells
-locate four preintegrated fractional-mean/log-sigma templates. Standard SciPy CSR
-matrices sum their weighted luminosities by identical template row and integer
-shift, then expand each occupied position once. No new parameter grid is created. The default `field_source: native-columns` reads original full-z tiles
+locate four preintegrated fractional-mean/log-sigma templates. Standard SciPy
+sparse products combine repeated corners within a batch; profile-major NumPy
+arrays accumulate those sums, and direct row convolutions produce the spectrum. No new parameter grid is created. The default `field_source: native-columns` reads original full-z tiles
 into bounded RAM without writing a converted field copy. Snapshot metadata,
 physical inputs, original reads, RAM rearrangement and all numerical work remain
 timed; only Gaussian preparation is excluded. Process calculates/saves before invoking plot by
@@ -114,14 +114,15 @@ installed implementations and CPU dispatch. Plot reads only prepared arrays.
    retains direct bounded-block integration for standalone comparisons and
    valid out-of-coverage widths. `template_corners.py` locates the unchanged four
    corners, and `corner_store.py` sums their luminosities using standard SciPy
-   CSR matrices. The main accumulator merges bounded subtotals and expands each
-   occupied template-row/integer-shift position once, inside process timing.
+   CSR products within each batch. The main accumulator uses row-specific NumPy
+   shift arrays and ordinary indexed addition. Direct `np.convolve` expands each
+   occupied template row, inside process timing.
    Default sigma coverage is [1e-5,1024] km/s, with natural-log
    step 1/32; valid uncovered widths use direct stable bin integration. Mean
    integer shifts reuse the phase table. `template_coverage.py` combines observed
    extrema and per-account fallback counts/light in original worker merge order.
    Original-cell analytic endpoint accounts remain separate from queried
-   template-corner support. Sparse corner accounts do not retain original cells
+   template-corner support. Corner accounts do not retain original cells
    and do not introduce an additional scientific interpolation approximation.
    `layered_spectra.py` and `layered_engine.py` retain the previous sparse-node
    method as an explicit comparison. `integrated_spectra.py` and
