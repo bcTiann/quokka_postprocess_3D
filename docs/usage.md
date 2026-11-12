@@ -517,7 +517,7 @@ No completed product partials wait across native tiles.
 These phases do not multiply into a nested worker count.
 The explicit node methods keep their own supported merge/expansion teams.
 
-All fifteen extensions build with normal setuptools and pinned native-build
+All thirteen extensions build with normal setuptools and pinned native-build
 dependencies. Linux reference merge/expansion kernels enable OpenMP only after
 the compiler links its runtime; unsupported explicit teams raise. The default
 template kernel has a portable C path and optional ARM SIMD instructions, with

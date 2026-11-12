@@ -55,7 +55,7 @@ uv sync --python "$(command -v python)"
 ```
 
 uv creates `.venv` and installs the checkout in editable mode. No activation,
-`PYTHONPATH` or manual `pip install` is needed. Building yt and the fifteen native
+`PYTHONPATH` or manual `pip install` is needed. Building yt and the thirteen native
 processing kernels needs Git and C/C++ build tools. uv installs the pinned Cython
 and SciPy build dependencies automatically. Keep a GCC/Clang-compatible C
 compiler available when rebuilding after a source update; `uv sync` tracks the

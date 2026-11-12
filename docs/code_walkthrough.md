@@ -79,13 +79,14 @@ automatically installs the checkout in editable mode and registers commands
 from `[project.scripts]` in `pyproject.toml`. Process and plot call the existing
 `process_snapshot.main()` and `plot_emission_results.main()` functions directly.
 No activation, import-path export, or manual editable installation is needed.
-Sync builds fifteen native extensions through `setup.py` and `build_support.py`,
+Sync builds thirteen native extensions through `setup.py` and `build_support.py`,
 using the pinned Cython/NumPy/SciPy build dependencies and local C compiler.
 The inventory includes the retained 1D reference kernel, 2D deposition/merging/
 prefix expansion/spectral preparation and retained A reference kernels, Cloudy/DESPOTIC interpolation, fused derived
-fields, paired-field checking and compact images. The build disables fast-math
-and implicit FMA contraction. On Linux it verifies the active compiler can link
-OpenMP before enabling it for independent-row merge and channel expansion;
+fields. Paired emissivity/temperature validation and compact image sums use
+NumPy. The build disables fast-math and implicit FMA contraction. On Linux it
+verifies the active compiler can link OpenMP before enabling it for
+independent-row merge and channel expansion;
 macOS builds those kernels serially. Runtime checks verify actual team sizes:
 the default template kernel uses one compiled integration thread per batch and
 one ordered main profile merge. The explicit node methods keep their own native
@@ -650,10 +651,16 @@ products.phases.add_batch(cells=cells, emission=emission)
 products.record_batch(cells=cells, emission=emission)
 ```
 
-Images read each named line and select its available cell positions. Spectra
-group lines with identical selections, then native preparation packs their
-original fields directly into the cold/hot branch matrices used by width
-groups. These temporary arrays exist only while adding that batch. Independent cell sums check image and spectrum
+Images read each named line and select its available cell positions.
+[`CompactImageAccumulator`](../src/quokka2s/products/compact_images.py) maps each
+cell to a local z-column ID, then uses `np.bincount` to sum `epsilon * volume`
+for that line and dust state. Only the touched columns are retained. Unique
+pixel IDs allow ordinary NumPy indexed addition into the main image, without
+a custom compiled image kernel. This also supports partial first/last columns.
+Spectra group lines with identical selections and thermal widths. Default
+template preparation writes original-cell mu, sigma and luminosity directly
+into owned batch queues. Explicit node references retain their temporary branch
+matrices only while adding a batch. Independent cell sums check image and spectrum
 luminosities using each line's own selection. Saved image/profile axes and
 line names are unchanged; `cell_counts_by_regime` has shape `(Nline, 2)`.
 

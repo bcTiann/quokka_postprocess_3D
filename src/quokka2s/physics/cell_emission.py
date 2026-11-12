@@ -5,7 +5,6 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from quokka2s.physics._emission_fields import check_paired_fields
 from quokka2s.despotic.cell_fields import DespoticCellFields, DespoticCellReader
 from quokka2s.cloudy.cell_fields import CloudyCellFields, CloudyCellReader
 from quokka2s.physics.line_emissivity import (
@@ -476,25 +475,7 @@ class CellEmissionCalculator:
         Returns None; checks nonnegative available epsilon and positive matching T.
         Missing positions remain NaN, and physical zeros remain available.
         """
-        default_error_policy = {
-            "divide": "warn",
-            "over": "warn",
-            "under": "ignore",
-            "invalid": "warn",
-        }
-        use_native_validation = np.geterr() == default_error_policy
         for line in lines.values():
-            emissivity = line.emissivity_erg_s_cm3
-            temperature = line.temperature_K
-            if (
-                use_native_validation
-                and emissivity.ndim == 1
-                and temperature.shape == emissivity.shape
-                and emissivity.dtype == np.float64
-                and temperature.dtype == np.float64
-            ):
-                check_paired_fields(emissivity, temperature)
-                continue
             available_emissivity = ~np.isnan(line.emissivity_erg_s_cm3)
             check_field_values(
                 'Volume emissivity',

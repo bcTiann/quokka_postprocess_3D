@@ -33,7 +33,7 @@ uv sync
 
 uv creates `.venv` and installs this checkout in editable mode. No activation,
 `PYTHONPATH` or manual `pip install` is needed. The locked environment uses
-Python 3.11. Building yt and the fifteen native processing kernels needs Git and C/C++
+Python 3.11. Building yt and the thirteen native processing kernels needs Git and C/C++
 build tools. uv installs the pinned build dependencies automatically; no manual
 Cython installation or compilation command is needed. Both process and plot
 dependencies are installed by default. `uv run` checks the environment

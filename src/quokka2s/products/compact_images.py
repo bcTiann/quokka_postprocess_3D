@@ -1,4 +1,4 @@
-"""Use compact image increments only for histogram worker products.
+"""Use NumPy to accumulate compact image increments for worker products.
 
 The main image accumulator and its saved products remain unchanged. Each
 worker owns only the columns touched by its one contiguous input batch.
@@ -9,8 +9,6 @@ from __future__ import annotations
 import time
 
 import numpy as np
-
-from ._image_columns import accumulate_line_columns, merge_column_sums
 
 
 def empty_statistics():
@@ -26,7 +24,7 @@ def empty_statistics():
 
 
 class CompactImageAccumulator:
-    """Store (2, line_count, touched_columns) sequential sums for one batch.
+    """Store (2, line_count, touched_columns) luminosity sums for one batch.
 
     Geometry matches the original dense accumulator. A batch can start/end
     inside a z column, cross y/x boundaries, or cover a narrower y tile.
@@ -66,6 +64,9 @@ class CompactImageAccumulator:
             raise ValueError("Image batch y columns lie outside the processing region")
         self.pixel_ids = np.ascontiguousarray(local_x * self.native_xy_shape[1] + local_y)
         self.column_sums = np.zeros((2, len(self.line_keys), column_count), dtype=np.float64)
+        # All z cells in one sightline share a compact column ID. Include the
+        # first z offset so batches can start or end inside a column.
+        cell_columns = (batch_start % depth + np.arange(count, dtype=np.int64)) // depth
         for line_index, line_key in enumerate(self.line_keys):
             line = emission.lines[line_key]
             intrinsic = line.intrinsic_emissivity_erg_s_cm3
@@ -76,16 +77,15 @@ class CompactImageAccumulator:
                     raise ValueError("Compact images require contiguous float64 line arrays")
             if missing.shape != (count,) or missing.dtype != np.dtype(np.bool_) or not missing.flags.c_contiguous:
                 raise ValueError("Compact images require a contiguous per-line Boolean missing mask")
-            accumulate_line_columns(
-                intrinsic=intrinsic,
-                attenuated=attenuated,
-                missing=missing.view(np.uint8),
-                first_z=batch_start % depth,
-                column_depth=depth,
-                cell_volume_cm3=cells.cell_volume_cm3,
-                column_sums=self.column_sums,
-                line_index=line_index,
-            )
+            retained_cells = np.flatnonzero(~missing)
+            retained_columns = cell_columns[retained_cells]
+            for dust_index, emissivity in enumerate((intrinsic, attenuated)):
+                luminosity = emissivity[retained_cells] * cells.cell_volume_cm3
+                self.column_sums[dust_index, line_index] = np.bincount(
+                    retained_columns,
+                    weights=luminosity,
+                    minlength=column_count,
+                )
         self._added = True
         self.compact_statistics.update({
             "add_batch_calls": 1,
@@ -104,11 +104,16 @@ class CompactImageAccumulator:
         if self.line_keys != target.line_keys:
             raise ValueError("Cannot merge images with different line order")
         began = time.perf_counter()
-        merge_column_sums(
-            dense_images=target.native_images.reshape(2, len(self.line_keys), -1),
-            pixel_ids=self.pixel_ids,
-            column_sums=self.column_sums,
-        )
+        dense_images = target.native_images.reshape(2, len(self.line_keys), -1)
+        if self.pixel_ids.ndim != 1 or self.column_sums.shape != (2, len(self.line_keys), self.pixel_ids.size):
+            raise ValueError("Pixel IDs and compact image shapes differ")
+        if np.any(self.pixel_ids < 0) or np.any(self.pixel_ids >= dense_images.shape[2]):
+            raise ValueError("A compact pixel ID lies outside the dense image")
+        if np.any(self.pixel_ids[1:] <= self.pixel_ids[:-1]):
+            raise ValueError("Compact pixel IDs must be increasing and unique")
+        # Each pixel appears once in this batch, so indexed addition needs no
+        # repeated-index accumulator or full-image temporary.
+        dense_images[:, :, self.pixel_ids] += self.column_sums
         if not hasattr(target, "compact_statistics"):
             target.compact_statistics = empty_statistics()
         for name, value in self.compact_statistics.items():

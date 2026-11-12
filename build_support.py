@@ -18,8 +18,6 @@ MODULES = (
     "quokka2s.cloudy._trilinear",
     "quokka2s.despotic._linear",
     "quokka2s.physics._slab_derive",
-    "quokka2s.physics._emission_fields",
-    "quokka2s.products._image_columns",
     "quokka2s.products.gaussian._spectral_fields",
     "quokka2s.products.gaussian._sparse_expand",
     "quokka2s.products.gaussian._prefix_expand",

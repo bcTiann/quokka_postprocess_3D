@@ -41,11 +41,12 @@ standalone wheel with embedded input data. The default dependencies support
 both process and plot; the `tables` extra adds the optional chemistry solver
 and table-building tools.
 
-The package builds fifteen native extensions with normal `setup.py` and shared
+The package builds thirteen native extensions with normal `setup.py` and shared
 `build_support.py`, using pinned Cython/NumPy/SciPy build dependencies. The native
 inventory covers legacy 1D reference integration, 2D deposition/row selection/
 merge/prefix integration/spectral preparation and retained A reference kernels, Cloudy/DESPOTIC interpolation,
-fused slab derivation, paired-field checking and compact images. `uv` cache
+and fused slab derivation. Field validation and compact image accumulation use
+NumPy, including `np.bincount` for line-of-sight sums. `uv` cache
 keys track these sources and build declarations. Generated C and binaries are
 local build products. On Linux the active compiler must pass an OpenMP link
 probe before merge/expansion receive those flags; macOS uses serial kernels.
