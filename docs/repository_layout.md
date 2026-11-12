@@ -41,19 +41,13 @@ standalone wheel with embedded input data. The default dependencies support
 both process and plot; the `tables` extra adds the optional chemistry solver
 and table-building tools.
 
-The package builds thirteen native extensions with normal `setup.py` and shared
-`build_support.py`, using pinned Cython/NumPy/SciPy build dependencies. The native
-inventory covers legacy 1D reference integration, 2D deposition/row selection/
-merge/prefix integration/spectral preparation and retained A reference kernels, Cloudy/DESPOTIC interpolation,
-and fused slab derivation. Field validation and compact image accumulation use
-NumPy, including `np.bincount` for line-of-sight sums. `uv` cache
-keys track these sources and build declarations. Generated C and binaries are
-local build products. On Linux the active compiler must pass an OpenMP link
-probe before merge/expansion receive those flags; macOS uses serial kernels.
-The default template kernel has one compiled integration thread per batch,
-a portable C path and optional ARM SIMD. One main thread merges small profiles
-in batch order. Retained node comparisons keep their own native thread rules.
-Plot does not import these processing extensions to draw saved arrays.
+The package contains Python calculations built from NumPy/SciPy operations,
+without custom Cython extensions or compiler scripts. This includes physical
+table interpolation, derived fields, direct templates and the retained Gaussian
+comparison methods. `np.bincount` accumulates compact line-of-sight images.
+Independent batches and reader tasks use Python thread pools; the main thread
+merges small profiles in batch order. Numerical libraries retain their own
+installed implementations and CPU dispatch. Plot reads only prepared arrays.
 
 ## Where each kind of file belongs
 
@@ -95,7 +89,7 @@ Plot does not import these processing extensions to draw saved arrays.
    Its [bounded_z_reader.py](../src/quokka2s/bounded_z_reader.py) eagerly reads
    the current x slab plus x neighbours, full native y and full z, with five
    file streams. Its 32-thread pool then derives selected complete columns via
-   [physics/_slab_derive.pyx](../src/quokka2s/physics/_slab_derive.pyx), filling six
+   [physics/slab_derive.py](../src/quokka2s/physics/slab_derive.py), filling six
    core arrays and releasing all raw slab fields before batches begin. The
    eager z path uses neither mmap nor multi-slab grouped field retention.
    [snapshot_reader.py](../src/quokka2s/snapshot_reader.py) dispatches this explicit path
@@ -109,7 +103,7 @@ Plot does not import these processing extensions to draw saved arrays.
    [template_spectra.py](../src/quokka2s/products/gaussian/template_spectra.py)
    reuses the established line availability/width grouping. Direct queues
    are filled from source emissivities without full branch matrices, and
-   stable native two-pass full moments reuse their final luminosity rows.
+   stable NumPy two-pass full moments reuse their final luminosity rows.
    It retains original-cell mu/sigma/luminosity arrays only for one bounded
    worker wave. [template_batches.py](../src/quokka2s/products/gaussian/template_batches.py)
    finishes physical preparation and Gaussian queries in bounded waves. The
@@ -117,9 +111,9 @@ Plot does not import these processing extensions to draw saved arrays.
    across tiles. [template_table.py](../src/quokka2s/products/gaussian/template_table.py)
    prepares fractional-mean/log-sigma integrated-bin templates outside process
    timing; [template_engine.py](../src/quokka2s/products/gaussian/template_engine.py)
-   calls [_template_integrate.pyx](../src/quokka2s/products/gaussian/_template_integrate.pyx)
-   to interpolate each original cell and directly add its luminosity-weighted
-   probabilities. Default sigma coverage is [1e-5,1024] km/s, with natural-log
+   evaluates bounded NumPy blocks of original-cell template probabilities and
+   reduces their luminosity-weighted contributions into small profiles.
+   Default sigma coverage is [1e-5,1024] km/s, with natural-log
    step 1/32; valid uncovered widths use direct stable bin integration. Mean
    integer shifts reuse the phase table. `template_coverage.py` combines observed
    extrema and per-account fallback counts/light in original worker merge order.
@@ -127,7 +121,7 @@ Plot does not import these processing extensions to draw saved arrays.
    template-corner support. No luminosity-node histogram is created.
    `layered_spectra.py` and `layered_engine.py` retain the previous sparse-node
    method as an explicit comparison. `integrated_spectra.py` and
-   `_gaussian_fractions.pyx` retain explicit exact/1D-LUT references.
+   `channel_fractions.py` retain explicit exact/1D-LUT references.
 6. [plot_emission_results.py](../src/quokka2s/plot_emission_results.py): draw the
    saved products selected by the same [configuration](../configs/emission.yaml).
 
@@ -212,7 +206,7 @@ saved unless `--no-plot` is supplied. `process_reuse.py` verifies status/report
 completion, exact configuration and input/source identity, NPZ CRCs and required
 product fields before reusing complete results. It records snapshot file
 metadata without hashing payload bytes, and hashes the three lookup/dust inputs
-and package Python/Cython/native sources and the numerical runtime/CPU dispatch. Explicit prepared caches also bind their
+and package Python sources and the numerical runtime/CPU dispatch. Explicit prepared caches also bind their
 manifest, field file states, original source and optional metadata-sidecar SHA.
 The identity is captured before calculation
 and rechecked before saving, then stored in the report. A selected region is

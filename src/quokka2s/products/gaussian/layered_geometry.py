@@ -7,7 +7,6 @@ import math
 import numpy as np
 
 from ..line_velocity_moments import MINIMUM_GAUSSIAN_WIDTH_KMS
-from . import _layered_deposit as native
 
 
 @dataclass(frozen=True)
@@ -34,31 +33,41 @@ class LayeredGridSpec:
             raise ValueError("Require positive mu-spacing ratio and logarithmic sigma step")
         if not math.isfinite(self.mu_spacing_ratio * self.sigma_floor):
             raise ValueError("The first layered mean spacing must be finite")
-        if self.mu_spacing_ratio * self.sigma_floor <= 0.0:
+        minimum_spacing = self.mu_spacing_ratio * self.sigma_floor
+        if minimum_spacing <= 0.0:
             raise ValueError("The first layered mean spacing must remain representable")
+        if self.mu_anchor + minimum_spacing <= self.mu_anchor or self.mu_anchor - minimum_spacing >= self.mu_anchor:
+            raise ValueError("The minimum mu nodes are indistinguishable at this anchor")
+        if np.log(self.sigma_floor) + self.log_sigma_step <= np.log(self.sigma_floor):
+            raise ValueError("Adjacent logarithmic sigma layers are indistinguishable")
 
-    def native_parameters(self):
-        """Return only the scalar rules consumed by compiled coordinate lookup."""
-        return {
-            "mu_spacing_ratio": float(self.mu_spacing_ratio),
-            "log_sigma_step": float(self.log_sigma_step),
-            "sigma_floor": float(self.sigma_floor),
-            "mu_anchor": float(self.mu_anchor),
-        }
+    def sigma_values(self, layers):
+        """Restore positive layer widths using the same NumPy exp rule everywhere."""
+        layers = np.asarray(layers, dtype=np.int64)
+        if np.any(layers < 0):
+            raise ValueError("Sigma layer IDs must be nonnegative")
+        with np.errstate(over="ignore", invalid="ignore", under="ignore"):
+            values = np.exp(np.log(self.sigma_floor) + layers * self.log_sigma_step)
+        values = np.where(layers == 0, self.sigma_floor, values)
+        if not np.isfinite(values).all() or np.any(values <= 0.0):
+            raise ValueError("A logical sigma layer is unrepresentable")
+        return values
 
     def coordinates(self, keys):
-        """Restore means and widths [U] from integer keys [U,2], in km/s.
-
-        The same compiled layer routine is used during deposition, avoiding a
-        different exp implementation when final node parameters are restored.
-        """
+        """Restore means/widths [U] from lexicographic integer keys [U,2]."""
         keys = np.asarray(keys)
-        if keys.ndim != 2 or keys.shape[1] != 2 or keys.dtype != np.dtype(np.int64):
+        if keys.ndim != 2 or keys.shape[1] != 2 or keys.dtype != np.int64:
             raise ValueError("Layered keys must be an int64 array with shape (node count,2)")
-        return native.coordinates(
-            keys=np.ascontiguousarray(keys),
-            **self.native_parameters(),
-        )
+        if np.any(keys[:, 1] == np.iinfo(np.int64).max):
+            raise ValueError("A logical mean index exceeds integer capacity")
+        sigmas = self.sigma_values(keys[:, 0])
+        spacing = self.mu_spacing_ratio * sigmas
+        with np.errstate(over="ignore", invalid="ignore"):
+            centers = self.mu_anchor + keys[:, 1] * spacing
+            right = self.mu_anchor + (keys[:, 1] + 1) * spacing
+        if not np.isfinite(spacing).all() or np.any(spacing <= 0.0) or not np.isfinite(centers).all() or not np.isfinite(right).all() or np.any(right <= centers):
+            raise ValueError("A logical node coordinate is unrepresentable or outside integer capacity")
+        return np.ascontiguousarray(centers), np.ascontiguousarray(sigmas)
 
 
 @dataclass(frozen=True)

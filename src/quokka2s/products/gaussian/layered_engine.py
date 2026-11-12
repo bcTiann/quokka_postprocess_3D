@@ -2,13 +2,11 @@
 from __future__ import annotations
 
 from dataclasses import asdict
-import threading
 from time import perf_counter
 
 import numpy as np
 
-from . import _layered_deposit as layered_native
-from . import _prefix_expand as prefix_native
+from .layered_nodes import deposit_layered
 from .intervals import interval_probability
 from .layered_geometry import LayeredGridSpec, LayeredIncrement
 from .layered_gate import (
@@ -18,16 +16,16 @@ from .layered_gate import (
     validate_gate,
 )
 from .prefix_arithmetic import table_signature
-from .prefix_tables import PrefixGaussianTable
+from .prefix_tables import PrefixGaussianTable, select_expansion_workers
 from ..velocity_grid import velocity_channel_edges_kms
 
 
 class LayeredHistogramEngine:
     """Accumulate only visited integer nodes, then expand their luminosities.
 
-    One immutable engine is shared by batch workers. Each worker owns a native
-    workspace through thread-local storage. The main spectral accumulator owns
-    its separate SparseNodeStore. Neither structure allocates by logical extent.
+    One immutable geometry is shared by batch workers. Each deposit owns its
+    temporary NumPy arrays. The main accumulator owns a sorted SparseNodeStore;
+    neither structure allocates by logical extent.
     """
 
     coordinate_rule = "sigma-scaled-layered"
@@ -36,20 +34,16 @@ class LayeredHistogramEngine:
     def __init__(self, grid, *, table, gate_result, threads=0):
         self.grid = grid
         self.lookup_tables = table
-        self.expansion_threads = prefix_native.select_threads(threads)
+        self.expansion_threads = select_expansion_workers(threads)
         self.portable_backend = validate_gate(
             gate_result,
             grid,
             table,
             threads=self.expansion_threads,
         )
-        self.match_numpy_fma = self.portable_backend == "prefix_fma"
         self.gaussian_cutoff_sigma = 5.0
         self.template_scratch_bytes = TEMPLATE_SCRATCH_BYTES
         self._gate_table_signature = gate_result["table_signature"]
-        self._thread_local = threading.local()
-        self._workspace_records = []
-        self._workspace_registration_lock = threading.Lock()
         self.retained_nodes = None
         self.retained_keys = None
         self.retained_weights = None
@@ -60,7 +54,7 @@ class LayeredHistogramEngine:
             "occupied_rows": 0,
             "coordinate_reconstruction_seconds": 0.0,
             "independent_window_accounting_seconds": 0.0,
-            "fused_lookup_contraction_seconds": 0.0,
+            "lookup_and_contraction_seconds": 0.0,
             "support_bins_visited": 0,
             "nonzero_template_coefficients": 0,
             "nonzero_product_updates": 0,
@@ -70,33 +64,15 @@ class LayeredHistogramEngine:
             "renormalized": False,
             "coordinate_rule": RULE,
             "coordinate_parameters": asdict(grid),
-            "template_layout": "One standard-normal prefix table; shared boundaries; no node-by-channel matrix",
-            "contraction": "Lexicographic layer/mu nodes; original-size blocks; ascending profiles per channel",
+            "template_layout": "One prefix table and bounded node-by-channel coefficients",
+            "contraction": "Lexicographic layer/mu nodes; bounded NumPy einsum ki,ip->kp, optimize=False",
             "histogram_retention": "Final expansion retains only sorted occupied logical keys and luminosities",
             "portable_backend": self.portable_backend,
             "portable_gate": gate_result,
-            "native_channel_threads": self.expansion_threads,
-            "native_channel_threading": prefix_native.kernel_info(self.expansion_threads),
+            "implementation": "numpy",
+            "workers": self.expansion_threads,
             "lookup_table": table.info(),
         }
-
-    def _workspace(self):
-        """Return this worker's bounded compiled hash/compact-luminosity scratch."""
-        workspace = getattr(self._thread_local, "workspace", None)
-        if workspace is None:
-            workspace = layered_native.Workspace(
-                max_profiles=12,
-                **self.grid.native_parameters(),
-            )
-            self._thread_local.workspace = workspace
-            # Retain numeric records only. Strong workspace references here
-            # would unnecessarily keep all worker scratch alive after the
-            # fixed executor has closed and before final expansion begins.
-            record = workspace.statistics()
-            with self._workspace_registration_lock:
-                self._thread_local.record_index = len(self._workspace_records)
-                self._workspace_records.append(record)
-        return workspace
 
     def deposit(self, centers, sigmas, luminosity):
         """Return owned sorted logical keys [U,2] and luminosities [U,P]."""
@@ -109,9 +85,7 @@ class LayeredHistogramEngine:
             raise ValueError("Layered luminosity must have shape (cell count,profile count)")
         if luminosity.shape[1] < 1 or luminosity.shape[1] > 12:
             raise ValueError("The adopted width groups support one to twelve luminosity accounts")
-        workspace = self._workspace()
-        keys, weights = workspace.deposit(centers, sigmas, luminosity)
-        self._workspace_records[self._thread_local.record_index] = workspace.statistics()
+        keys, weights = deposit_layered(self.grid, centers, sigmas, luminosity)
         if not np.isfinite(weights).all():
             raise FloatingPointError("Layered histogram luminosity accumulation overflowed")
         return LayeredIncrement(
@@ -121,14 +95,11 @@ class LayeredHistogramEngine:
         )
 
     def worker_statistics(self):
-        """Describe allocated worker scratch after all submitted batches finish."""
-        rows = list(self._workspace_records)
+        """No persistent worker hash/workspace survives NumPy deposition."""
         return {
-            "worker_workspaces": len(rows),
-            "all_worker_allocated_bytes": sum(row["allocated_bytes"] for row in rows),
-            "largest_worker_allocated_bytes": max((row["allocated_bytes"] for row in rows), default=0),
-            "workspaces": rows,
-            "scope": "Last retained capacity per reused worker workspace; not current RSS or transient resize/return-copy peak",
+            "implementation": "numpy",
+            "worker_workspaces": 0, "persistent_worker_workspace_bytes": 0,
+            "scope": "Temporary array scatter per batch; not a measurement of peak RSS",
         }
 
     def describe_grids(self):
@@ -178,7 +149,7 @@ class LayeredHistogramEngine:
         self.clipped_window_luminosity = np.zeros(40, dtype=np.float64)
         widths = np.diff(edges)
         output = np.zeros((widths.size, 40), dtype=np.float64)
-        bytes_per_node = (edges.size + widths.size) * 8
+        bytes_per_node = (8 * edges.size + widths.size) * 8
         block_nodes = self.template_scratch_bytes // bytes_per_node
         if block_nodes < 1:
             raise ValueError("The expansion block budget must hold at least one logical node")
@@ -195,10 +166,9 @@ class LayeredHistogramEngine:
                 sigmas,
                 weights[start:stop],
                 contribution,
-                fma=self.match_numpy_fma,
                 threads=self.expansion_threads,
             )
-            self.expansion_statistics["fused_lookup_contraction_seconds"] += perf_counter() - began
+            self.expansion_statistics["lookup_and_contraction_seconds"] += perf_counter() - began
             for name, value in counts.items():
                 self.expansion_statistics[name] += value
             if not np.isfinite(contribution).all():

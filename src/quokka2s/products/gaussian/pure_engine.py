@@ -11,8 +11,7 @@ from dataclasses import replace
 import numpy as np
 
 from .geometry import GridSpec, SparseIncrement
-from .band_deposit import GaussianBandEngine, engine_axis_indexers, get_indexed_workspace
-from ._row_select import select_original_rows
+from .band_deposit import GaussianBandEngine
 
 
 class GaussianHistogramEngine:
@@ -36,72 +35,6 @@ class GaussianHistogramEngine:
         self.node_count = sum(engine.node_count for engine in self.engines)
 
     def deposit(self, centers, sigmas, luminosity):
-        """Return the original sorted sparse increment with fewer temporary copies."""
-        centers = np.asarray(centers, dtype=np.float64)
-        sigmas = np.asarray(sigmas, dtype=np.float64)
-        luminosity = np.asarray(luminosity, dtype=np.float64)
-        if centers.ndim != 1 or sigmas.shape != centers.shape:
-            raise ValueError('Gaussian centers and sigmas must be equal one-dimensional arrays')
-        if luminosity.ndim != 2 or luminosity.shape[0] != centers.size:
-            raise ValueError('Luminosity must have shape (cell_count, profile_count)')
-        profile_count = luminosity.shape[1]
-        if profile_count > 12:
-            return self._deposit_checked(centers, sigmas, luminosity)
-        grid = self.grid
-        narrow_rows, broad_rows, invalid = select_original_rows(
-            centers=centers,
-            sigmas=sigmas,
-            luminosity=luminosity,
-            mu_min=grid.mu_min,
-            mu_max=grid.mu_max,
-            sigma_min=grid.sigma_min,
-            sigma_max=grid.sigma_max,
-            threshold=grid.narrow_sigma_threshold,
-        )
-        if invalid:
-            # Invalid input is rare. Keep the original validator authoritative,
-            # including exception wording and its no-fallback coverage policy.
-            return self._deposit_checked(centers, sigmas, luminosity)
-        nodes = []
-        weights = []
-        for engine, offset, rows in zip(self.engines, self.offsets, (narrow_rows, broad_rows)):
-            if rows.size == 0:
-                continue
-            workspace = get_indexed_workspace(
-                engine.node_count,
-                max_profiles=12,
-                indexers=engine_axis_indexers(engine),
-            )
-            band_nodes, band_weights = workspace.scatter_parameters(
-                rows=rows,
-                centers=centers[rows],
-                log_sigmas=np.log(sigmas[rows]),
-                mu_axis=engine.mu_nodes,
-                log_sigma_axis=engine.log_sigma_nodes,
-                luminosity=luminosity,
-            )
-            if not np.isfinite(band_weights).all():
-                raise FloatingPointError('Histogram luminosity accumulation overflowed')
-            # Scatter returns owned arrays. A single occupied band needs neither
-            # concatenate nor the offset-zero node copy of the old wrapper.
-            nodes.append(band_nodes + offset if offset else band_nodes)
-            weights.append(band_weights)
-        fallback_mask = np.zeros(centers.size, dtype=bool)
-        if not nodes:
-            return SparseIncrement(
-                nodes=np.empty(0, dtype=np.int64),
-                weights=np.empty((0, profile_count), dtype=np.float64),
-                fallback_mask=fallback_mask,
-            )
-        if len(nodes) == 1:
-            return SparseIncrement(nodes=nodes[0], weights=weights[0], fallback_mask=fallback_mask)
-        return SparseIncrement(
-            nodes=np.concatenate(nodes),
-            weights=np.concatenate(weights, axis=0),
-            fallback_mask=fallback_mask,
-        )
-
-    def _deposit_checked(self, centers, sigmas, luminosity):
         """Return sorted owned increments; each active input enters one grid."""
         centers = np.asarray(centers, dtype=np.float64)
         sigmas = np.asarray(sigmas, dtype=np.float64)

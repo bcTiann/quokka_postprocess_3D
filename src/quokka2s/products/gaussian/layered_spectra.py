@@ -6,7 +6,7 @@ from time import perf_counter
 
 import numpy as np
 
-from . import _layered_deposit as native
+from .layered_nodes import SparseNodeStore
 from .accounting import add_cutoff_accounts, update_cutoff_report
 from .spectra import HistogramIntegratedSpectra
 from ..integrated_spectra import IntegratedSpectra
@@ -32,7 +32,7 @@ class LayeredIntegratedSpectra(HistogramIntegratedSpectra):
         self.profile_count = 2 * len(self.line_keys) * 2
         if self.profile_count != 40:
             raise ValueError("The layered process retains the adopted ten-line 40-account layout")
-        self._store = None if batch_partial else native.SparseNodeStore(profile_count=self.profile_count)
+        self._store = None if batch_partial else SparseNodeStore(profile_count=self.profile_count)
         self._sparse_updates = []
         self._histogram = None
         self._finalized = False
@@ -56,7 +56,7 @@ class LayeredIntegratedSpectra(HistogramIntegratedSpectra):
             "merge_calls": 0,
             "increment_rows": 0,
             "coordinate_keys": "signed int64 (sigma_layer_id,mu_index)",
-            "storage": "compiled hash index and contiguous occupied-node luminosity rows",
+            "storage": "NumPy sorted integer keys and contiguous occupied-node luminosity rows",
         }
 
     def _merge_sparse(self, profile_ids, nodes, weights):
@@ -116,8 +116,8 @@ class LayeredIntegratedSpectra(HistogramIntegratedSpectra):
             self.histogram_statistics["occupied_nodes"] = int(keys.shape[0])
             self.histogram_statistics["main_node_store"] = self._store.statistics()
             self.histogram_statistics["worker_node_stores"] = self.engine.worker_statistics()
-            # arrays() returns owned compact copies. Release the hash and its
-            # capacity buffers before allocating final integration scratch.
+            # arrays() returns owned compact copies. Release the main key and
+            # luminosity buffers before allocating final integration scratch.
             self._store = None
             began = perf_counter()
             expanded = self.engine.expand(keys, weights, self.velocity_edges_kms)
@@ -130,7 +130,7 @@ class LayeredIntegratedSpectra(HistogramIntegratedSpectra):
             dust_report["histogram_coordinate_rule"] = self.engine.coordinate_rule
             dust_report["template_contraction"] = self.engine.expansion_statistics["contraction"]
             dust_report["template_expansion_statistics"] = self.engine.expansion_statistics
-            dust_report["deposition_backend"] = "compiled layered corner-major scatter and sparse integer-key hash"
+            dust_report["deposition_backend"] = "NumPy layered corner-major np.add.at scatter and sorted integer keys"
             dust_report["merge_backend"] = self._merge_statistics
             dust_report["histogram_statistics"] = self.histogram_statistics
             dust_report["fallback"] = "None: all active rows use fixed layer coordinates; unrepresentable nodes raise"

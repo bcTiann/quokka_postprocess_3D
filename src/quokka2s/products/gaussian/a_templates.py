@@ -12,7 +12,6 @@ import time
 import numpy as np
 
 from .intervals import VelocityGrid, interval_probability, validate_inputs
-from ._a_templates import evaluate_into
 
 
 _BUILD_SCRATCH_BYTES = 32 * 1024**2
@@ -139,26 +138,64 @@ class MethodA:
             ids = np.empty(0, dtype=np.int64)
             self.last_evaluation_sigma_mode = "sigma_search_linear_actual_value"
         output = np.empty((mu.size, self.grid.K), dtype=np.float64, order="C")
+        chunk_size = min(chunk_size, max(1, _BUILD_SCRATCH_BYTES // (self.grid.K * 8 * 4)))
         for start in range(0, mu.size, chunk_size):
             stop = min(start + chunk_size, mu.size)
-            evaluate_into(
-                mu[start:stop],
-                sigma[start:stop],
-                self.sigma_nodes,
-                self.T,
-                output[start:stop],
-                self.grid.delta_v,
-                self.n_max,
-                self.R,
-                ids[start:stop] if has_sigma_id else ids,
-                has_sigma_id,
-            )
+            coordinate = mu[start:stop] / self.grid.delta_v
+            integer_mu = np.floor(coordinate).astype(np.int64)
+            fractional_coordinate = (coordinate - integer_mu) * self.R
+            fraction_lower = np.minimum(np.floor(fractional_coordinate).astype(np.int64), self.R)
+            fraction_upper = np.minimum(fraction_lower + 1, self.R)
+            mu_weight = fractional_coordinate - fraction_lower
+            exact_lower = coordinate == integer_mu + fraction_lower / self.R
+            exact_upper = coordinate == integer_mu + fraction_upper / self.R
+            fraction_lower = np.where(exact_upper, fraction_upper, fraction_lower)
+            fraction_upper = np.where(exact_lower, fraction_lower, fraction_upper)
+            mu_weight[exact_lower | exact_upper] = 0.0
+            if has_sigma_id:
+                sigma_lower = ids[start:stop]
+                sigma_upper = sigma_lower
+                sigma_weight = np.zeros(stop - start)
+            else:
+                sigma_upper = np.searchsorted(self.sigma_nodes, sigma[start:stop], side="left")
+                exact_sigma = self.sigma_nodes[sigma_upper] == sigma[start:stop]
+                sigma_lower = np.where(exact_sigma, sigma_upper, sigma_upper - 1)
+                sigma_weight = np.zeros(stop - start)
+                between = ~exact_sigma
+                sigma_weight[between] = (
+                    (sigma[start:stop][between] - self.sigma_nodes[sigma_lower[between]])
+                    / (self.sigma_nodes[sigma_upper[between]] - self.sigma_nodes[sigma_lower[between]])
+                )
+            channels = self.n_max - integer_mu[:, None] + np.arange(self.grid.K)
+            lower = self.T[sigma_lower[:, None], fraction_lower[:, None], channels]
+            interpolate_mu = fraction_lower != fraction_upper
+            if np.any(interpolate_mu):
+                upper = self.T[sigma_lower[interpolate_mu, None], fraction_upper[interpolate_mu, None], channels[interpolate_mu]]
+                lower[interpolate_mu] = (
+                    (1.0 - mu_weight[interpolate_mu, None]) * lower[interpolate_mu]
+                    + mu_weight[interpolate_mu, None] * upper
+                )
+            interpolate_sigma = sigma_lower != sigma_upper
+            if np.any(interpolate_sigma):
+                upper = self.T[sigma_upper[:, None], fraction_lower[:, None], channels]
+                if np.any(interpolate_mu):
+                    upper_mu = self.T[sigma_upper[interpolate_mu, None], fraction_upper[interpolate_mu, None], channels[interpolate_mu]]
+                    upper[interpolate_mu] = (
+                        (1.0 - mu_weight[interpolate_mu, None]) * upper[interpolate_mu]
+                        + mu_weight[interpolate_mu, None] * upper_mu
+                    )
+                lower[interpolate_sigma] = (
+                    (1.0 - sigma_weight[interpolate_sigma, None]) * lower[interpolate_sigma]
+                    + sigma_weight[interpolate_sigma, None] * upper[interpolate_sigma]
+                )
+            output[start:stop] = lower
         return output
 
     def info(self):
         """Return construction cost and exact owned persistent NumPy bytes."""
         return {
             "method": "A_fractional_mu_sigma_shift",
+            "implementation": "numpy",
             "build_seconds": float(self.build_seconds),
             "table_bytes": int(self.T.nbytes),
             "axis_bytes": int(self.sigma_nodes.nbytes),

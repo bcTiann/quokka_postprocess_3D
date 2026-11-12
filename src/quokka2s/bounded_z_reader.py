@@ -1,9 +1,9 @@
-"""Read bounded contiguous raw slabs before the unchanged fused column kernel.
+"""Read bounded contiguous raw slabs before NumPy full-column derivation.
 
 Five disk-backed NPY fields stay in original XYZ C order. Each slab eagerly
 reads native full-y rows for its core x cells and two periodic x neighbours.
-The original kernel sees a local x axis with one halo on each side; its scalar
-arithmetic, full z columns and native y-neighbour indexing are unchanged.
+NumPy sees a local x axis with one halo on each side. Unit conversion order,
+full z columns and native y-neighbour indexing retain the physical rules.
 """
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ import numpy as np
 
 from concurrent.futures import ThreadPoolExecutor
 
-from .physics._slab_derive import fill_columns
+from .physics.slab_derive import derive_bounded_columns, estimated_working_bytes
 from .native_snapshot_reader import NativeSnapshotReader
 from .native_snapshot_reader import NATIVE_FIELD_NAMES
 from .physics import settings
@@ -132,7 +132,15 @@ class BoundedEagerReader(NativeSnapshotReader):
         self.reader_threads = reader_threads
         self.pool = ThreadPoolExecutor(max_workers=reader_threads, thread_name_prefix='raw-reader')
         self.unit_stages = scalar_unit_stages(native_reader)
-        self.derivation_statistics = {'calls': 0, 'seconds': 0.0, 'cells': 0}
+        self.derivation_statistics = {
+            'calls': 0,
+            'seconds': 0.0,
+            'cells': 0,
+            'method': 'numpy-full-z',
+            'parallelism': 'ThreadPoolExecutor',
+            'maximum_numpy_working_bytes': 0,
+            'working_memory_scope': 'Conservative bounded NumPy blocks; not measured RSS',
+        }
         self.cache_directory = Path(cache_directory).resolve(strict=True)
         self.field_files = {}
         for name in NATIVE_FIELD_NAMES:
@@ -239,7 +247,15 @@ class BoundedEagerReader(NativeSnapshotReader):
             output = np.empty((6, *selected_shape), dtype=np.float64, order='C')
             column_count = selected_shape[0] * selected_shape[1]
             task_count = min(self.reader_threads, column_count)
-            scratch = np.empty((task_count, 2, nz), dtype=np.float64)
+            working_bytes = estimated_working_bytes(
+                column_count=column_count,
+                column_depth=nz,
+                threads=task_count,
+            )
+            self.derivation_statistics['maximum_numpy_working_bytes'] = max(
+                self.derivation_statistics['maximum_numpy_working_bytes'],
+                working_bytes,
+            )
             density_to_gas, gas_density_to_cgs, velocity_factors, shielding_to_cgs = self.unit_stages
             widths_cgs = tuple(float(width.to('cm').value) for width in self._cell_widths)
             dz_foreground = float(snapshot.cell_widths[2].to('cm').value)
@@ -248,30 +264,29 @@ class BoundedEagerReader(NativeSnapshotReader):
             def calculate_columns(task):
                 # x=1 is the compact core's first row. The raw array's first
                 # and last rows provide its halos; original y remains global.
-                return fill_columns(
-                    self.fields['gasDensity'],
-                    self.fields['temperature'],
-                    self.fields['x-GasMomentum'],
-                    self.fields['y-GasMomentum'],
-                    self.fields['z-GasMomentum'],
-                    output,
-                    scratch[task],
-                    velocity_factors,
-                    density_to_gas,
-                    gas_density_to_cgs,
-                    float(settings.X_H),
-                    float(HYDROGEN_MASS_G),
-                    widths_cgs[0],
-                    widths_cgs[1],
-                    widths_cgs[2],
-                    dz_foreground,
-                    dz_shielding,
-                    shielding_to_cgs,
-                    float(settings.SIMULATION_DVDR_MIN_S),
-                    1,
-                    y_start,
-                    task * column_count // task_count,
-                    (task + 1) * column_count // task_count,
+                return derive_bounded_columns(
+                    density_raw=self.fields['gasDensity'],
+                    temperature_raw=self.fields['temperature'],
+                    momentum_x=self.fields['x-GasMomentum'],
+                    momentum_y=self.fields['y-GasMomentum'],
+                    momentum_z=self.fields['z-GasMomentum'],
+                    output=output,
+                    velocity_factors=velocity_factors,
+                    density_to_gas=density_to_gas,
+                    gas_density_to_cgs=gas_density_to_cgs,
+                    hydrogen_fraction=float(settings.X_H),
+                    hydrogen_mass_g=float(HYDROGEN_MASS_G),
+                    dx_cm=widths_cgs[0],
+                    dy_cm=widths_cgs[1],
+                    dz_gradient_cm=widths_cgs[2],
+                    dz_foreground_cm=dz_foreground,
+                    dz_shielding_cm=dz_shielding,
+                    shielding_to_cgs=shielding_to_cgs,
+                    gradient_floor_s=float(settings.SIMULATION_DVDR_MIN_S),
+                    x_start=1,
+                    y_start=y_start,
+                    first_column=task * column_count // task_count,
+                    stop_column=(task + 1) * column_count // task_count,
                 )
 
             invalid_density_counts = list(self.pool.map(calculate_columns, range(task_count)))

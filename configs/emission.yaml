@@ -57,8 +57,7 @@ prepared_z_fields: null
 # Independent tasks within the single-snapshot reader and main accumulator.
 z_reader_threads: 32
 z_read_workers: 5
-# Null selects one ordered merge thread for direct-template or histogram-layered.
-# The explicit histogram-2d reference selects 4 with OpenMP, otherwise 1.
+# Null or 1 uses the ordered NumPy main merge. Independent batches use chunk_workers.
 histogram_merge_threads: null
 # The native-column source writes no copy. The explicit z source removes only
 # the temporary copy it creates, including after failure.

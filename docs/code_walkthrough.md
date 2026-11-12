@@ -79,20 +79,14 @@ automatically installs the checkout in editable mode and registers commands
 from `[project.scripts]` in `pyproject.toml`. Process and plot call the existing
 `process_snapshot.main()` and `plot_emission_results.main()` functions directly.
 No activation, import-path export, or manual editable installation is needed.
-Sync builds thirteen native extensions through `setup.py` and `build_support.py`,
-using the pinned Cython/NumPy/SciPy build dependencies and local C compiler.
-The inventory includes the retained 1D reference kernel, 2D deposition/merging/
-prefix expansion/spectral preparation and retained A reference kernels, Cloudy/DESPOTIC interpolation, fused derived
-fields. Paired emissivity/temperature validation and compact image sums use
-NumPy. The build disables fast-math and implicit FMA contraction. On Linux it
-verifies the active compiler can link OpenMP before enabling it for
-independent-row merge and channel expansion;
-macOS builds those kernels serially. Runtime checks verify actual team sizes:
-the default template kernel uses one compiled integration thread per batch and
-one ordered main profile merge. The explicit node methods keep their own native
-merge/expansion teams. Unsupported explicit teams raise. `uv` tracks native
-sources and build declarations; run `uv sync` after editing them. Generated C
-and native binaries are local build products.
+Project calculations are readable Python using NumPy/SciPy, without custom
+Cython extensions or a project compilation step. Physical interpolation,
+derived fields, direct Gaussian templates and retained comparison methods all
+use array operations. Independent reader and batch work uses Python thread
+pools. One main thread merges profiles in the configured input order.
+The editable installation sees Python source edits directly; use `uv sync`
+after changing dependencies or package settings. Numerical libraries retain
+their installed binary implementations and CPU dispatch.
 Plot reports the saved-results directory, each line being drawn, output paths,
 and the final file count and elapsed time; these messages do not alter products.
 The equivalent `uv run python -m quokka2s.process_snapshot` and
@@ -153,7 +147,7 @@ The package has five purpose-specific folders:
 |---|---|---|
 | Read settings | `load_process_configs()` | A fixed list of `ProcessSettings` records with YAML settings, command-line selection and resolved per-snapshot paths |
 | Reuse completed results | `process_reuse.reuse_completed_results()` | Complete, intact products with exact matching configuration and input/source identity, or a clear preserved-output error |
-| Prepare Gaussian tables | `products.gaussian.template_engine.prepare_template_engine()` | Integrated fractional-mean/log-sigma templates and an arithmetic check; before process |
+| Prepare Gaussian tables | `products.gaussian.template_engine.prepare_template_engine()` | Integrated fractional-mean/log-sigma templates and prepared-state validation; before process |
 | Open inputs | `processing_inputs.load_processing_inputs(config)` | Fresh/restored `snapshot` metadata and `emission_calculator`, inside process time |
 | Create output arrays | `EmissionProducts(...)` | Initially empty image, spectrum, and gas-phase accumulators |
 | Prepare field source | `processing_inputs.prepare_processing_snapshot()` | Original-file native-column reader by default; an explicit z source owns or validates its cache |
@@ -177,7 +171,7 @@ The single-record `load_process_config()` remains available for figure tools.
 fields. Regional products can be complete with `full_snapshot=False`; completion
 uses `processing_complete`. Identity records snapshot file paths/sizes/mtime_ns
 without hashing payloads, and hashes the three lookup/dust inputs plus package
-Python/Cython/native sources and the numerical runtime/CPU dispatch. A supplied field cache adds its manifest, file states,
+Python sources and the numerical runtime/CPU dispatch. A supplied field cache adds its manifest, file states,
 original-source identity and optional metadata-sidecar SHA. It is captured
 before calculation and rechecked before
 saving as additive report metadata. These table hashes govern result reuse,
@@ -367,7 +361,7 @@ The [bounded_z_reader.py](../src/quokka2s/bounded_z_reader.py) path then:
    Partial y selection reduces calculation/output but not these full-y reads.
 2. Wait for every field read and close its file before deriving quantities.
 3. Reuse the same `z_reader_threads=32` pool to distribute disjoint selected
-   `(x,y)` columns. [physics/_slab_derive.pyx](../src/quokka2s/physics/_slab_derive.pyx)
+   `(x,y)` columns. [physics/slab_derive.py](../src/quokka2s/physics/slab_derive.py)
    preserves the original unit-conversion stages, momentum/density division,
    centre-to-boundary foreground column, harmonic shielding column and velocity
    gradient. It fills six selected-core arrays directly, retaining full z and
@@ -703,14 +697,15 @@ go through a rebinned image. The default `direct-template` route is:
 3. `template_spectra.py` retains one bounded worker wave's original mu/sigma/L
    vectors while shared preparation computes images, full moments and counts.
    `template_batches.py` then queries those groups in their original order.
-4. `_template_integrate.pyx` splits each mean into integer shift and fractional
+4. `template_engine.py` splits each mean into integer shift and fractional
    phase, locates two sigma layers and two phase knots on each layer, and
    interpolates four template values. It multiplies by that original cell's
-   luminosity and immediately adds to the small spectrum. At most 400 temporary
-   coefficients are used for table-covered cells. Outside sigma coverage,
+   luminosity and reduces bounded blocks into the small spectrum. Temporary
+   arrays cover only the current block of cells and 400 bins, never the entire
+   snapshot or an extra luminosity-account dimension. Outside sigma coverage,
    `template_engine.py` evaluates stable original-cell bin probabilities in
-   bounded outside-only blocks and the kernel continues the same output in
-   ascending cell order. No brightness-node store is made.
+   bounded outside-only blocks. No brightness-node store is made. NumPy
+   reductions can change floating-point summation order.
 5. Main profile, input-light, count, full-moment and endpoint sums merge in the
    original batch order. Original-cell Gaussian vectors are released before
    the next wave. Invalid coordinates still raise; valid uncovered sigmas use
@@ -741,7 +736,7 @@ Neither is an automatic direct-template fallback.
 
 Explicit `exact` and `linear-lut` methods remain comparison references in
 [integrated_spectra.py](../src/quokka2s/products/integrated_spectra.py) and
-[_gaussian_fractions.pyx](../src/quokka2s/products/_gaussian_fractions.pyx).
+[channel_fractions.py](../src/quokka2s/products/gaussian/channel_fractions.py).
 The latter uses a 1D erf table; neither is the process default or a 2D fallback.
 
 The same luminosities, velocities and thermal widths also enter
@@ -802,7 +797,7 @@ Both sources call
 size, including when it is 1. Workers first call the same `accumulate_batch()`
 used by retained references. The default direct-template branch fills its
 final owned C-order luminosity queues directly from the selected emissivity
-fields. Stable native full moments reuse those queues in two passes, avoiding
+fields. Stable NumPy full moments reuse those queues in two passes, avoiding
 branch-wide luminosity/temperature matrices and repeated temporary vectors.
 Gaussian inputs survive only this bounded physical wave. The next phase queries them; the main thread merges in batch order via
 `EmissionProducts.merge()`. The z source merges each slab before its next read;

@@ -255,7 +255,7 @@ fields. Completion refers to the selected region: a regional result may have
 
 The report also saves `input_identity`, containing each snapshot file's relative
 path, size and nanosecond modification time, plus SHA-256 hashes of the DESPOTIC,
-Cloudy and dust input files and the package's Python/Cython/native sources and the numerical runtime/CPU dispatch. Snapshot
+Cloudy and dust input files and the package's Python sources and the numerical runtime/CPU dispatch. Snapshot
 payload bytes are not hashed; their identity check uses file metadata only.
 Identity is captured before calculation and checked again before saving. These
 are additive report fields; numerical array formats and scientific calculations
@@ -284,10 +284,10 @@ Omitted settings use the same defaults shown in the shared YAML:
 | `slab_nx` | Number of x cells per slab in the explicit z source | 8 |
 | `query_chunk` | Maximum cells in one table-query batch | 131,072 |
 | `chunk_workers` | Concurrent query batches within the loaded tile/slab | 16 |
-| `spectral_workers` | One compiled integration thread per template batch; batch parallelism uses chunk_workers | 1 |
+| `spectral_workers` | Per-batch spectral workers; direct-template requires one and uses chunk_workers for batch parallelism | 1 |
 | `z_reader_threads` | Shared reader/complete-column derivation pool size | 32 |
 | `z_read_workers` | Simultaneous raw-field file streams before derivation | 5 |
-| `histogram_merge_threads` | Ordered main profile merge; direct-template accepts null or one | 1 |
+| `histogram_merge_threads` | Ordered NumPy main profile merge; accepts null or one | 1 |
 | `prepared_z_fields` | Keep null for native-columns; explicit z source may reuse an absolute cache | null |
 | `field_cache_slabs`, `field_cache_gib` | Retained native-reader settings; unused by bounded eager process | 16, 12 |
 
@@ -399,8 +399,9 @@ mean into the window never mistakes an unstored supported bin for zero.
 The kernel locates two sigma layers and, separately on each, two phase knots.
 Linear interpolation in phase and in `ln(sigma)` supplies four nonnegative
 weights. Their weighted template probabilities are multiplied by that cell's
-luminosity accounts and immediately accumulated. A Cython/C kernel keeps at
-most 400 temporary coefficients per cell, rather than a batch-by-400 matrix.
+luminosity accounts and reduced into small profiles. NumPy evaluates bounded
+blocks of cells by 400 bins; it never allocates a whole-snapshot probability
+matrix or a cell-by-bin-by-account array.
 No global or batch luminosity-node accumulator is created. No luminosity
 threshold drops cells. Stored template corners have individual five-sigma
 supports and are not renormalized. Valid sigmas outside prepared coverage use
@@ -423,7 +424,7 @@ gaussian_grid:
   sigma_max: 8192.0
 ```
 
-Other keys retain their defaults. Table construction and its arithmetic check
+Other keys retain their defaults. Table construction and prepared-state validation
 run before process timing. Increasing the upper bound increases prepared table
 memory; it changes coverage rather than clipping physical widths.
 
@@ -482,7 +483,7 @@ keep their existing cell chunks, boundary handling and error-policy behavior.
 apply only to that invocation and to every selected snapshot in a run. Plot
 reads the saved method/products and does not recalculate integration.
 
-The saved effective method, template geometry, cutoff, arithmetic check and native
+The saved effective method, template geometry, cutoff, validation and NumPy/SciPy
 backend describe the calculation. Result reuse requires exact configuration and
 input/source identity; choose another jobname/results root for a comparison.
 
@@ -491,14 +492,14 @@ input/source identity; choose another jobname/results root for a comparison.
 The default native-column reader uses up to five read workers to gather one
 full-z native tile and the necessary original neighbour faces. Up to 32 tasks
 derive its physical fields before batch work starts. Finished products merge
-in original global order, even when tile order differs.
+in fixed native-tile order, with original batch order inside each tile.
 
 The explicit z source's bounded eager reader opens up to five field streams, reads the current
 x slab plus its two periodic x neighbours, and closes those files before
 derivation. Raw buffers retain native full y and full z; selecting fewer y
 cells reduces derivation/products but not those full-y reads. The same
 32-thread pool then distributes complete selected `(x,y)` columns through the
-fused native derived-field kernel. It releases raw fields before batch work.
+bounded NumPy derived-field blocks. It releases raw fields before batch work.
 The legacy native-reader group settings do not change this process route.
 
 Concurrency belongs to distinct phases, not one multiplied worker count:
@@ -506,22 +507,22 @@ Concurrency belongs to distinct phases, not one multiplied worker count:
 | Phase and owner | Default | Work sharing |
 |---|---|---|
 | Raw-field I/O, reader pool | Up to 5 workers | Native FAB field/halo reads and RAM gather; derivation waits |
-| Fused derivation | Up to 32 tasks | Disjoint complete `(x,y)` columns; no batch processing yet |
+| Array field derivation | Up to 32 tasks | Disjoint complete `(x,y)` columns; no batch processing yet |
 | Emission/products, batch pool | Up to 16 batches | Immutable views of one derived tile; main merge after each wave |
-| Gaussian queries, same batch pool | Up to 16 batches, one compiled thread each | Original-cell template lookup after physical preparation finishes |
+| Gaussian queries, same batch pool | Up to 16 batches | Bounded NumPy original-cell template blocks after physical preparation finishes |
 | Main profile merge | One main thread | Tile order, then original batch/group order; no node store or final expansion |
 
 Reader derivation finishes before physical batches start. Each bounded wave
 finishes physical preparation and Gaussian queries before its successor.
 No completed product partials wait across native tiles.
 These phases do not multiply into a nested worker count.
-The explicit node methods keep their own supported merge/expansion teams.
+Explicit node methods use their stated Python workers for independent blocks.
+Histogram merges accept `histogram_merge_threads: null` or `1` and run in order.
 
-All thirteen extensions build with normal setuptools and pinned native-build
-dependencies. Linux reference merge/expansion kernels enable OpenMP only after
-the compiler links its runtime; unsupported explicit teams raise. The default
-template kernel has a portable C path and optional ARM SIMD instructions, with
-no additional BLAS dependency or forced OpenMP wait policy.
+Project calculations use NumPy/SciPy without custom compiled extensions.
+Independent batches provide parallel work; numerical library versions and CPU
+dispatch remain part of result identity. No project compiler or forced OpenMP
+wait policy is required.
 
 Memory limits for legacy field groups are not total process RSS controls.
 Current raw slab buffers, six derived arrays, owned Gaussian input waves,

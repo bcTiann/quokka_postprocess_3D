@@ -59,9 +59,8 @@ class ProcessSettings:
     sigma layer; integer-bin mean shifts reuse those templates. Default width
     coverage is 1e-5 to 1024 km/s; valid uncovered widths use direct integrals.
     gaussian_grid can override template geometry without changing observation bins.
-    histogram_merge_threads=None selects one ordered main merge thread for
-    direct-template and histogram-layered. The histogram-2d reference selects four
-    OpenMP threads when available, otherwise one; unsupported teams raise.
+    histogram_merge_threads=None or 1 selects the ordered NumPy main merge.
+    Other values raise; chunk_workers supplies independent batch parallelism.
     Exact/linear-lut remain explicit internal comparison methods, not fallbacks.
     field_source defaults to native-columns: original full-z FAB columns are
     read into RAM without a disk copy. Processing requires a full box, regular
@@ -536,11 +535,11 @@ def _process_settings(
         raise ValueError('z_read_workers cannot exceed the five native fields')
     if values["gaussian_grid"] is not None and not isinstance(values["gaussian_grid"], dict):
         raise ValueError("gaussian_grid must be a mapping of Gaussian grid parameters or null")
+    if values["histogram_merge_threads"] not in (None, 1):
+        raise ValueError("NumPy histogram merges require histogram_merge_threads: null or 1")
     if values["spectral_method"] == "direct-template":
         if values["spectral_workers"] != 1:
             raise ValueError("direct-template requires spectral_workers: 1; chunk_workers supplies batch parallelism")
-        if values["histogram_merge_threads"] not in (None, 1):
-            raise ValueError("direct-template requires histogram_merge_threads: null or 1")
         grid = values["gaussian_grid"]
         if grid is not None:
             supported = {
@@ -552,8 +551,6 @@ def _process_settings(
                 names = ", ".join(sorted(str(name) for name in unsupported))
                 raise ValueError("Unsupported direct-template gaussian_grid keys: " + names)
     if values["spectral_method"] == "histogram-layered":
-        if values["histogram_merge_threads"] not in (None, 1):
-            raise ValueError("histogram-layered requires histogram_merge_threads: null or 1")
         grid = values["gaussian_grid"]
         if grid is not None:
             supported = {"mu_spacing_ratio", "log_sigma_step", "mu_anchor"}

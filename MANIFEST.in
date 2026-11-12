@@ -1,6 +1,4 @@
 # Local validation and generated products are not distribution sources.
 prune tests
 prune output
-include build_support.py
-include build_extensions.py
-recursive-include src *.pyx *.c
+recursive-exclude src *.pyx *.c *.so *.pyd

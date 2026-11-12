@@ -17,7 +17,12 @@ import numpy as np
 from .bounded_z_reader import scalar_unit_stages
 from .native_snapshot_reader import NATIVE_FIELD_NAMES
 from .physics import settings
-from .physics._slab_derive import fill_tile_columns_inplace, fill_tile_velocity_gradient
+from .physics.slab_derive import (
+    MAX_BLOCK_CELLS,
+    convert_tile_columns_inplace,
+    derive_tile_velocity_gradient,
+    estimated_working_bytes,
+)
 from .physics.gas_fields import HYDROGEN_MASS_G
 from .snapshot_reader import SlabArrays
 
@@ -113,14 +118,13 @@ def derive_native_column_tile(
     momentum_z = raw_tile.fields["z-GasMomentum"]
     xy_momentum_references = (weakref.ref(momentum_x), weakref.ref(momentum_y))
     gradient = np.empty(shape, dtype=np.float64, order="C")
-    scratch = np.empty((task_count, 2, nz), dtype=np.float64)
     density_to_gas, gas_density_to_cgs, velocity_factors, shielding_to_cgs = scalar_unit_stages(native_reader)
     widths_cgs = tuple(float(width.to("cm").value) for width in native_reader._cell_widths)
     dz_foreground = float(snapshot.cell_widths[2].to("cm").value)
     dz_shielding = float(native_reader._cell_widths[2].in_cgs().value)
 
     def calculate_gradient(task):
-        fill_tile_velocity_gradient(
+        derive_tile_velocity_gradient(
             density_raw=density,
             momentum_x=momentum_x,
             momentum_y=momentum_y,
@@ -130,7 +134,6 @@ def derive_native_column_tile(
             y_density_faces=raw_tile.y_density_faces,
             y_momentum_faces=raw_tile.y_momentum_faces,
             gradient_output=gradient,
-            scratch=scratch[task],
             velocity_factors=velocity_factors,
             dx_cm=widths_cgs[0],
             dy_cm=widths_cgs[1],
@@ -159,12 +162,11 @@ def derive_native_column_tile(
         shielding = np.empty(shape, dtype=np.float64, order="C")
 
         def calculate_columns(task):
-            return fill_tile_columns_inplace(
+            return convert_tile_columns_inplace(
                 density=density,
                 momentum_z=momentum_z,
                 foreground_output=foreground,
                 shielding_output=shielding,
-                scratch=scratch[task],
                 velocity_factors=velocity_factors,
                 density_to_gas=density_to_gas,
                 gas_density_to_cgs=gas_density_to_cgs,
@@ -194,6 +196,11 @@ def derive_native_column_tile(
         "velocity_z_kms": momentum_z,
     }
     final_six_field_bytes = sum(array.nbytes for array in fields.values())
+    numpy_temporary_bytes = estimated_working_bytes(
+        column_count=column_count,
+        column_depth=nz,
+        threads=task_count,
+    )
     for array in fields.values():
         array.flags.writeable = False
     flattened_fields = {name: array.ravel() for name, array in fields.items()}
@@ -211,12 +218,17 @@ def derive_native_column_tile(
         "fused_derivation_seconds": time.perf_counter() - began,
         "raw_input_bytes": raw_input_bytes,
         "face_bytes": face_bytes,
-        "scratch_bytes": scratch.nbytes,
+        "method": "numpy-full-z",
+        "parallelism": "ThreadPoolExecutor",
+        "scratch_bytes": 0,
+        "numpy_maximum_block_cells": MAX_BLOCK_CELLS,
+        "estimated_numpy_temporary_bytes": numpy_temporary_bytes,
+        "working_memory_scope": "Conservative bounded NumPy blocks; not measured RSS",
         "final_six_field_bytes": final_six_field_bytes,
         "peak_tile_and_working_array_bytes": max(
             raw_input_bytes + gradient.nbytes,
             final_six_field_bytes,
-        ) + face_bytes + scratch.nbytes,
+        ) + face_bytes + numpy_temporary_bytes,
         "raw_xy_momenta_removed_from_tile": True,
         "raw_xy_momenta_released": xy_momenta_released,
         "density_temperature_z_momentum_storage_reused": True,

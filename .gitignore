@@ -4,7 +4,7 @@
 *.egg-info/
 /build/
 /dist/
-# Local Cython build products; the readable .pyx source is tracked.
+# Legacy generated native artifacts stay local during source cleanup.
 /src/**/*.c
 /src/**/*.so
 /src/**/*.pyd

@@ -29,7 +29,7 @@ def _buffer_bytes(arrays):
 class TableBundle:
     """Own lookup objects while reusing the original narrow/broad geometry.
 
-    engines contains the two original native grid-geometry objects. tables has
+    engines contains the two original NumPy grid-geometry objects. tables has
     two A template objects. The memory total
     counts that shared table once. Optional engines avoids even duplicating the
     original axes, and is recommended when installing the snapshot adapter.
@@ -137,7 +137,7 @@ class TableBundle:
             "memory_bytes": int(lookup_bytes + geometry_bytes + edges_bytes),
             "memory_scope": "Own persistent NumPy buffers; shared table/geometry views counted once; Python overhead excluded",
             "geometry_reused": not self.owns_geometry,
-            "native_query_kernels_reused": True,
+            "query_implementation": "numpy",
             "table_count": len(unique_tables),
             "velocity_grid": {
                 "v_min": float(self.velocity_grid.v_min),

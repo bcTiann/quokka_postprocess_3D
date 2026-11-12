@@ -58,8 +58,8 @@ does not move a cell into the hot QUOKKA branch.
 DESPOTIC interpolates stored field values directly on logarithmic coordinates,
 with the adopted SciPy `RegularGridInterpolator` semantics. The process loader
 reads its seven required fields while full table tools retain their complete
-loader. Common finite/uniform queries use the equivalent native trilinear
-kernels; retained reference paths handle the original special policies.
+loader. Queries use SciPy's regular-grid interpolation directly, retaining
+its original per-field NaN propagation and special error policies.
 Cloudy coefficients are interpolated in logarithm
 unless a valid zero corner has non-negligible interpolation weight, when
 that line/query uses the coefficient itself. Its attenuation lookup coordinate
@@ -110,8 +110,8 @@ input loading, or yt opens the original snapshot if no sidecar is present.
 Only an owned temporary cache is removed when processing finishes or fails.
 
 The bounded eager reader reads current core x cells and periodic x neighbours
-with native full y and complete z, then closes its five field streams. A fused
-native pass derives selected complete columns with original unit-conversion
+with native full y and complete z, then closes its five field streams. Bounded
+NumPy array blocks derive selected complete columns with original unit-conversion
 order and momentum/density division, fills six core arrays and releases raw
 slab fields. It preserves original periodic x/y gradient neighbours and
 one-sided outer-z differences. This route uses no persistent mmap or grouped
@@ -157,18 +157,19 @@ luminosity accounts, then added directly to the spectrum. Intrinsic/attenuated,
 line and cold/hot accounts remain separate. Only physically identical widths
 share geometry. There is no node luminosity histogram or cell-brightness cut.
 
-The immutable table is prepared outside process time. A compiled float64 loop
-combines lookup, four-corner interpolation and luminosity accumulation, with at
-most 400 temporary coefficients for one original cell. Adjacent supported channel
-values use contiguous template storage. Only bins supported by a nonzero-weight
-corner are visited; no exact original-cell support mask replaces this union.
+The immutable table is prepared outside process time. NumPy evaluates lookup
+and four-corner interpolation in bounded cell-by-400 arrays, then reduces their
+luminosity-weighted contributions into small profiles. Stored probabilities are
+zero outside each corner's support; evaluating all channels in a block does not
+replace that union with an exact original-cell support mask.
 Each stored corner Gaussian truncates at its own `mu_node +/-5sigma_node`
 without renormalization. Original batch contents and width groups are unchanged.
 Finished products merge in deterministic native-tile order, with ascending
 batches within each tile; floating-point reductions can round differently from
 a full-grid batch walk. Full moments use an anchored centroid followed by a
 centered second pass, never subtraction of nearly equal raw second moments.
-Normal builds disable fast-math and implicit FMA.
+Installed NumPy/SciPy versions and CPU dispatch are recorded with the results;
+library reductions can change the last floating-point bits.
 
 The existing complete moments retain original-cell Gaussians and full support.
 Independent original-cell analytic endpoint references separately provide the
@@ -207,11 +208,11 @@ derivation tasks in the same pool. Up to 16 batch workers prepare unchanged
 emission/products for one bounded wave. Those same workers then query original
 Gaussian templates and release owned inputs. One main thread merges the wave
 in original batch order before the next wave starts. There is no final node
-expansion or nested spectral pool in the default. Fifteen extensions build
-normally, with portable C and optional ARM SIMD for template queries. Explicit
-node-reference OpenMP teams remain validated by their own kernels.
+expansion or nested spectral pool in the default. Project calculations use
+NumPy/SciPy rather than custom compiled extensions. The main histogram merge is
+ordered; independent node or query blocks use their stated Python worker pools.
 
-Gaussian template preparation and arithmetic checking and actual z-copy conversion
+Gaussian template preparation/validation and actual z-copy conversion
 are separately measured outside process elapsed time. Input identity, metadata
 construction/restoration, physical table loading, cache validation, every
 payload/derived/emission/product operation, checks, save and cleanup remain

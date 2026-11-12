@@ -6,7 +6,6 @@ from typing import Sequence
 
 import numpy as np
 from scipy.interpolate import RegularGridInterpolator
-from ._linear import fill_linear_3d
 
 from quokka2s.despotic.table_data import DespoticTable, LINE_RESULT_FIELDS, SpeciesRecord
 
@@ -84,10 +83,10 @@ class DespoticLookup:
 
     prepare_queries() broadcasts physical nH/NH/dVdr into shape S. Every field
     method takes that same batch-local query object and returns shape S. Each
-    field keeps its own NaN support. Process-time field bundles share a native
-    interpolation loop, with SciPy retained for exceptional inputs and scalar
-    diagnostics. Outside the table, queries return NaN; coordinate clipping
-    belongs to the caller.
+    field keeps its own NaN support. SciPy evaluates the process-time field
+    bundles and scalar diagnostics using the same linear interpolation rules.
+    Outside the table, queries return NaN; coordinate clipping belongs to the
+    caller.
 
     Parameters
     ----------
@@ -221,7 +220,6 @@ class DespoticLookup:
         self._register_energy_fields()
         self._build_temperature_and_co_interpolator()
         self._build_cii_and_hydrogen_interpolator()
-        self._prepare_native_field_bundles()
 
     def _register_thermal_fields(self):
         """Make temperature, mu, heat capacity and internal energy queryable."""
@@ -320,34 +318,6 @@ class DespoticLookup:
             fill_value=np.nan,
         )
 
-    def _prepare_native_field_bundles(self) -> None:
-        """Keep contiguous 3/4-field tables safe for the native linear loop.
-
-        Quiet NaNs retain their independent corner support. Infinite or extreme
-        fields and singleton axes retain SciPy, including observable warnings.
-        Scalar diagnostic interpolators are not replaced by this process path.
-        """
-        self._native_field_bundles = {}
-        limit = np.finfo(np.float64).max / 16.0
-        for interpolator in (
-            self._temperature_and_co_interpolator,
-            self._cii_and_hydrogen_interpolator,
-        ):
-            if interpolator is None:
-                continue
-            axes = tuple(np.ascontiguousarray(axis) for axis in interpolator.grid)
-            if any(axis.size < 2 or not np.all(np.isfinite(axis)) for axis in axes):
-                continue
-            values = interpolator.values
-            if values.dtype != np.float64 or np.any(np.isinf(values)):
-                continue
-            if np.any(np.abs(values) > limit):
-                continue
-            self._native_field_bundles[id(interpolator)] = (
-                axes,
-                np.ascontiguousarray(values),
-            )
-
     def _interpolate_query_values(self, interpolator, coordinates, output_shape=()):
         """Evaluate flattened queries in chunks, then restore their input shape.
 
@@ -358,31 +328,10 @@ class DespoticLookup:
         """
         query_count = coordinates.hydrogen_density_cm3.size
         values = np.empty((query_count, *output_shape))
-        native_bundle = self._native_field_bundles.get(id(interpolator))
-        default_error_policy = {
-            "divide": "warn",
-            "over": "warn",
-            "under": "ignore",
-            "invalid": "warn",
-        }
-        if np.geterr() != default_error_policy:
-            native_bundle = None
         for start in range(0, query_count, self._EVAL_CHUNK):
             stop = min(start + self._EVAL_CHUNK, query_count)
             points = coordinates.logarithmic_points(start=start, stop=stop)
-            completed = False
-            if native_bundle is not None and points.flags.c_contiguous:
-                axes, table = native_bundle
-                completed = fill_linear_3d(
-                    density_axis=axes[0],
-                    column_axis=axes[1],
-                    gradient_axis=axes[2],
-                    points=points,
-                    table=table,
-                    output=values[start:stop],
-                )
-            if not completed:
-                values[start:stop] = interpolator(points)
+            values[start:stop] = interpolator(points)
         return values.reshape((*coordinates.query_shape, *output_shape))
 
     def _interpolate_field(self, *, token: str, queries: DespoticQueries) -> np.ndarray:

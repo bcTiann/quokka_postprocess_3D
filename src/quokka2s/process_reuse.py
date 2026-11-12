@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import importlib
-from importlib.machinery import EXTENSION_SUFFIXES
 import json
 import os
 from pathlib import Path
@@ -92,8 +91,8 @@ def processing_input_identity(config: ProcessSettings) -> dict:
 
     Snapshot payloads are only stat'ed, never hashed or loaded. File sizes and
     nanosecond modification times detect ordinary source updates. Table and
-    Python/Cython and native-extension hashes detect replacements at the
-    same paths. Runtime versions and NumPy dispatch/binary identity also bind
+    Python source hashes detect replacements at the same paths. Runtime
+    versions and NumPy dispatch/binary identity also bind
     reuse to its numerical implementation. These records govern result reuse,
     not physical table compatibility.
     """
@@ -105,15 +104,7 @@ def processing_input_identity(config: ProcessSettings) -> dict:
     source_hashes = {
         str(path.relative_to(package_directory)): file_sha256(path)
         for path in sorted(package_directory.rglob("*"))
-        if path.is_file()
-        and (
-            path.suffix in (".py", ".pyx")
-            or any(
-                path.name.endswith(suffix)
-                and path.name[:-len(suffix)].isidentifier()
-                for suffix in EXTENSION_SUFFIXES
-            )
-        )
+        if path.is_file() and path.suffix == ".py"
     }
     table_hashes = {
         name: file_sha256(getattr(config, name))

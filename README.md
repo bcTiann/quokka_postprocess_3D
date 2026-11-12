@@ -33,18 +33,16 @@ uv sync
 
 uv creates `.venv` and installs this checkout in editable mode. No activation,
 `PYTHONPATH` or manual `pip install` is needed. The locked environment uses
-Python 3.11. Building yt and the thirteen native processing kernels needs Git and C/C++
-build tools. uv installs the pinned build dependencies automatically; no manual
-Cython installation or compilation command is needed. Both process and plot
+Python 3.11. Project calculations use NumPy/SciPy and have no custom Cython
+extensions or separate compilation step. Building the pinned yt source dependency
+can still require Git and C/C++ build tools when no cached build is available.
+uv installs its build dependencies automatically. Both process and plot
 dependencies are installed by default. `uv run` checks the environment
 automatically and reuses the locked versions; it does not reinstall everything
 on each run.
 
-After changing a processing `.pyx` source or build settings, run `uv sync`
-to rebuild the native kernels. The build cache tracks these sources when
-`uv run` checks the environment. Linux builds probe OpenMP support for independent
-histogram merging and channel expansion; unsupported platforms use serial kernels.
-Generated C and compiled binaries stay local.
+The editable installation reads changes to the processing Python files directly.
+Run `uv sync` after changing dependencies or package settings.
 
 On Setonix, follow its [environment setup](docs/setonix.md#2-configure-the-environment)
 instead: keep the repository, environment, caches and generated results under
@@ -238,12 +236,13 @@ Gaussian integration defaults to `direct-template`: each original cell directly
 interpolates four preintegrated fractional-mean/log-sigma templates, multiplies
 their channel probabilities by its luminosity and adds the small spectrum.
 Integer-bin mean shifts reuse the same fractional templates. No luminosity-node
-histogram or table-covered batch-by-400 probability matrix is allocated. The compiled kernel
-uses float64 and each template node's five-sigma support without renormalization.
+histogram or whole-snapshot probability matrix is allocated. NumPy evaluates
+bounded cell-by-400 blocks in float64, preserving each template node's five-sigma
+support without renormalization.
 The table's default sigma coverage is `1e-5` to `1024 km/s`, with natural-log
 spacing `0.03125`. Valid widths outside that table use original-cell stable bin
 integration with the same five-sigma cutoff and no brightness omission threshold.
-Only those outside rows use bounded probability blocks. A wider known domain can be selected
+Both template and outside-only queries use bounded blocks. A wider known domain can be selected
 with `gaussian_grid: {sigma_max: 8192.0}`. Nonflat phase transition spacing is at most 0.1 and
 is finer near narrow-profile channel transitions. Physical width and missingness
 rules are unchanged. Bounded physical-preparation/query waves finish and merge

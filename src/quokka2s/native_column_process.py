@@ -13,6 +13,7 @@ from time import monotonic
 import numpy as np
 
 from .native_column_fields import derive_native_column_tile
+from .physics.slab_derive import estimated_working_bytes
 from .products.gaussian.template_batches import process_template_batches
 from .result_files import write_status
 
@@ -94,7 +95,11 @@ def _memory_plan(config, snapshot, reader, bounds):
     face_cache = 2 * nz * 8 * (len(x_planes) * ny + len(y_planes) * nx)
     largest_native_field = max(block.field_bytes for block in native.blocks)
     read_working = config.z_read_workers * largest_native_field
-    derived_working = config.z_reader_threads * 2 * nz * 8
+    derived_working = estimated_working_bytes(
+        column_count=maximum_cells // nz,
+        column_depth=nz,
+        threads=config.z_reader_threads,
+    )
     worker_reserve = config.chunk_workers * config.query_chunk * (192 * 8 + 32)
     baseline = _check_process_memory("native column preflight")
     raw_peak = 5 * maximum_cells * 8 + read_working
@@ -116,6 +121,7 @@ def _memory_plan(config, snapshot, reader, bounds):
         "immutable_face_cache_bytes": face_cache,
         "read_worker_payload_reserve_bytes": read_working,
         "derivation_scratch_reserve_bytes": derived_working,
+        "derivation_working_memory_scope": "Conservative bounded NumPy temporaries; not measured RSS",
         "physical_worker_reserve_bytes": worker_reserve,
         "additional_library_allocator_headroom_bytes": 1024**3,
         "conservative_estimated_process_bytes": estimated,

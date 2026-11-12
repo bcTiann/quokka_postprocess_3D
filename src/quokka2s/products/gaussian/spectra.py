@@ -16,7 +16,7 @@ from .accounting import add_cutoff_accounts, update_cutoff_report
 from ...constants import ATOMIC_MASS_UNIT_G, SPEED_OF_LIGHT_KMS
 from ...line_definitions import LINE_DEFINITIONS
 from .. import DUST_STATES
-from ._spectral_fields import (
+from .spectral_fields import (
     calculate_centered_full_moments,
     pack_width_group,
     prepare_available_group,
@@ -33,7 +33,7 @@ from ..line_velocity_moments import LineVelocityMoments, MINIMUM_GAUSSIAN_WIDTH_
 
 
 def shared_width_moments(*, velocity_kms, thermal_width_kms, luminosity_by_dust, shared_lines):
-    """Return the original full moments, reusing only identical input vectors.
+    """Return stable full moments, reusing only identical input vectors.
 
     A profile keeps its own positive-luminosity mask and first positive velocity
     anchor. NumPy receives the same contiguous reduction vectors as before;
@@ -219,7 +219,7 @@ class HistogramIntegratedSpectra(IntegratedSpectra):
             dust_report["histogram_grid"] = asdict(self.engine.grid)
             dust_report["template_contraction"] = self.engine.expansion_statistics["contraction"]
             dust_report["template_expansion_statistics"] = self.engine.expansion_statistics
-            dust_report["deposition_backend"] = "compiled original-row selection, indexed corner-major scatter, stable radix node sorting"
+            dust_report["deposition_backend"] = "NumPy original-row selection, corner-major scatter and sorted node IDs"
             dust_report["merge_backend"] = self._merger.statistics
             dust_report["histogram_statistics"] = self.histogram_statistics
             dust_report["fallback"] = "Disabled: all emitting Gaussians use 2D; out-of-grid inputs raise"
@@ -326,7 +326,7 @@ class HistogramIntegratedSpectra(IntegratedSpectra):
 
         No full branch temperature or luminosity matrix is retained. Lines may
         share a queue only when their emitter masses and selected branch
-        temperatures are identical. Stable two-pass native full moments reuse
+        temperatures are identical. Stable two-pass NumPy full moments reuse
         the final queue; all masks and the Gaussian integration are unchanged.
         """
         lines = tuple(emission.lines[line_key] for line_key in line_keys)
@@ -409,21 +409,6 @@ class HistogramIntegratedSpectra(IntegratedSpectra):
                     luminosity=luminosity_matrix,
                     minimum_width_kms=MINIMUM_GAUSSIAN_WIDTH_KMS,
                 )
-                if full_moments is None:
-                    # Exceptional arithmetic keeps the original NumPy warnings
-                    # and nonfinite results instead of hiding native overflow.
-                    full_moments = np.empty((luminosity_matrix.shape[1], 3))
-                    for profile in range(luminosity_matrix.shape[1]):
-                        moment = LineVelocityMoments.from_cells(
-                            velocity_kms=velocity,
-                            thermal_width_kms=thermal_width,
-                            luminosity_erg_s=luminosity_matrix[:, profile],
-                        )
-                        full_moments[profile] = (
-                            moment.luminosity_erg_s,
-                            moment.centroid_kms,
-                            moment.centered_second_moment,
-                        )
                 group_size = len(shared_lines)
                 branch_name = ("cold", "hot")[branch_index]
                 for dust_index, dust_state in enumerate(DUST_STATES):
@@ -460,7 +445,7 @@ class HistogramIntegratedSpectra(IntegratedSpectra):
         self, *, branch_index, line_keys, masses_g, velocity_kms, temperature_K,
         luminosity_by_dust, velocity_edges_kms, cell_chunk, workers, spectral_method="exact",
     ):
-        """Keep the frozen width-group and native deposit order without repacking.
+        """Keep the frozen width-group and deposit order without repacking.
 
         The only changed moment work is sharing velocity offsets and sigma squared
         between profiles whose positive masks match. Each line's sums stay separate.

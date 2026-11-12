@@ -1,9 +1,6 @@
 [build-system]
 requires = [
     "setuptools==84.0.0",
-    "Cython==3.2.4",
-    "numpy==2.2.6",
-    "scipy==1.16.3",
 ]
 build-backend = "setuptools.build_meta"
 
@@ -32,28 +29,6 @@ plot = "quokka2s.plot_emission_results:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
-
-[tool.uv]
-# Editing the native source must rebuild the editable extension on uv sync/run.
-cache-keys = [
-    { file = "setup.py" },
-    { file = "build_support.py" },
-    { file = "src/quokka2s/products/gaussian/_row_select.pyx" },
-    { file = "src/quokka2s/products/gaussian/_sparse_expand.pyx" },
-    { file = "src/quokka2s/products/gaussian/_prefix_expand.pyx" },
-    { file = "src/quokka2s/products/gaussian/_layered_deposit.pyx" },
-    { file = "src/quokka2s/products/gaussian/_template_integrate.pyx" },
-    { file = "src/quokka2s/products/gaussian/_spectral_fields.pyx" },
-    { file = "src/quokka2s/physics/_slab_derive.pyx" },
-    { file = "src/quokka2s/despotic/_linear.pyx" },
-    { file = "src/quokka2s/cloudy/_trilinear.pyx" },
-    { file = "src/quokka2s/products/gaussian/_a_templates.pyx" },
-    { file = "src/quokka2s/products/gaussian/_histogram_merge.pyx" },
-    { file = "src/quokka2s/products/gaussian/_histogram_deposit.pyx" },
-    { file = "pyproject.toml" },
-    { file = "MANIFEST.in" },
-    { file = "src/quokka2s/products/_gaussian_fractions.pyx" },
-]
 
 [project.optional-dependencies]
 # Optional solver environment: uv sync --extra tables

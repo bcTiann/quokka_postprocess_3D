@@ -55,12 +55,11 @@ uv sync --python "$(command -v python)"
 ```
 
 uv creates `.venv` and installs the checkout in editable mode. No activation,
-`PYTHONPATH` or manual `pip install` is needed. Building yt and the thirteen native
-processing kernels needs Git and C/C++ build tools. uv installs the pinned Cython
-and SciPy build dependencies automatically. Keep a GCC/Clang-compatible C
-compiler available when rebuilding after a source update; `uv sync` tracks the
-processing `.pyx` sources and shared build settings. Linux builds probe OpenMP
-before enabling independent node-merge and final-channel threads.
+`PYTHONPATH` or manual `pip install` is needed. Project calculations use
+NumPy/SciPy without custom Cython extensions. The pinned yt source dependency
+can still need Git and C/C++ build tools when no cached build is available;
+uv installs its build dependencies automatically. Editing project Python files
+does not rebuild processing kernels.
 After setup, later logins only need `cd` to this repository
 and the `uv run` commands below. They reuse the existing environment and check
 its dependencies automatically, without activation or repeated exports.
@@ -117,8 +116,8 @@ see the [reuse rules](usage.md#completed-result-reuse).
 
 The default is `direct-template`: each original cell directly interpolates four
 preintegrated fractional-mean/log-sigma templates, then multiplies and accumulates
-its luminosities. Integer-bin shifts reuse fractional-mean templates. The native
-float64 kernel has no additional BLAS dependency or luminosity-node histogram.
+its luminosities. Integer-bin shifts reuse fractional-mean templates. Bounded
+NumPy float64 probability blocks are reduced without a luminosity-node histogram.
 Up to 16 physical batches prepare emission/products first; the same workers query
 those original Gaussians next, and one main thread merges in original order.
 Each batch owns inputs only until that bounded wave finishes.

@@ -5,22 +5,22 @@ import time
 
 import numpy as np
 
-from . import _prefix_expand as native
 from .engine import GaussianHistogramEngine as AccountedEngine
 from .intervals import interval_probability
 from .prefix_arithmetic import table_signature, validate_gate
+from .prefix_tables import select_expansion_workers
 
 
 class GaussianHistogramEngine(AccountedEngine):
     """Keep original deposition, merges and exact endpoint luminosity accounts.
 
-    Only final occupied-node expansion changes. The native kernel reuses each
-    channel's right cumulative boundary as the next channel's left boundary.
+    Only final occupied-node expansion changes. NumPy evaluates shared
+    cumulative boundaries, then contracts bounded node/channel arrays.
     """
 
     def __init__(self, grid, *, table, gate_result, threads=0):
         super().__init__(grid, contraction="einsum")
-        self.expansion_threads = native.select_threads(threads)
+        self.expansion_threads = select_expansion_workers(threads)
         self.portable_backend = validate_gate(
             gate_result,
             grid,
@@ -28,14 +28,13 @@ class GaussianHistogramEngine(AccountedEngine):
             table,
             threads=self.expansion_threads,
         )
-        self.match_numpy_fma = self.portable_backend == "prefix_fma"
         self.lookup_tables = table
         self._gate_table_signature = gate_result["table_signature"]
         self.expansion_statistics = {
             "expand_calls": 0,
             "occupied_rows": 0,
             "independent_window_accounting_seconds": 0.0,
-            "fused_lookup_contraction_seconds": 0.0,
+            "lookup_and_contraction_seconds": 0.0,
             "support_bins_visited": 0,
             "nonzero_template_coefficients": 0,
             "nonzero_product_updates": 0,
@@ -43,13 +42,13 @@ class GaussianHistogramEngine(AccountedEngine):
             "phi_boundary_evaluations": 0,
             "cutoff_sigma": 5.0,
             "renormalized": False,
-            "template_layout": "Standard-normal cumulative table; shared adjacent channel boundaries; no node-by-channel matrix",
-            "contraction": "Original bands/blocks; ascending nodes and profiles per channel",
+            "template_layout": "Standard-normal cumulative table; bounded node-by-channel coefficients",
+            "contraction": "NumPy einsum ki,ip->kp, optimize=False; bounded blocks in original band order",
             "histogram_retention": "Final expansion retains the accumulated node luminosities",
             "portable_backend": self.portable_backend,
             "portable_gate": gate_result,
-            "native_channel_threads": self.expansion_threads,
-            "native_channel_threading": native.kernel_info(self.expansion_threads),
+            "implementation": "numpy",
+            "workers": self.expansion_threads,
             "lookup_table": table.info(),
         }
 
@@ -77,7 +76,7 @@ class GaussianHistogramEngine(AccountedEngine):
         if not np.all(active):
             nodes = nodes[active]
             weights = weights[active]
-        bytes_per_node = (edges.size + widths.size) * np.dtype(np.float64).itemsize
+        bytes_per_node = (8 * edges.size + widths.size) * np.dtype(np.float64).itemsize
         block_nodes = band.template_scratch_bytes // bytes_per_node
         if block_nodes < 1:
             raise ValueError("The original expansion block must hold at least one node")
@@ -95,10 +94,9 @@ class GaussianHistogramEngine(AccountedEngine):
                 sigmas,
                 weights[start:stop],
                 contribution,
-                fma=self.match_numpy_fma,
                 threads=self.expansion_threads,
             )
-            self.expansion_statistics["fused_lookup_contraction_seconds"] += time.perf_counter() - began
+            self.expansion_statistics["lookup_and_contraction_seconds"] += time.perf_counter() - began
             for name, value in counts.items():
                 self.expansion_statistics[name] += value
             if not np.isfinite(contribution).all():
