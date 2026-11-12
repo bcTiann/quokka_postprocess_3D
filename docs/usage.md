@@ -400,13 +400,14 @@ The kernel locates two sigma layers and, separately on each, two phase knots.
 Linear interpolation in phase and in `ln(sigma)` supplies four nonnegative
 weights. NumPy/SciPy sum the weighted cell luminosities by identical template
 row and integer-bin shift, keeping line, dust and temperature accounts separate.
-Groups with up to four accounts use exact integer-label compression and weighted
-`np.bincount` when the temporary grid fits implementation work/memory bounds.
-Larger or sparse groups use stable CSR sums. Integer sort keys may use uint32
-losslessly; all physical values and weights remain float64. This choice affects
-summation cost, not Gaussian precision, range or luminosity selection.
-Workers return independent compact increments; the main thread adds them to
-profile-major NumPy arrays. For a B-bin stored template row, exactly K+B-1 integer
+Workers keep unsorted row/cell/weight contributions and read-only luminosity
+for one bounded wave. The same pool next assigns each spectrum profile to one
+writer, using SciPy 1.16.3's prebuilt private `coo_matvec` to add directly to its
+NumPy plane. No sorting or temporary luminosity histogram is required. Buffer
+checks and a startup addition probe protect this pinned private API; a SciPy
+upgrade requires renewed validation. All physical values remain float64.
+All writers finish before the original-cell luminosity is released.
+For a B-bin stored template row, exactly K+B-1 integer
 shifts can overlap K observed bins. Direct `np.convolve(..., mode="valid")` turns
 each occupied row of accumulated luminosities into the K-bin spectrum. No new grid or
 interpolation approximation is added. No whole-snapshot cell-by-channel matrix
@@ -419,7 +420,7 @@ unsafe integer shifts and nonpositive/nonfinite widths still raise.
 For the default 400 bins, templates and 40 accounts, the main corner arrays
 have 5.402 GiB capacity. This is an array capacity, not measured process RSS.
 Wider template coverage increases this capacity. Array allocation, first writes,
-all indexed additions and final convolution remain timed; only the immutable
+all raw-term preparation, sparse accumulation and final convolution remain timed; only the immutable
 Gaussian template is prepared outside process time. The 20 GiB process memory
 checks cover this route as well as field and worker buffers.
 
@@ -442,27 +443,29 @@ Other keys retain their defaults. Table construction and prepared-state validati
 run before process timing. Increasing the upper bound increases prepared table
 memory; it changes coverage rather than clipping physical widths.
 
-For each bounded wave of up to `chunk_workers` batches, the existing emission,
-image, gas-phase and full-moment preparation finishes first. Workers then query
-their owned original-cell Gaussians into compact corner increments and directly
-integrate uncovered widths; the main thread consumes increments in original
-batch order. Original-cell inputs are released after that wave. Only NumPy
-corner accounts survive across waves, until final covered-template convolution. `chunk_workers: 1`
-uses the same wave and merge order on one worker. There is no nested spectral
-thread team; `spectral_workers` must be 1, and the main merge accepts null or 1.
+For each bounded wave of up to `chunk_workers` batches, emission, image,
+gas-phase and full-moment preparation finishes first. Workers then prepare
+original corner contributions and calculate independent endpoint accounts and
+outside-width integrals. The same pool next accumulates disjoint spectrum
+profiles. Only after all writers join does the main thread merge small products
+in original batch order. Luminosity and raw contributions are then released;
+only NumPy corner accounts survive to final convolution. The one-worker setting
+uses the same phases, with no nested spectral thread pool.
 
-`processing_timings.gaussian.query_and_profile_addition_seconds` is the elapsed
-union of template-query and real spectrum-addition intervals: parallel overlap
-counts once. It excludes independent analytic endpoint accounts. The separate
-`gaussian_wave_seconds_including_analytic_accounts_and_scheduling` includes
-deposition dispatch, analytic accounts, bookkeeping and input release.
-`snapshot_corner_main_merge_seconds` is included in the ordered product-merge
-wave time. `snapshot_corner_finalization_seconds` separately includes occupied-row
-selection, direct template convolution and addition to spectra.
-`gaussian_total_seconds_including_corner_store` combines deposition waves,
-main indexed additions and final convolution; do not add its main merges a second
-time to product-merge timings. `all_deferred_groups_finished` becomes true only
-after final expansion. Reports refresh these timings after output construction.
+`processing_timings.gaussian.gaussian_worker_wave_seconds` records raw-term
+preparation, original-cell accounts, fallback and scheduling.
+`inplace_corner_scatter_wave_seconds` records the subsequent profile writes,
+contiguous input copies, checks and release. Both are inside
+`gaussian_wave_seconds_including_analytic_accounts_and_scheduling`; do not add
+the scatter time to that inclusive total again. Ordered product merge now
+contains only small products and accounts. `snapshot_corner_finalization_seconds`
+records occupied-row selection, convolution and addition to saved spectra.
+`gaussian_total_seconds_including_corner_store` adds initialization and final
+convolution to the Gaussian wave. Reports refresh timings after finalization.
+The activity union excludes independent analytic accounts and counts overlapping
+query/profile writes once. Raw owned-buffer and borrowed-luminosity counters
+have distinct scopes; neither is process RSS. No whole-snapshot cell arrays are
+retained.
 Worker call sums are diagnostic, not wall time or divided by worker count.
 The complete process time includes initialization, field reads, physical
 calculations, all numerical work, checks and saving.
@@ -532,8 +535,9 @@ Concurrency belongs to distinct phases, not one multiplied worker count:
 | Raw-field I/O, reader pool | Up to 5 workers | Native FAB field/halo reads and RAM gather; derivation waits |
 | Array field derivation | Up to 32 tasks | Disjoint complete `(x,y)` columns; no batch processing yet |
 | Emission/products, batch pool | Up to 8 batches | Immutable views of one derived tile; main merge after each wave |
-| Gaussian preparation, same batch pool | Up to 8 batches | NumPy/SciPy corner deposition and uncovered-width integration after physical preparation |
-| Corner addition and final convolution | One main thread | Add unique-corner arrays in batch/group order; convolve each occupied template row |
+| Gaussian preparation, same batch pool | Up to 8 batches | Raw corners, independent accounts and uncovered-width integrals |
+| Profile accumulation, same batch pool | Up to 8 workers | Disjoint profile planes; original batch/group order within each profile |
+| Ordered small-product merge and final convolution | One main thread | Merge original products in order; convolve each occupied template row |
 
 Reader derivation finishes before physical batches start. Each bounded wave
 finishes physical preparation and Gaussian queries before its successor.

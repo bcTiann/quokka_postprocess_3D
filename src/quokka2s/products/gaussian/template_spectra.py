@@ -1,6 +1,7 @@
-"""Coalesce identical prepared-template corners in a profile-major NumPy accounts.
+"""Scatter original prepared-template corners into profile-major NumPy accounts.
 
-Workers release original-cell vectors after their bounded deposition wave.
+Workers release means/widths after preparation; L survives only until all
+profile writers join in the same bounded wave.
 Original-cell accounts, complete moments and physical products still merge in
 batch order. The covered corner rows convolve once before output preparation.
 """
@@ -14,6 +15,7 @@ import numpy as np
 
 from .accounting import add_cutoff_accounts, update_cutoff_report
 from .corner_store import RaggedCornerStore, check_corner_memory
+from .corner_scatter import prepare_corner_scatter
 from .spectra import HistogramIntegratedSpectra
 from .template_coverage import TemplateCoverageTotals, print_template_coverage
 from ..integrated_spectra import IntegratedSpectra
@@ -90,6 +92,7 @@ class TemplateIntegratedSpectra(HistogramIntegratedSpectra):
             "query_calls": 0,
             "physical_preparation_wave_ns": 0,
             "gaussian_wave_ns": 0,
+            "gaussian_worker_wave_ns": 0,
             "ordered_product_merge_wave_ns": 0,
             "maximum_retained_gaussian_input_bytes": 0,
             "waves": 0,
@@ -116,7 +119,17 @@ class TemplateIntegratedSpectra(HistogramIntegratedSpectra):
         self._corner_failed = False
         self._corner_finalized = False
         self._corner_final_metrics = {}
-        self._corner_main_merge_ns = 0
+        self._corner_scatter_ns = 0
+        self._scatter_statistics = {
+            "waves": 0,
+            "workers": 0,
+            "kernel_calls": 0,
+            "contiguous_X_logical_bytes": 0,
+            "raw_corner_terms": 0,
+            "maximum_profile_tasks": 0,
+            "maximum_pending_raw_owned_bytes": 0,
+            "maximum_pending_luminosity_owner_bytes": 0,
+        }
         self._corner_final_ns = 0
         self._corner_init_ns = 0
         self._maximum_worker_increment_bytes = 0
@@ -172,7 +185,7 @@ class TemplateIntegratedSpectra(HistogramIntegratedSpectra):
         return np.zeros((self.velocity_edges_kms.size - 1, luminosity_matrix.shape[1]))
 
     def finish_gaussians(self):
-        """Deposit exact template corners, retain original accounts and drop cells."""
+        """Prepare raw corners and original accounts; keep L only until wave scattering."""
         if not self.batch_partial or self._queue_finished or self._queue_failed:
             raise RuntimeError("Finish each prepared Gaussian worker exactly once")
         try:
@@ -213,16 +226,99 @@ class TemplateIntegratedSpectra(HistogramIntegratedSpectra):
         return self
 
     def _release_original_cell_inputs(self):
-        """Drop only original-cell vectors after deposition, retaining compact output."""
+        """Drop coordinate queues; pending raw increments retain only wave-local L."""
         self._groups.clear()
         self._input_owner_ids.clear()
         self._owned_input_bytes = 0
 
     def release_gaussian_inputs(self):
-        """Release original inputs and any abandoned compact worker increments."""
+        """Release inputs after their workers/writers have joined, including pending L."""
         self._release_original_cell_inputs()
         if self.batch_partial:
             self._corner_increments.clear()
+
+    def scatter_corner_wave(self, partials, *, executor, workers):
+        """Hold raw L until all writers join, consume increments, then merge small data."""
+        if self.batch_partial or self._corner_finalized or self._corner_failed:
+            raise RuntimeError('Cannot scatter into a failed main spectrum')
+        started = perf_counter_ns()
+        increments = []
+        try:
+            if any(
+                partial.spectra.engine is not self.engine
+                or partial.spectra.line_keys != self.line_keys
+                for partial in partials
+            ):
+                raise ValueError("Raw partials must share the main engine and line order")
+            if any(
+                partial.spectra._corner_failed or partial.spectra._queue_failed
+                or not partial.spectra._queue_finished or partial.spectra._groups
+                for partial in partials
+            ):
+                raise RuntimeError("Finish every raw Gaussian group before scattering")
+            increments.extend(
+                increment for partial in partials
+                for increment in partial.spectra._corner_increments
+            )
+            owner_ids = set()
+            luminosity_bytes = 0
+            raw_bytes = 0
+            maximum_worker_bytes = 0
+            for partial in partials:
+                worker_bytes = 0
+                for increment in partial.spectra._corner_increments:
+                    own_bytes = sum(
+                        values.nbytes for values in (
+                            increment.terms.rows, increment.terms.cells,
+                            increment.terms.weights, increment.profiles,
+                            increment.touched_rows,
+                        )
+                    )
+                    raw_bytes += own_bytes
+                    worker_bytes += own_bytes
+                    owner = increment.luminosity
+                    while isinstance(owner.base, np.ndarray):
+                        owner = owner.base
+                    if id(owner) not in owner_ids:
+                        owner_ids.add(id(owner))
+                        luminosity_bytes += owner.nbytes
+                maximum_worker_bytes = max(maximum_worker_bytes, worker_bytes)
+            metrics = self._corner_store.scatter(
+                increments,
+                executor=executor,
+                workers=workers,
+            )
+        except BaseException:
+            # The store cancels and joins all writers before it raises. The main
+            # numerical accumulator is terminal after any failed wave, never saved.
+            self._corner_failed = True
+            raise
+        finally:
+            for partial in partials:
+                partial.spectra._corner_increments.clear()
+            increments.clear()
+        finished = perf_counter_ns()
+        elapsed = finished - started
+        self._maximum_worker_increment_bytes = max(
+            self._maximum_worker_increment_bytes, maximum_worker_bytes,
+        )
+        self._addition_intervals.append((started, finished))
+        self._corner_scatter_ns += elapsed
+        observations = self._scatter_statistics
+        observations['waves'] += 1
+        observations['workers'] = max(observations['workers'], workers)
+        observations['kernel_calls'] += metrics['kernel_calls']
+        observations['contiguous_X_logical_bytes'] += metrics['contiguous_X_logical_bytes']
+        observations['raw_corner_terms'] += metrics['raw_corner_terms']
+        observations['maximum_profile_tasks'] = max(
+            observations['maximum_profile_tasks'], metrics['profile_tasks'],
+        )
+        observations['maximum_pending_raw_owned_bytes'] = max(
+            observations['maximum_pending_raw_owned_bytes'], raw_bytes,
+        )
+        observations['maximum_pending_luminosity_owner_bytes'] = max(
+            observations['maximum_pending_luminosity_owner_bytes'], luminosity_bytes,
+        )
 
     def merge(self, other):
         """Preserve ordered profile, luminosity, count, moment and endpoint sums."""
@@ -236,12 +332,9 @@ class TemplateIntegratedSpectra(HistogramIntegratedSpectra):
             raise RuntimeError("Finish every Gaussian group before the ordered global merge")
         if self.spectral_method != other.spectral_method:
             raise ValueError("Cannot merge spectra calculated with different methods")
-        pending_bytes = sum(
-            sum(values.nbytes for values in increment)
-            for increment in other._corner_increments
-        )
-        self._maximum_worker_increment_bytes = max(self._maximum_worker_increment_bytes, pending_bytes)
-        check_corner_memory("before snapshot corner increment merge")
+        if other._corner_increments:
+            self._corner_failed = True
+            raise RuntimeError("Scatter the complete raw wave before ordered product merge")
         began = perf_counter()
         addition_started = perf_counter_ns()
         self.dL_dv += other.dL_dv
@@ -259,21 +352,12 @@ class TemplateIntegratedSpectra(HistogramIntegratedSpectra):
         self._addition_intervals.extend(other._addition_intervals)
         other._query_intervals.clear()
         other._addition_intervals.clear()
-        merge_started = perf_counter_ns()
-        try:
-            for increment in other._corner_increments:
-                self._corner_store.add(*increment)
-            other._corner_increments.clear()
-        except BaseException:
-            self._corner_failed = True
-            raise
-        merge_finished = perf_counter_ns()
-        self._corner_main_merge_ns += merge_finished - merge_started
-        self._addition_intervals.append((merge_started, merge_finished))
-        check_corner_memory("after snapshot corner increment merge")
         return self
 
-    def record_completed_wave(self, *, physical_ns, gaussian_ns, merge_ns, owned_input_bytes):
+    def record_completed_wave(
+        self, *, physical_ns, gaussian_ns, gaussian_worker_ns,
+        merge_ns, owned_input_bytes,
+    ):
         """Summarize nonoverlapping waves and release their small timing lists."""
         self._timing["query_and_profile_addition_ns"] += elapsed_union_ns(
             self._query_intervals + self._addition_intervals,
@@ -284,6 +368,7 @@ class TemplateIntegratedSpectra(HistogramIntegratedSpectra):
         self._timing["query_calls"] += len(self._query_intervals)
         self._timing["physical_preparation_wave_ns"] += physical_ns
         self._timing["gaussian_wave_ns"] += gaussian_ns
+        self._timing["gaussian_worker_wave_ns"] += gaussian_worker_ns
         self._timing["ordered_product_merge_wave_ns"] += merge_ns
         self._timing["maximum_retained_gaussian_input_bytes"] = max(
             self._timing["maximum_retained_gaussian_input_bytes"], owned_input_bytes,
@@ -321,14 +406,18 @@ class TemplateIntegratedSpectra(HistogramIntegratedSpectra):
             "final_corner_expansion_pending": not self._corner_finalized,
             "all_deferred_groups_finished": result["all_deferred_groups_finished"] and self._corner_finalized,
             "snapshot_corner_store_initialization_seconds": self._corner_init_ns / 1e9,
-            "snapshot_corner_main_merge_seconds": self._corner_main_merge_ns / 1e9,
+            "gaussian_worker_wave_seconds": timing["gaussian_worker_wave_ns"] / 1e9,
+            "inplace_corner_scatter_wave_seconds": self._corner_scatter_ns / 1e9,
+            "inplace_scatter_included_in_gaussian_wave": True,
+            "raw_wave_statistics": dict(self._scatter_statistics),
             "snapshot_corner_finalization_seconds": self._corner_final_ns / 1e9,
             "maximum_single_worker_increment_bytes": self._maximum_worker_increment_bytes,
-            "gaussian_total_seconds_including_corner_store": result["gaussian_wave_seconds_including_analytic_accounts_and_scheduling"] + (self._corner_init_ns + self._corner_main_merge_ns + self._corner_final_ns) / 1e9,
-            "activity_scope": "Original-cell validation/corner coalescing, indexed main additions and outside-width fallback; final convolution is separate",
+            "maximum_single_worker_increment_bytes_scope": "Owned raw term, touched-row and profile arrays only; unique pending luminosity owners are reported separately. Neither is process RSS.",
+            "gaussian_total_seconds_including_corner_store": result["gaussian_wave_seconds_including_analytic_accounts_and_scheduling"] + (self._corner_init_ns + self._corner_final_ns) / 1e9,
+            "activity_scope": "Original-cell validation/raw corner preparation, guarded inplace profile scattering and outside-width fallback; final convolution is separate",
             "finalization_scope": "Touched-row selection, stored-template convolution, profile addition and memory guards",
             "snapshot_corner_store": self._corner_final_metrics if self._corner_finalized else self._corner_store.statistics(),
-            "timing_note": "Corner main additions are inside ordered_product_merge_wave_seconds; final convolution is inside output construction. Do not add these overlapping totals twice.",
+            "timing_note": "Inplace scattering is already included in Gaussian wave wall and activity union; do not add it again. Ordered product merge contains small products/accounts. Final convolution is inside output construction.",
         })
         return result
 
@@ -383,14 +472,14 @@ class TemplateIntegratedSpectra(HistogramIntegratedSpectra):
             "corner_account_slots": self._corner_spec.slot_count,
             "corner_account_layout": "profile-major [original account, row-specific valid integer shift]",
             "cell_by_channel_probability_matrix_allocated": self.direct_statistics.get("fallback_probability_intervals", 0) > 0,
-            "probability_matrix_scope": "Only original outside-width fallback blocks use cell/channel matrices; covered rows use convolution without saved cell queues",
+            "probability_matrix_scope": "Only outside-width fallback uses cell/channel matrices; covered rows keep raw terms and read-only luminosity for one bounded scattering wave",
             "maximum_probability_rows": self.engine.maximum_probability_rows,
             "maximum_direct_probability_rows": self.engine.maximum_direct_probability_rows,
             "maximum_single_fallback_probability_array_bytes": self.engine.maximum_probability_rows * (self.velocity_edges_kms.size - 1) * 8,
-            "probability_memory_scope": "Fallback probability-block bound only; per-group key/interpolation arrays and the declared dense corner-account capacity are separate. These are not process RSS measurements.",
-            "work_counter_scope": "Original-cell deposit/fallback work; covered row-convolution work is reported separately",
+            "probability_memory_scope": "Fallback probability-block bound only; raw term buffers, pending unique luminosity owners and dense H capacity are separate. None is process RSS.",
+            "work_counter_scope": "Original raw corner terms and direct fallback; raw_corner_terms and weighted_profile_updates count contributions, not grouped unique keys. Final occupied nodes and convolution work are separate.",
             "snapshot_corner_expansion": self._corner_final_metrics,
-            "integration": "Original four template corners; identical row/shift luminosities coalesce in profile-major NumPy accounts before stored-row convolution; outside widths use stable original-cell integrals",
+            "integration": "Original four template corners scatter into disjoint profile-major NumPy planes before stored-row convolution; outside widths use stable original-cell integrals",
             "cutoff_sigma": 5.0,
             "cutoff_applies_to": self.engine.cutoff_applies_to,
             "renormalized": False,
@@ -398,7 +487,10 @@ class TemplateIntegratedSpectra(HistogramIntegratedSpectra):
             "timing_scope": "integration/accounting/add_batch durations sum overlapping worker calls; see processing_timings.gaussian for elapsed union and wave wall",
             "spectral_add_batch_scope": "Shared availability masks, direct owned luminosity queues and stable full moments; Gaussian queries occur in the next wave",
             "lookup_table": self.engine.lookup_tables.info(),
-            "portable_backend": "numpy-scipy-ragged-corner-convolution",
+            "portable_backend": "numpy-scipy-private-coo-corner-convolution",
+            "prebuilt_corner_backend": prepare_corner_scatter(),
+            "raw_wave_statistics": dict(self._scatter_statistics),
+            "raw_luminosity_retention": "Read-only packed owners survive for one bounded wave; every profile writer joins before release.",
         }
         accounting_engine = SimpleNamespace(
             coordinate_rule="original-cell",
@@ -428,9 +520,11 @@ class TemplateIntegratedSpectra(HistogramIntegratedSpectra):
                 "same +/-5sigma cutoff, no renormalization or luminosity omission threshold"
             )
             dust_report["merge_backend"] = {
-                "selected_threads": 1,
+                "selected_threads": self._scatter_statistics["workers"],
+                "maximum_profile_tasks": self._scatter_statistics["maximum_profile_tasks"],
+                "thread_scope": "Independent profile tasks use the existing worker pool; small products merge on one main thread.",
                 "batch_group_order_unchanged": True,
-                "storage": "Profile-major NumPy rows; each stored template allocates only integer shifts overlapping the observation window",
+                "storage": "Profile-major NumPy rows hold only overlapping integer shifts; raw terms and packed luminosity are bounded by one wave",
                 "floating_sum_tree_changed": True,
                 "new_interpolation_grid": False,
             }

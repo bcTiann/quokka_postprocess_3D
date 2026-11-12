@@ -1,9 +1,9 @@
 # Repository directories and reading order
 
 The Python production workflow defaults to `direct-template`: original cells
-locate four preintegrated fractional-mean/log-sigma templates. Standard SciPy
-sparse products or bounded NumPy weighted counts combine repeated corners
-within a batch; profile-major NumPy arrays accumulate those sums, and direct row convolutions produce the spectrum. No new parameter grid is created. The default `field_source: native-columns` reads original full-z tiles
+locate four preintegrated fractional-mean/log-sigma templates. Checked sparse
+contributions accumulate directly in disjoint NumPy profile planes, using a
+prebuilt, version-pinned SciPy kernel; direct row convolutions produce spectra. No new parameter grid is created. The default `field_source: native-columns` reads original full-z tiles
 into bounded RAM without writing a converted field copy. Snapshot metadata,
 physical inputs, original reads, RAM rearrangement and all numerical work remain
 timed; only Gaussian preparation is excluded. Process calculates/saves before invoking plot by
@@ -117,13 +117,12 @@ installed implementations and CPU dispatch. Plot reads only prepared arrays.
    timing; [template_engine.py](../src/quokka2s/products/gaussian/template_engine.py)
    retains direct bounded-block integration for standalone comparisons and
    valid out-of-coverage widths. `template_corners.py` locates the unchanged four
-   corners, and `corner_store.py` sums their luminosities using standard SciPy
-   products or bounded NumPy weighted counts within each batch. Up to four
-   luminosity accounts use exact integer-axis compression when the temporary
-   Cartesian grid is compact; other groups retain stable CSR sums. Integer
-   sort keys may use lossless uint32, while all physical values stay float64.
-   The main accumulator uses row-specific NumPy
-   shift arrays and ordinary indexed addition. Direct `np.convolve` expands each
+   corners and prepares unsorted original contributions. `corner_scatter.py`
+   validates buffer ownership, types and bounds before using the prebuilt private
+   SciPy 1.16.3 accumulator. One worker owns each profile plane; all writers join
+   before wave-local luminosities are released. `corner_store.py` owns the
+   profile-major NumPy shift arrays. There is no key sorting or temporary
+   luminosity histogram. Direct `np.convolve` expands each
    occupied template row, inside process timing.
    Default sigma coverage is [1e-5,1024] km/s, with natural-log
    step 1/32; valid uncovered widths use direct stable bin integration. Mean

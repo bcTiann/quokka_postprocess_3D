@@ -163,15 +163,17 @@ Intrinsic/attenuated, line and cold/hot accounts remain separate. There is no
 cell-brightness cut or additional grid approximation.
 
 The immutable table is prepared outside process time. Worker batches use NumPy
-coordinates and standard NumPy/SciPy reductions for weighted corner luminosities.
-Small account groups use weighted `np.bincount` on exactly compressed integer
-labels when its work/memory bounds fit. Other groups use stable sparse products.
+coordinates to prepare original corner contributions. Separate workers then own
+separate profile planes, accumulating weight times cell luminosity directly into
+NumPy arrays. The prebuilt private SciPy 1.16.3 `coo_matvec` kernel performs that
+arithmetic; no project code is compiled. Types, lengths, bounds and ownership are
+checked before the call. Writers join before their wave-local inputs are freed.
 These are identical sums at identical original nodes, with floating reduction
-differences, and do not change Gaussian parameter coverage.
-The main thread adds unique-corner increments into NumPy arrays. Every stored
+differences, and do not change Gaussian parameter coverage. Every stored
 template row with B bins has K+B-1 possible integer shifts overlapping K observed
 bins; each account stores just that row-specific interval. Direct NumPy
-convolution in valid mode maps its accumulated shift luminosities to K channels. All deposition, indexed additions, convolution and
+convolution in valid mode maps its accumulated shift luminosities to K channels.
+All raw-term preparation, in-place accumulation, convolution and
 luminosity multiplication remain inside process timing. Original-cell arrays
 survive only one bounded wave. Stored probabilities are zero outside each
 corner's own support; no original-cell support mask replaces that union.

@@ -335,6 +335,8 @@ class TemplateEngine:
 def prepare_template_engine(grid_parameters=None):
     """Build and verify the shared probability table before the process clock."""
     began = perf_counter()
+    from .corner_scatter import prepare_corner_scatter
+    prepare_corner_scatter()
     parameters = {} if grid_parameters is None else dict(grid_parameters)
     table = FractionalGaussianTable(**parameters)
     engine = TemplateEngine(table=table)

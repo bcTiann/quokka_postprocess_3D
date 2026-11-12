@@ -92,12 +92,18 @@ def process_template_batches(
                     "last_cell_id": cells.last_cell_id,
                 }
                 future.result()
-            gaussian_finished = perf_counter_ns()
+            gaussian_workers_finished = perf_counter_ns()
             finished_groups = sum(partial.spectra._groups_finished for partial in partials)
             if prepared_groups != finished_groups:
                 raise AssertionError("A Gaussian wave omitted one or more prepared groups")
             if any(partial.spectra._groups for partial in partials):
-                raise AssertionError("A completed Gaussian wave retained its input vectors")
+                raise AssertionError("A prepared Gaussian wave retained its coordinate queues")
+            products.spectra.scatter_corner_wave(
+                partials,
+                executor=executor,
+                workers=config.chunk_workers,
+            )
+            gaussian_finished = perf_counter_ns()
             merge_started = perf_counter_ns()
             for batch_number, cells, partial in zip(batch_numbers, wave_cells, partials):
                 products.failure_context = {
@@ -113,6 +119,7 @@ def process_template_batches(
             products.spectra.record_completed_wave(
                 physical_ns=physical_finished - physical_started,
                 gaussian_ns=gaussian_finished - gaussian_started,
+                gaussian_worker_ns=gaussian_workers_finished - gaussian_started,
                 merge_ns=merge_finished - merge_started,
                 owned_input_bytes=owned_input_bytes,
             )
@@ -121,6 +128,7 @@ def process_template_batches(
         except BaseException:
             # Wait only for this bounded wave before releasing every surviving
             # partial; no failed task is resubmitted or reused in another wave.
+            products.spectra._corner_failed = True
             for future in physical_futures + gaussian_futures:
                 future.cancel()
             for future in gaussian_futures:

@@ -1,10 +1,10 @@
-"""Accumulate original Gaussian corners in standard NumPy snapshot accounts.
+"""Prepare original Gaussian terms and own their bounded snapshot accounts.
 
-Each template row keeps only integer shifts whose stored support overlaps the
-observation window. Workers return compact unique-node luminosities; one main
-owner adds them into profile-major ragged rows. At the end, NumPy convolution
-expands each active row/account into the fixed velocity channels. Original-cell
-analytic accounts and outside-width integration remain in TemplateEngine.
+Each template row stores only integer shifts overlapping the observation
+window. Workers prepare checked raw corner terms; disjoint profile tasks add
+into existing NumPy account planes through the guarded prebuilt SciPy kernel.
+Final NumPy convolution, analytic accounts and outside-width integration keep
+their existing scientific rules.
 """
 from __future__ import annotations
 
@@ -15,7 +15,8 @@ from time import perf_counter
 
 import numpy as np
 
-from .template_corners import combine_corner_light, locate_corners
+from .template_corners import locate_corners, prepare_corner_increment
+from .corner_scatter import scatter_corner_profiles
 from .template_engine import TemplateEngine
 
 CORNER_MEMORY_LIMIT_BYTES = 20 * 1024**3
@@ -67,19 +68,18 @@ class RaggedCornerSpec:
 
 
 class CornerDepositEngine(TemplateEngine):
-    """Worker-local validation/accounts/fallback plus compact corner deposits.
+    """Worker-local original-cell checks/accounts/fallback and raw corner terms.
 
-    Each call returns (TemplateGroupResult, increment), where the increment is
-    (template row IDs, integer shifts, luminosity[U,P], global profile IDs).
-    The result contains fallback-only profiles and unchanged original-cell
-    analytic accounts. This mutable engine belongs to one worker thread; only
-    its immutable table and indexing spec are shared.
+    Each call returns (TemplateGroupResult, CornerIncrement). The result holds
+    fallback-only profiles and unchanged analytic original-cell accounts. Raw
+    increments borrow read-only luminosity only until this wave's profile
+    writers have joined. This mutable engine belongs to one worker thread.
     """
 
     def __init__(self, *, spec):
         super().__init__(table=spec.table)
         self.spec = spec
-        self.portable_backend = "numpy-scipy-compact-corner-deposit"
+        self.portable_backend = "numpy-original-corner-preparation"
         self._profile_ids = None
         self._increment = None
         self._metrics = None
@@ -134,15 +134,6 @@ class CornerDepositEngine(TemplateEngine):
             "probability_subbatches": 0,
             "direct_probability_batches": 0,
         }
-        metrics = {
-            "covered_selection_seconds": 0.0,
-            "coordinate_location_seconds": 0.0,
-            "key_and_light_grouping_seconds": 0.0,
-            "compact_increment_seconds": 0.0,
-            "positive_corner_entries": 0,
-            "window_corner_entries": 0,
-            "unique_corner_keys": 0,
-        }
         if np.all(covered):
             selected_centers = centers
             selected_sigmas = sigmas
@@ -151,37 +142,29 @@ class CornerDepositEngine(TemplateEngine):
             selected_centers = centers[covered]
             selected_sigmas = sigmas[covered]
             selected_light = luminosity[covered]
-        metrics["covered_selection_seconds"] = perf_counter() - began
-        if selected_centers.size:
-            check_corner_memory(
-                "compact template grouping buffers",
-                selected_centers.size * (768 + selected_light.shape[1] * 40),
-            )
-            began = perf_counter()
-            shifts, rows, fractions = locate_corners(
-                table=table,
-                centers=selected_centers,
-                sigmas=selected_sigmas,
-            )
-            metrics["coordinate_location_seconds"] = perf_counter() - began
-            began = perf_counter()
-            row_ids, shifts, light, grouping = combine_corner_light(
-                table=table,
-                shifts=shifts,
-                rows=rows,
-                fractions=fractions,
-                luminosity=selected_light,
-            )
-            metrics["key_and_light_grouping_seconds"] = perf_counter() - began
-            metrics.update(grouping)
-        else:
-            row_ids = np.empty(0, dtype=np.int64)
-            shifts = np.empty(0, dtype=np.int64)
-            light = np.empty((0, luminosity.shape[1]))
+        metrics = {"covered_selection_seconds": perf_counter() - began}
+        check_corner_memory(
+            "raw corner term preparation",
+            additional_bytes=selected_centers.size * 512,
+        )
         began = perf_counter()
-        increment = (row_ids, shifts, light, self._profile_ids.copy())
-        metrics["compact_increment_bytes"] = int(sum(values.nbytes for values in increment))
-        metrics["compact_increment_seconds"] = perf_counter() - began
+        shifts, rows, fractions = locate_corners(
+            table=table,
+            centers=selected_centers,
+            sigmas=selected_sigmas,
+        )
+        metrics["coordinate_location_seconds"] = perf_counter() - began
+        began = perf_counter()
+        increment, preparation = prepare_corner_increment(
+            spec=self.spec,
+            shifts=shifts,
+            rows=rows,
+            fractions=fractions,
+            luminosity=selected_light,
+            profiles=self._profile_ids,
+        )
+        metrics.update(preparation)
+        metrics["raw_term_preparation_seconds"] = perf_counter() - began
         probability_seconds = 0.0
         if np.any(outside):
             direct, direct_counts, probability_seconds = TemplateEngine._accumulate_probabilities(
@@ -214,47 +197,49 @@ class RaggedCornerStore:
         self.touched_rows = np.zeros(spec.row_shift_counts.size, dtype=bool)
         check_corner_memory("finished ragged account allocation")
         self.allocation_seconds = perf_counter() - began
-        self.add_seconds = 0.0
-        self.add_calls = 0
-        self.node_updates = 0
-        self.account_updates = 0
+        self.failed = False
+        self.scatter_seconds = 0.0
+        self.scatter_waves = 0
+        self.raw_corner_terms = 0
+        self.weighted_profile_updates = 0
 
-    def add(self, row_ids, shifts, luminosity, profile_ids):
-        """Add one independent unique-corner increment without retaining it."""
+    def scatter(self, increments, *, executor, workers):
+        """Add one checked wave into disjoint profile planes, then join all writers."""
         began = perf_counter()
-        if self.light is None:
-            raise RuntimeError("Cannot add after final corner expansion")
-        if (
-            luminosity.shape != (row_ids.size, profile_ids.size)
-            or shifts.shape != row_ids.shape
-        ):
-            raise ValueError("Corner coordinates, profiles and luminosity shapes disagree")
-        check_corner_memory(
-            "ragged indexed corner addition",
-            2 * luminosity.nbytes + row_ids.size * 32,
+        if self.failed or self.light is None:
+            raise RuntimeError("Cannot scatter into a failed or consumed corner store")
+        try:
+            if type(workers) is not int or workers < 1:
+                raise ValueError("Corner scattering requires a positive worker count")
+            maximum_rows = max(
+                (increment.terms.input_length for increment in increments),
+                default=0,
+            )
+            check_corner_memory(
+                "contiguous corner profile inputs",
+                additional_bytes=maximum_rows * min(workers, self.spec.profile_count) * 8,
+            )
+            metrics = scatter_corner_profiles(
+                store=self,
+                increments=increments,
+                executor=executor,
+            )
+            check_corner_memory("finished corner profile scattering")
+        except BaseException:
+            # The helper joins every submitted writer before propagating an
+            # error. Drop the partial H so it can never be reused or finalized.
+            self.failed = True
+            self.light = None
+            self.touched_rows = None
+            raise
+        self.scatter_seconds += perf_counter() - began
+        self.scatter_waves += 1
+        self.raw_corner_terms += metrics["raw_corner_terms"]
+        self.weighted_profile_updates += sum(
+            increment.terms.rows.size * increment.profiles.size
+            for increment in increments
         )
-        if np.any(row_ids < 0) or np.any(row_ids >= self.spec.row_shift_counts.size):
-            raise ValueError("Corner template row is outside the prepared table")
-        relative = shifts - self.spec.row_minimum_shifts[row_ids]
-        if np.any(relative < 0) or np.any(relative >= self.spec.row_shift_counts[row_ids]):
-            raise ValueError("Corner shift is outside its row's observation overlap")
-        slots = self.spec.row_offsets[row_ids] + relative
-        if np.any(slots[1:] <= slots[:-1]):
-            raise ValueError("A dense increment requires sorted unique corner nodes")
-        if np.any(profile_ids < 0) or np.any(profile_ids >= self.spec.profile_count):
-            raise ValueError("Corner profile is outside the store")
-        if np.unique(profile_ids).size != profile_ids.size:
-            raise ValueError("Corner profiles must be unique")
-        # At most twelve accounts, each using one vectorized unique-slot update.
-        for local, profile in enumerate(profile_ids):
-            plane = self.light[profile]
-            plane[slots] += luminosity[:, local]
-        self.touched_rows[row_ids] = True
-        self.add_calls += 1
-        self.node_updates += int(row_ids.size)
-        self.account_updates += int(luminosity.size)
-        self.add_seconds += perf_counter() - began
-        check_corner_memory("finished ragged indexed addition")
+        return metrics
 
     def statistics(self):
         """Report array capacity and measured timings, without equating bytes to RSS."""
@@ -263,10 +248,10 @@ class RaggedCornerStore:
             "retained_dense_account_bytes": self.spec.account_bytes if self.light is not None else 0,
             "slot_count": self.spec.slot_count,
             "allocation_seconds": self.allocation_seconds,
-            "add_calls": self.add_calls,
-            "add_seconds": self.add_seconds,
-            "node_updates": self.node_updates,
-            "account_updates": self.account_updates,
+            "scatter_waves": self.scatter_waves,
+            "scatter_seconds": self.scatter_seconds,
+            "raw_corner_terms": self.raw_corner_terms,
+            "weighted_profile_updates": self.weighted_profile_updates,
             "array_layout": "profile-major-ragged",
         }
 
@@ -277,8 +262,8 @@ class RaggedCornerStore:
         Direct NumPy convolution in valid mode returns exactly K channels. This
         is the same stored-corner linear sum; there is no FFT or new cutoff.
         """
-        if self.light is None:
-            raise RuntimeError("Ragged corner accounts have already been consumed")
+        if self.failed or self.light is None:
+            raise RuntimeError("Cannot finalize failed or consumed corner accounts")
         output = np.zeros((self.spec.table.K, self.spec.profile_count))
         metrics = {
             **self.statistics(),

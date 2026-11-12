@@ -157,6 +157,24 @@ class FractionalGaussianTable:
         self.row_bin_counts = _readonly(row_bin_counts)
         self.row_value_offsets = _readonly(row_starts[:-1])
         self.flat_values = _readonly(values)
+        # Narrow layers have two uniform transition segments separated by an
+        # exactly flat gap. Wide layers use one uniform [0,1] phase grid.
+        transition_intervals = phase_counts // 2 - 1
+        transition_radii = phase_values[phase_starts[:-1] + transition_intervals]
+        right_starts = phase_values[phase_starts[:-1] + transition_intervals + 1]
+        narrow_layers = radii < 0.5
+        inverse_steps = (phase_counts - 1).astype(np.float64)
+        np.divide(
+            transition_intervals,
+            transition_radii,
+            out=inverse_steps,
+            where=narrow_layers,
+        )
+        self.narrow_phase_layers = _readonly(narrow_layers)
+        self.phase_transition_intervals = _readonly(transition_intervals)
+        self.phase_transition_radii = _readonly(transition_radii)
+        self.phase_right_starts = _readonly(right_starts)
+        self.phase_inverse_steps = _readonly(inverse_steps)
         self.build_seconds = perf_counter() - began
         self._signature = self.signature()
 
@@ -200,6 +218,11 @@ class FractionalGaussianTable:
             self.phase_axis_values,
             self.phase_layer_ids,
             self.encoded_phase_axis,
+            self.narrow_phase_layers,
+            self.phase_transition_intervals,
+            self.phase_transition_radii,
+            self.phase_right_starts,
+            self.phase_inverse_steps,
             self.layer_min_bins,
             self.layer_bin_counts,
             self.row_min_bins,
@@ -235,18 +258,43 @@ class FractionalGaussianTable:
         return centers, sigmas, shifts, phases
 
     def _phase_brackets(self, layer_ids, phases):
-        """Find per-row phase neighbors without Python iteration over cells."""
-        encoded = 2.0 * layer_ids + phases
-        lower = np.searchsorted(self.encoded_phase_axis, encoded, side="right") - 1
-        # Encoding may move a query by one ulp. Correct against actual phase
-        # coordinates, so exact/nearly exact phase nodes retain their meaning.
-        lower = lower - (phases < self.phase_axis_values[lower])
-        upper = lower + 1
+        """Invert the existing uniform segments, then use actual stored knots.
+
+        Inputs are matching layer/phase vectors from validated Gaussian rows.
+        Arithmetic gives a candidate index; comparisons correct rounding near
+        nodes. The returned fractions use the original knots, with no new grid.
+        """
+        counts = self.phase_counts[layer_ids]
+        local = np.floor(phases * (counts - 1)).astype(np.int64)
+        narrow = self.narrow_phase_layers[layer_ids]
+        if np.any(narrow):
+            selected_layers = layer_ids[narrow]
+            selected_phases = phases[narrow]
+            middle = self.phase_transition_intervals[selected_layers]
+            radius = self.phase_transition_radii[selected_layers]
+            right_start = self.phase_right_starts[selected_layers]
+            inverse_step = self.phase_inverse_steps[selected_layers]
+            selected_local = np.floor(selected_phases * inverse_step).astype(np.int64)
+            gap = (selected_phases > radius) & (selected_phases < right_start)
+            selected_local[gap] = middle[gap]
+            right = selected_phases >= right_start
+            selected_local[right] = (
+                middle[right] + 1
+                + np.floor(
+                    (selected_phases[right] - right_start[right]) * inverse_step[right]
+                ).astype(np.int64)
+            )
+            local[narrow] = selected_local
+        np.maximum(local, 0, out=local)
+        np.minimum(local, counts - 1, out=local)
         terminal = phases >= 1.0
-        upper = np.where(terminal, lower, upper)
-        too_low = (~terminal) & (phases > self.phase_axis_values[upper])
-        lower = lower + too_low
-        upper = upper + too_low
+        local[terminal] = counts[terminal] - 1
+        lower = self.phase_starts[layer_ids] + local
+        lower -= phases < self.phase_axis_values[lower]
+        upper = np.where(terminal, lower, lower + 1)
+        too_low = (~terminal) & (phases >= self.phase_axis_values[upper])
+        lower += too_low
+        upper += too_low
         lower_phase = self.phase_axis_values[lower]
         upper_phase = self.phase_axis_values[upper]
         fractions = np.divide(
@@ -256,7 +304,7 @@ class FractionalGaussianTable:
             where=upper != lower,
         )
         if np.any(fractions < -1e-12) or np.any(fractions > 1.0 + 1e-12):
-            raise AssertionError("Vectorized phase search failed to bracket an input")
+            raise AssertionError("Arithmetic phase search failed to bracket an input")
         np.clip(fractions, 0.0, 1.0, out=fractions)
         return lower, upper, fractions
 
@@ -328,6 +376,11 @@ class FractionalGaussianTable:
             self.phase_axis_values,
             self.phase_layer_ids,
             self.encoded_phase_axis,
+            self.narrow_phase_layers,
+            self.phase_transition_intervals,
+            self.phase_transition_radii,
+            self.phase_right_starts,
+            self.phase_inverse_steps,
             self.layer_min_bins,
             self.layer_bin_counts,
             self.row_min_bins,
@@ -340,6 +393,13 @@ class FractionalGaussianTable:
             "build_seconds": self.build_seconds,
             "table_bytes": int(self.flat_values.nbytes),
             "memory_bytes": int(sum(buffer.nbytes for buffer in buffers)),
+            "phase_index_metadata_bytes": int(
+                self.narrow_phase_layers.nbytes
+                + self.phase_transition_intervals.nbytes
+                + self.phase_transition_radii.nbytes
+                + self.phase_right_starts.nbytes
+                + self.phase_inverse_steps.nbytes
+            ),
             "configuration": {
                 **asdict(self.parameters),
                 "v_min": float(self.edges[0]),
@@ -354,6 +414,7 @@ class FractionalGaussianTable:
                 "maximum_extended_bin_count": int(self.layer_bin_counts.max()),
                 "mean_decomposition": "mu/delta_v=floor(mu/delta_v)+phase; negative shifts use floor",
                 "phase_interpolation": "linear dimensionless phase separately on each sigma layer",
+                "phase_bracketing": "piecewise-uniform arithmetic corrected against actual stored knots",
                 "sigma_interpolation": "linear in natural log(sigma); node placement has the same logarithmic spacing",
                 "phase_spacing": "At most min(maximum_phase_step,mu_spacing_ratio*sigma/delta_v) in nonflat transition regions",
                 "flat_interior": "When 10*sigma < delta_v, only exact five-sigma-flat interior knots are omitted",

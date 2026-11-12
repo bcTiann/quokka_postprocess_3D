@@ -234,13 +234,16 @@ eight concurrent batches, five field-read workers and 32 column-derivation tasks
 The eight-x-cell `slab_nx` setting applies to the explicit z-contiguous source.
 Gaussian integration defaults to `direct-template`: each original cell locates
 four preintegrated fractional-mean/log-sigma templates and assigns its luminosity
-with the existing interpolation weights. Workers combine identical template-row/integer-shift
-contributions with NumPy weighted counts for small account groups and standard
-SciPy sparse products for larger or sparse groups. The main thread adds them to
-profile-major NumPy rows. Direct NumPy convolution of each occupied row produces
+with the existing interpolation weights. Workers prepare original corner
+contributions. The same pool then processes disjoint spectrum profiles, adding
+weighted cell luminosities directly into profile-major NumPy rows. The guarded
+accumulator uses SciPy 1.16.3's prebuilt private `coo_matvec`; the version is
+pinned and a small startup probe verifies its addition behavior. No project
+compiler is used. Direct NumPy convolution of each occupied row produces
 the final 400-bin spectrum after all batches.
 This rearranges linear sums without introducing another interpolation grid.
-No whole-snapshot cell-by-channel matrix or original-cell queue is retained.
+Original-cell luminosity survives only its bounded wave, until all profile
+writers finish. No whole-snapshot cell-by-channel matrix or cell queue is kept.
 Each template keeps its own five-sigma support without renormalization.
 The table's default sigma coverage is `1e-5` to `1024 km/s`, with natural-log
 spacing `0.03125`. Valid widths outside that table use original-cell stable bin
