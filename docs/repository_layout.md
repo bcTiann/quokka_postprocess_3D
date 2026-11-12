@@ -2,8 +2,8 @@
 
 The Python production workflow defaults to `direct-template`: original cells
 locate four preintegrated fractional-mean/log-sigma templates. Standard SciPy
-sparse products combine repeated corners within a batch; profile-major NumPy
-arrays accumulate those sums, and direct row convolutions produce the spectrum. No new parameter grid is created. The default `field_source: native-columns` reads original full-z tiles
+sparse products or bounded NumPy weighted counts combine repeated corners
+within a batch; profile-major NumPy arrays accumulate those sums, and direct row convolutions produce the spectrum. No new parameter grid is created. The default `field_source: native-columns` reads original full-z tiles
 into bounded RAM without writing a converted field copy. Snapshot metadata,
 physical inputs, original reads, RAM rearrangement and all numerical work remain
 timed; only Gaussian preparation is excluded. Process calculates/saves before invoking plot by
@@ -95,9 +95,13 @@ installed implementations and CPU dispatch. Plot reads only prepared arrays.
    [snapshot_reader.py](../src/quokka2s/snapshot_reader.py) dispatches this explicit path
    while keeping native block/NumPy references for independent utilities.
    `slab.iter_batches()` yields read-only views; consume them before releasing
-   the slab. Up to 16 batches run concurrently and merge in input order.
+   the slab. Up to eight batches run concurrently and merge in input order.
 4. [cell_emission.py](../src/quokka2s/physics/cell_emission.py): obtain each named
    line's emissivity and temperature, then apply foreground dust.
+   [table_interpolation.py](../src/quokka2s/table_interpolation.py) applies the
+   original eight linear table weights to multiple fields using standard SciPy
+   sparse multiplication. Explicit zeros preserve missing-value propagation;
+   special regular-grid settings retain their existing path.
 5. [emission_products.py](../src/quokka2s/products/emission_products.py) sends each
    batch to images, spectra and gas phases. The default
    [template_spectra.py](../src/quokka2s/products/gaussian/template_spectra.py)
@@ -114,7 +118,11 @@ installed implementations and CPU dispatch. Plot reads only prepared arrays.
    retains direct bounded-block integration for standalone comparisons and
    valid out-of-coverage widths. `template_corners.py` locates the unchanged four
    corners, and `corner_store.py` sums their luminosities using standard SciPy
-   CSR products within each batch. The main accumulator uses row-specific NumPy
+   products or bounded NumPy weighted counts within each batch. Up to four
+   luminosity accounts use exact integer-axis compression when the temporary
+   Cartesian grid is compact; other groups retain stable CSR sums. Integer
+   sort keys may use lossless uint32, while all physical values stay float64.
+   The main accumulator uses row-specific NumPy
    shift arrays and ordinary indexed addition. Direct `np.convolve` expands each
    occupied template row, inside process timing.
    Default sigma coverage is [1e-5,1024] km/s, with natural-log

@@ -12,6 +12,7 @@ from scipy.interpolate import RegularGridInterpolator
 
 from quokka2s.cloudy.table_definition import EXPECTED_AXIS_ORDER
 from quokka2s.physics.composition import reject_superseded_composition
+from quokka2s.table_interpolation import trilinear_weight_matrix
 
 
 TOUCH_EPS = 1.0e-12
@@ -148,25 +149,19 @@ def _weighted_corners(brackets):
 
 
 def _sum_corner_fields(values, corners, selected):
-    """Sum selected queries for all lines, returning shape (L, R).
+    """Apply selected query weights to current fields, returning shape (L, R).
 
     values has shape (L, N_NH, N_nH, N_T); selected is a (Q,) query mask.
-    Advanced table indexing produces contiguous query rows after transposing
-    to (R, L). Keep that layout during all eight additions, then return its
-    transpose. The per-query corner addition order remains unchanged.
+    Standard SciPy CSR evaluates all fields together. Every original corner
+    remains, including zero weights that can propagate a missing value.
     """
-    all_selected = bool(np.all(selected))
-    output = np.zeros((int(np.count_nonzero(selected)), values.shape[0]))
-    for indices, weight in corners:
-        if all_selected:
-            selected_indices = indices
-            selected_weight = weight
-        else:
-            selected_indices = tuple(index[selected] for index in indices)
-            selected_weight = weight[selected]
-        gathered = values[(slice(None), *selected_indices)].T
-        output += gathered * selected_weight[:, None]
-    return output.T
+    matrix = trilinear_weight_matrix(
+        grid_shape=values.shape[1:],
+        corners=corners,
+        selected=selected,
+    )
+    fields = values.reshape(values.shape[0], -1).T
+    return (matrix @ fields).T
 
 
 class CloudyLookup:

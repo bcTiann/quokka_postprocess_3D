@@ -563,7 +563,9 @@ Inside `DespoticCellReader.read_fields()`, follow five steps:
    all N cells. `self.lookup.prepare_queries()` prepares their logarithmic
    coordinates once. Subsequent field queries reuse this batch-local record.
 2. `self.lookup.temperature_and_co(queries=queries)` queries T_D, CO10 and CO21
-   together for all N cells at those coordinates.
+   together for all N cells at those coordinates. The shared
+   `table_interpolation.py` applies their original linear corner weights with
+   standard SciPy sparse multiplication, retaining explicit zero weights.
 3. Mark unavailable/nonpositive T_D and select eligible cold cells using the
    caller's T_QUOKKA branch. These two masks stay local to `read_fields()`.
 4. `self.read_cii_and_hydrogen_densities()` queries CII lumPerH and e-/H+/H
@@ -580,9 +582,11 @@ Inside `CloudyCellReader.read_fields()`, follow this order:
    the selected cell order.
 2. `self.lookup.interpolate_available()` queries the current 3D table. It
    prepares logarithmic coordinates and reuses the same eight corner weights
-   for support checks and linear/log interpolation of successful cells. NumPy
-   adds all line values in contiguous query rows, then returns the line-first
-   matrix. No separate model-depth coordinate is supplied.
+   for support checks and linear/log interpolation of successful cells.
+   [table_interpolation.py](../src/quokka2s/table_interpolation.py) forms a CSR
+   row with those eight weights and multiplies all needed field columns using
+   standard SciPy. Explicit zero weights remain to preserve missing-node NaN
+   propagation. The returned matrix is line-first. No separate model-depth coordinate is supplied.
 3. `self.count_column_clipping()` counts NH clipping among successful queries.
 4. Retain successful query rows and their original `cell_indices`. When every
    query succeeds, the eight named coefficient arrays are direct row views of
@@ -708,8 +712,11 @@ go through a rebinned image. The default `direct-template` route is:
    splits each mean into integer shift and fractional phase, locates two sigma
    layers and two phase knots on each layer, and retains the same four corner
    weights. There is no new mu/sigma grid. A corner's key is its existing
-   template row plus integer channel shift. Workers use SciPy CSR matrices to
-   sum `weight * cell luminosity` for equal keys across 40 accounts: two dust
+   template row plus integer channel shift. Workers sum `weight * cell luminosity`
+   for equal keys using bounded NumPy weighted counts for small account groups
+   or stable SciPy sparse products otherwise. Integer labels may be compressed
+   or sorted as uint32 without changing the original nodes or float64 weights.
+   The final 40 accounts remain separate: two dust
    states, ten lines and two temperature branches. Each line keeps its own
    availability mask and luminosity.
 5. Main input-light, count, full-moment and analytic endpoint accounts merge

@@ -235,7 +235,8 @@ The eight-x-cell `slab_nx` setting applies to the explicit z-contiguous source.
 Gaussian integration defaults to `direct-template`: each original cell locates
 four preintegrated fractional-mean/log-sigma templates and assigns its luminosity
 with the existing interpolation weights. Workers combine identical template-row/integer-shift
-contributions with standard SciPy sparse products. The main thread adds them to
+contributions with NumPy weighted counts for small account groups and standard
+SciPy sparse products for larger or sparse groups. The main thread adds them to
 profile-major NumPy rows. Direct NumPy convolution of each occupied row produces
 the final 400-bin spectrum after all batches.
 This rearranges linear sums without introducing another interpolation grid.

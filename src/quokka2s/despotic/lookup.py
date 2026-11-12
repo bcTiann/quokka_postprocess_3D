@@ -8,6 +8,7 @@ import numpy as np
 from scipy.interpolate import RegularGridInterpolator
 
 from quokka2s.despotic.table_data import DespoticTable, LINE_RESULT_FIELDS, SpeciesRecord
+from quokka2s.table_interpolation import interpolate_regular_grid
 
 
 @dataclass(frozen=True)
@@ -331,7 +332,10 @@ class DespoticLookup:
         for start in range(0, query_count, self._EVAL_CHUNK):
             stop = min(start + self._EVAL_CHUNK, query_count)
             points = coordinates.logarithmic_points(start=start, stop=stop)
-            values[start:stop] = interpolator(points)
+            values[start:stop] = interpolate_regular_grid(
+                interpolator=interpolator,
+                points=points,
+            )
         return values.reshape((*coordinates.query_shape, *output_shape))
 
     def _interpolate_field(self, *, token: str, queries: DespoticQueries) -> np.ndarray:
@@ -381,7 +385,7 @@ class DespoticLookup:
         """Read T [K] and CO(1-0)/(2-1) [erg/s/H] at the same prepared queries.
 
         Returns DespoticTemperatureCO, with each array retaining shape S.
-        Uses the existing three-output RGI; missing support remains per field.
+        Uses the existing three-field coefficients; missing support is per field.
         Example: fields = lookup.temperature_and_co(queries=queries).
         """
         interpolator = self._temperature_and_co_interpolator

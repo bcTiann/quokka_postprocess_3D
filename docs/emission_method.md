@@ -58,8 +58,11 @@ does not move a cell into the hot QUOKKA branch.
 DESPOTIC interpolates stored field values directly on logarithmic coordinates,
 with the adopted SciPy `RegularGridInterpolator` semantics. The process loader
 reads its seven required fields while full table tools retain their complete
-loader. Queries use SciPy's regular-grid interpolation directly, retaining
-its original per-field NaN propagation and special error policies.
+loader. Standard SciPy sparse multiplication applies the same eight linear
+corner weights to the fields together. Explicit zero weights retain original
+per-field NaN propagation. Singleton axes and special interpolation/error
+settings retain the existing regular-grid path. The shared implementation
+is `table_interpolation.py`; no project compilation is required.
 Cloudy coefficients are interpolated in logarithm
 unless a valid zero corner has non-negligible interpolation weight, when
 that line/query uses the coefficient itself. Its attenuation lookup coordinate
@@ -160,7 +163,11 @@ Intrinsic/attenuated, line and cold/hot accounts remain separate. There is no
 cell-brightness cut or additional grid approximation.
 
 The immutable table is prepared outside process time. Worker batches use NumPy
-coordinates and standard SciPy CSR products for weighted corner luminosities.
+coordinates and standard NumPy/SciPy reductions for weighted corner luminosities.
+Small account groups use weighted `np.bincount` on exactly compressed integer
+labels when its work/memory bounds fit. Other groups use stable sparse products.
+These are identical sums at identical original nodes, with floating reduction
+differences, and do not change Gaussian parameter coverage.
 The main thread adds unique-corner increments into NumPy arrays. Every stored
 template row with B bins has K+B-1 possible integer shifts overlapping K observed
 bins; each account stores just that row-specific interval. Direct NumPy

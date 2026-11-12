@@ -400,6 +400,11 @@ The kernel locates two sigma layers and, separately on each, two phase knots.
 Linear interpolation in phase and in `ln(sigma)` supplies four nonnegative
 weights. NumPy/SciPy sum the weighted cell luminosities by identical template
 row and integer-bin shift, keeping line, dust and temperature accounts separate.
+Groups with up to four accounts use exact integer-label compression and weighted
+`np.bincount` when the temporary grid fits implementation work/memory bounds.
+Larger or sparse groups use stable CSR sums. Integer sort keys may use uint32
+losslessly; all physical values and weights remain float64. This choice affects
+summation cost, not Gaussian precision, range or luminosity selection.
 Workers return independent compact increments; the main thread adds them to
 profile-major NumPy arrays. For a B-bin stored template row, exactly K+B-1 integer
 shifts can overlap K observed bins. Direct `np.convolve(..., mode="valid")` turns
