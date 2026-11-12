@@ -43,8 +43,8 @@ class CloudyQueryResult:
         at that query is NaN. These flags do not yet describe original batch cells.
 
     Example: failed_queries=[False, True] for selected batch cells 1 and 3 means
-    that only cell 3's query failed. CloudyCellReader.restore_batch_positions()
-    maps it back to the original batch.
+    that only cell 3's query failed. CloudyCellReader keeps successful query 0
+    with original cell index 1; the final atomic fields leave cell 3 missing.
     """
 
     emissivity_per_nH2: np.ndarray
@@ -449,8 +449,8 @@ class CloudyLookup:
             emissivity_per_nH2 has shape (L, *S) [erg cm^3/s]. If any line touches
             failed nodes, every line at that query is NaN; physical zeros stay zero.
             Example: result.failed_queries[7] describes the eighth query, before
-            CloudyCellReader.restore_batch_positions() maps results to the
-            original batch.
+            CloudyCellReader selects successful queries and retains their
+            original batch cell indices.
         """
         coordinates = self.prepare_interpolation_coordinates(
             temperature_K=temperature_K,

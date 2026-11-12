@@ -106,26 +106,24 @@ def calculate_cold_hi21_emissivity(despotic_fields, selected_cells):
 def calculate_hot_atomic_emissivities(
     *,
     cloudy_fields,
-    hydrogen_density_cm3,
-    selected_cells,
     line_keys,
 ):
-    """Return hot atomic epsilon by line name [erg/s/cm^3], each (Nhot,).
+    """Return hot atomic epsilon for compact successful Cloudy queries.
 
     cloudy_fields is CloudyCellFields from CloudyCellReader.read_fields(); its
-    emissivity_per_nH2 maps each line name to a (B,) array [erg cm^3/s]. nH is
-    the physical (B,) density [cm^-3], before any table clipping.
-    selected_cells is the (B,) bool mask selecting successful hot Cloudy queries;
-    DESPOTIC availability does not affect this selection.
+    emissivity_per_nH2 maps each line name to an (R,) array [erg cm^3/s]. Its
+    physical_hydrogen_density_cm3 holds the matching original nH [cm^-3], before
+    table-coordinate clipping. Failed queries have already been omitted;
+    DESPOTIC availability does not affect which hot queries are retained.
     line_keys names the lines in the current group, e.g. ('cii', 'halpha', 'hi21').
-    Example: result['halpha'][0] describes the first selected hot cell.
+    Returns named (R,) epsilon [erg/s/cm^3]. For example, result['halpha'][0]
+    belongs at original batch position cloudy_fields.cell_indices[0].
     """
-    physical_hydrogen_density_cm3 = hydrogen_density_cm3[selected_cells]
-    hydrogen_density_squared = physical_hydrogen_density_cm3 ** 2
+    hydrogen_density_squared = cloudy_fields.physical_hydrogen_density_cm3 ** 2
     emissivity = {}
     for line_key in line_keys:
         emissivity_per_nH2 = cloudy_fields.emissivity_per_nH2[line_key]
-        line_emissivity = emissivity_per_nH2[selected_cells] * hydrogen_density_squared
+        line_emissivity = emissivity_per_nH2 * hydrogen_density_squared
         check_field_values('Cloudy volume emissivity', line_emissivity)
         emissivity[line_key] = line_emissivity
     return emissivity

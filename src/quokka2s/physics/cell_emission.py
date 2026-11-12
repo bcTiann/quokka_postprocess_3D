@@ -190,7 +190,7 @@ class CellEmissionCalculator:
             cold_cells=cold_cells,
         )
 
-        # 3. Read Cloudy emission and retain its query temperature for every hot cell.
+        # 3. Keep successful hot Cloudy queries with their original cell indices.
         cloudy_fields = self.cloudy_reader.read_fields(
             cells=cells,
             selected_cells=~cold_cells,
@@ -240,8 +240,9 @@ class CellEmissionCalculator:
         cold_cells : ndarray of bool, shape (B,)
             T_QUOKKA < 3000 K; table availability does not change this mask.
         despotic_fields, cloudy_fields : DespoticCellFields, CloudyCellFields
-            From the two readers. Each carries its own gas temperature and
-            queried emission fields in the original cell shape and order.
+            From the two readers. DESPOTIC keeps the original batch shape;
+            Cloudy retains compact successful hot queries with their original
+            cell indices. Each carries its own matching gas temperature.
 
         Returns
         -------
@@ -270,8 +271,6 @@ class CellEmissionCalculator:
         # All eight hot atomic lines use the same Cloudy state and physical nH.
         self.fill_hot_cloudy_lines(
             lines=lines,
-            cells=cells,
-            cold_cells=cold_cells,
             cloudy_fields=cloudy_fields,
         )
         co_lines = self.calculate_co_lines(
@@ -409,31 +408,26 @@ class CellEmissionCalculator:
         self,
         *,
         lines: dict[str, IntrinsicLineEmission],
-        cells: CellBatch,
-        cold_cells: np.ndarray,
         cloudy_fields: CloudyCellFields,
     ) -> None:
         """Write hot emissivities and the exact temperature used to query Cloudy.
 
         lines contains one full-shape result for each of the eight atomic lines.
-        cells supplies physical nH [cm^-3]; cold_cells is the original (B,) mask.
-        cloudy_fields supplies emissivity_per_nH2 and its query temperatures [K].
-        Updates both arrays at successful hot positions; returns None.
+        cloudy_fields supplies only successful hot query coefficients, physical
+        nH [cm^-3], temperatures [K] and their original cell indices. Updates the
+        final paired arrays directly; failed hot positions remain NaN, while
+        the existing cold entries are retained. Returns None.
         """
-        hot_cloudy_cells = ~cold_cells & ~cloudy_fields.failed_cells
         hot_emissivities = calculate_hot_atomic_emissivities(
             cloudy_fields=cloudy_fields,
-            hydrogen_density_cm3=cells.hydrogen_density_cm3,
-            selected_cells=hot_cloudy_cells,
             line_keys=tuple(lines),
         )
-        temperature_K = cloudy_fields.temperature_K[hot_cloudy_cells]
         for line_key, emissivity in hot_emissivities.items():
             self.assign_emission_from_gas_state(
                 line=lines[line_key],
-                selected_cells=hot_cloudy_cells,
+                selected_cells=cloudy_fields.cell_indices,
                 emissivity_erg_s_cm3=emissivity,
-                temperature_K=temperature_K,
+                temperature_K=cloudy_fields.temperature_K,
             )
 
     def create_empty_intrinsic_lines(
@@ -465,7 +459,8 @@ class CellEmissionCalculator:
     ) -> None:
         """Put the selected gas state's emissivity and temperature into one line.
 
-        line holds two original (B,) destination arrays; selected_cells is (B,).
+        line holds two original (B,) destination arrays. selected_cells is a
+        (B,) boolean mask or an (R,) vector of original batch cell indices.
         The supplied epsilon [erg/s/cm^3] and T [K] each have R entries, where
         R is the number of selected cells. Updates both arrays; returns None.
         Example: mask [True, False, True] puts epsilon [2, 7] and T [50, 100]

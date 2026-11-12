@@ -513,10 +513,11 @@ The query results, masks, and emissivity arrays remain local to `calculate()`.
    and CO `lumPerH` for all cells,
    then CII `lumPerH` and electron, ionized-H, and neutral-H number densities
    for cold cells with valid DESPOTIC temperature.
-4. `self.cloudy_reader.read_fields()` returns `cloudy_fields` for every hot
-   cell, independently of DESPOTIC. The named atomic-line values are
-   emissivity_per_nH2 [erg cm³/s]. Failed Cloudy queries affect atomic lines
-   in those hot cells; they do not remove DESPOTIC CO.
+4. `self.cloudy_reader.read_fields()` queries hot cells independently of
+   DESPOTIC and returns successful queries compactly. The named atomic-line
+   values are emissivity_per_nH2 [erg cm³/s], accompanied by original cell
+   indices, query temperature and physical nH. Failed Cloudy queries leave
+   atomic lines missing at those hot cells; they do not remove DESPOTIC CO.
 5. `self.calculate_intrinsic_lines()` returns one `IntrinsicLineEmission` per
    line. Each record keeps its emissivity [erg/s/cm³] and the temperature [K]
    of the adopted emitting state together, both `(N,)`. Follow these actions:
@@ -524,8 +525,9 @@ The query results, masks, and emissivity arrays remain local to `calculate()`.
    - `calculate_cold_hydrogen_and_cii_lines()`: calculate cold CII and analytic
      Halpha/HI from DESPOTIC fields, keeping its returned temperature.
    - `initialize_ciii_and_civ_lines()`: set cold CIII/CIV emission to zero.
-   - `fill_hot_cloudy_lines()`: fill all eight hot atomic lines from Cloudy,
-     keeping the temperature used for the Cloudy query.
+   - `fill_hot_cloudy_lines()`: multiply compact Cloudy coefficients by their
+     matching physical `nH**2`, then fill final atomic ε/T arrays at the saved
+     cell indices. It retains the exact temperature used for each query.
    - `calculate_co_lines()`: calculate both CO lines from DESPOTIC fields and
      temperature in every QUOKKA temperature branch.
 
@@ -551,7 +553,10 @@ the lookup stored on that reader; callers supply the current cell inputs.
 `despotic_fields` holds named temperature, luminosity-per-H, and number-density
 arrays, each `(N,)`.
 Cold-only fields are NaN elsewhere. `cloudy_fields.emissivity_per_nH2['halpha']`
-is the Halpha `(N,)` array, with NaN outside successful selected hot cells.
+is a compact `(R,)` array for the R successful hot queries. Its entry 7 belongs
+to original cell `cloudy_fields.cell_indices[7]`; its matching T and physical nH
+have the same compact order. Only the final per-line ε/T arrays have shape `(N,)`
+and retain NaN at unavailable positions.
 The calculator's emissivity method passes these arrays to the per-species
 formula functions; those functions do not receive lookup objects.
 
@@ -580,12 +585,13 @@ Inside `CloudyCellReader.read_fields()`, follow this order:
    prepares logarithmic coordinates, inspects nodes once, and interpolates
    successful cells. No separate model-depth coordinate is supplied.
 3. `self.count_column_clipping()` counts NH clipping among successful queries.
-4. `self.restore_batch_positions()` places `(8, Q)` queried values back into
-   the original N-cell positions, then returns named `(N,)` row views and
-   `temperature_K`, the temperature supplied for each queried cell.
-   Unqueried or failed emissivities remain NaN; unqueried temperatures are NaN.
-   `failed_cells`
-   marks only queried failures; an unqueried cold cell is not a Cloudy failure.
+4. Retain successful query rows and their original `cell_indices`. When every
+   query succeeds, the eight named coefficient arrays are direct row views of
+   the lookup matrix. Otherwise, filter the compact matrix, T and physical nH
+   together once. The returned `CloudyCellFields` holds `(R,)` arrays, not eight
+   restored N-cell fields. `fill_hot_cloudy_lines()` writes their converted
+   emissivities and matching T directly into final per-line arrays; failed hot
+   positions remain NaN and the already calculated cold entries are retained.
 
 The lookup uses only the three coordinates above. Jeans length is calculated
 when building the table, with mu=1 and a 100 pc cap; it is not a lookup axis.

@@ -1,4 +1,4 @@
-"""Read the current 3D Cloudy table and restore results to batch cell positions."""
+"""Read compact successful Cloudy queries with their original cell indices."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -7,37 +7,40 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 if TYPE_CHECKING:
-    from quokka2s.cloudy.lookup import CloudyLookup, CloudyQueryResult
+    from quokka2s.cloudy.lookup import CloudyLookup
     from quokka2s.snapshot_reader import CellBatch
 
 
 @dataclass(frozen=True)
 class CloudyCellFields:
-    """Cloudy lookup results restored to every original position in the batch.
+    """Successful Cloudy queries, without full-batch coefficient copies.
 
     Attributes
     ----------
-    emissivity_per_nH2 : dict of str to ndarray, each shape (B,)
+    cell_indices : ndarray of int, shape (R,)
+        Original batch positions of successful caller-selected queries, in
+        increasing cell order. Failed queries are omitted; their final atomic
+        emissivity/temperature destinations remain NaN.
+    emissivity_per_nH2 : dict of str to ndarray, each shape (R,)
         Named values [erg cm^3/s] from the actual lookup.line_keys. Arrays are
-        row views of one restored matrix. Unqueried or failed cells remain NaN;
-        physical zero emission remains zero.
-    temperature_K : ndarray, shape (B,)
-        The temperature supplied to Cloudy for each queried cell [K]. Unqueried
-        positions are NaN. Line calculations reuse this same temperature.
-    failed_cells : ndarray of bool, shape (B,)
-        True only for queried cells that depend on failed table nodes. False
-        at unqueried positions does not mean those cells have been validated.
+        row views of one compact matrix. Physical zero emission remains zero.
+    temperature_K : ndarray, shape (R,)
+        The temperature supplied to Cloudy for these same queries [K].
+    physical_hydrogen_density_cm3 : ndarray, shape (R,)
+        Original physical nH [cm^-3] supplied to Cloudy, before lookup-coordinate
+        clipping. Final atomic epsilon uses this density squared.
     column_clipped_cells : dict of str to int
         Counts under 'below'/'above' for successful queries whose physical NH
         lies outside the attenuation axis. No simulation column is overwritten.
 
-    Returned by CloudyCellReader.read_fields(). Example: emissivity_per_nH2['halpha'][7]
-    is cell 7's Halpha value, independent of the table's row order.
+    Returned by CloudyCellReader.read_fields(). For example, cell_indices=[3,7]
+    means emissivity_per_nH2['halpha'][1] belongs to original cell 7, not cell 1.
     """
 
+    cell_indices: np.ndarray
     emissivity_per_nH2: dict[str, np.ndarray]
     temperature_K: np.ndarray
-    failed_cells: np.ndarray
+    physical_hydrogen_density_cm3: np.ndarray
     column_clipped_cells: dict[str, int]
 
 
@@ -56,7 +59,7 @@ class CloudyCellReader:
     --------
     reader = CloudyCellReader(lookup=lookup)
     fields = reader.read_fields(cells=cells, selected_cells=hot)
-    fields.emissivity_per_nH2['halpha'][7] is original cell 7's queried Halpha.
+    fields.cell_indices[7] identifies the original cell of compact query 7.
     """
 
     def __init__(self, *, lookup: CloudyLookup):
@@ -68,7 +71,7 @@ class CloudyCellReader:
         cells: CellBatch,
         selected_cells: np.ndarray,
     ) -> CloudyCellFields:
-        """Read selected cells and return named fields in original batch order.
+        """Read selected cells and retain successful queries in original order.
 
         Parameters
         ----------
@@ -83,8 +86,8 @@ class CloudyCellReader:
         -------
         CloudyCellFields
             Named emissivity_per_nH2 [erg cm^3/s] and the temperature actually
-            supplied to Cloudy [K]. Returned fields keep the input cell shape
-            and order; unqueried fields and failed emissivities are NaN.
+            supplied to Cloudy [K], their physical nH [cm^-3] and original cell
+            indices. Only successful queries remain; prescribed zeros remain.
         """
         # 1. Take T, nH and shielding NH for the cells selected by the caller.
         query_temperature_K = cells.temperature_QUOKKA_K[selected_cells]
@@ -104,11 +107,25 @@ class CloudyCellReader:
             failed_queries=queried_fields.failed_queries,
         )
 
-        # 4. Put each named result back at its original cell position in the batch.
-        return self.restore_batch_positions(
-            queried_fields=queried_fields,
-            query_temperature_K=query_temperature_K,
-            selected_cells=selected_cells,
+        # 4. Keep compact values and the original positions of successful cells.
+        # The common all-successful case retains the lookup matrix directly.
+        cell_indices = np.flatnonzero(selected_cells)
+        emissivity_matrix = queried_fields.emissivity_per_nH2
+        successful_queries = ~queried_fields.failed_queries
+        if not successful_queries.all():
+            cell_indices = cell_indices[successful_queries]
+            emissivity_matrix = emissivity_matrix[:, successful_queries]
+            query_temperature_K = query_temperature_K[successful_queries]
+            query_hydrogen_density_cm3 = query_hydrogen_density_cm3[successful_queries]
+        emissivity_per_nH2 = {
+            line_key: emissivity_matrix[line_index]
+            for line_index, line_key in enumerate(self.lookup.line_keys)
+        }
+        return CloudyCellFields(
+            cell_indices=cell_indices,
+            emissivity_per_nH2=emissivity_per_nH2,
+            temperature_K=query_temperature_K,
+            physical_hydrogen_density_cm3=query_hydrogen_density_cm3,
             column_clipped_cells=column_clipped_cells,
         )
 
@@ -137,43 +154,3 @@ class CloudyCellReader:
             'below': int(np.count_nonzero(below)),
             'above': int(np.count_nonzero(above)),
         }
-
-    def restore_batch_positions(
-        self,
-        *,
-        queried_fields: CloudyQueryResult,
-        query_temperature_K: np.ndarray,
-        selected_cells: np.ndarray,
-        column_clipped_cells: dict[str, int],
-    ) -> CloudyCellFields:
-        """Put each selected result back at its original batch cell index.
-
-        The lookup returned emissivity_per_nH2 for Q selected cells;
-        query_temperature_K (Q,) [K] holds their actual query temperatures.
-        We create full-batch NaN arrays
-        and put these values at the True positions of selected_cells, shape (B,).
-        Returned fields keep the original cell shape and order. Unqueried fields
-        remain NaN; failure flags are False there. column_clipped_cells holds
-        integer counts and is returned unchanged.
-        """
-        line_count = queried_fields.emissivity_per_nH2.shape[0]
-        cell_count = selected_cells.size
-        restored_emissivity_per_nH2 = np.full((line_count, cell_count), np.nan)
-        temperature_K = np.full(cell_count, np.nan)
-        failed_cells = np.zeros(cell_count, dtype=bool)
-
-        restored_emissivity_per_nH2[:, selected_cells] = queried_fields.emissivity_per_nH2
-        temperature_K[selected_cells] = query_temperature_K
-        failed_cells[selected_cells] = queried_fields.failed_queries
-
-        # Each named array is a row view; naming the lines creates no data copies.
-        emissivity_per_nH2 = {}
-        for line_index, line_key in enumerate(self.lookup.line_keys):
-            emissivity_per_nH2[line_key] = restored_emissivity_per_nH2[line_index]
-
-        return CloudyCellFields(
-            emissivity_per_nH2=emissivity_per_nH2,
-            temperature_K=temperature_K,
-            failed_cells=failed_cells,
-            column_clipped_cells=column_clipped_cells,
-        )
