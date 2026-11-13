@@ -1,9 +1,11 @@
 # Repository directories and reading order
 
 The Python production workflow defaults to `direct-template`: original cells
-locate four preintegrated fractional-mean/log-sigma templates. Checked sparse
-contributions accumulate directly in disjoint NumPy profile planes, using a
-prebuilt, version-pinned SciPy kernel; direct row convolutions produce spectra. No new parameter grid is created. The default `field_source: native-columns` reads original full-z tiles
+locate four preintegrated fractional-mean/log-sigma templates. Bounded probability
+arrays have shape `[cell,channel]`; public NumPy/SciPy operations multiply by
+cell luminosities and reduce into small profiles. Finished profiles merge in
+batch order. No snapshot-wide node-luminosity store or final convolution is
+used. The default `field_source: native-columns` reads original full-z tiles
 into bounded RAM without writing a converted field copy. Snapshot metadata,
 physical inputs, original reads, RAM rearrangement and all numerical work remain
 timed; only Gaussian preparation is excluded. Process calculates/saves before invoking plot by
@@ -116,22 +118,18 @@ installed implementations and CPU dispatch. Plot reads only prepared arrays.
    across tiles. [template_table.py](../src/quokka2s/products/gaussian/template_table.py)
    prepares fractional-mean/log-sigma integrated-bin templates outside process
    timing; [template_engine.py](../src/quokka2s/products/gaussian/template_engine.py)
-   retains direct bounded-block integration for standalone comparisons and
-   valid out-of-coverage widths. `template_corners.py` locates the unchanged four
-   corners and prepares unsorted original contributions. `corner_scatter.py`
-   validates buffer ownership, types and bounds before using the prebuilt private
-   SciPy 1.16.3 accumulator. One worker owns each profile plane; all writers join
-   before wave-local luminosities are released. `corner_store.py` owns the
-   profile-major NumPy shift arrays. There is no key sorting or temporary
-   luminosity histogram. Direct `np.convolve` expands each
-   occupied template row, inside process timing.
-   Default sigma coverage is [1e-5,1024] km/s, with natural-log
-   step 1/32; valid uncovered widths use direct stable bin integration. Mean
-   integer shifts reuse the phase table. `template_coverage.py` combines observed
-   extrema and per-account fallback counts/light in original worker merge order.
-   Original-cell analytic endpoint accounts remain separate from queried
-   template-corner support. Corner accounts do not retain original cells
-   and do not introduce an additional scientific interpolation approximation.
+   splits means into integer shifts and fractional phases, locates the same four
+   template corners and reads their integrated probabilities. It limits each
+   temporary `[cell,channel]` matrix with `maximum_probability_rows`, shares it
+   across the width group's luminosity accounts, and reduces directly into
+   `[channel,account]` profiles. No `[cell,channel,account]` array is constructed.
+   Valid out-of-coverage widths use stable direct bin integrals in bounded blocks.
+   The default sigma coverage is [1e-5,1024] km/s, with natural-log step 1/32.
+   `template_coverage.py` combines observed extrema and per-account fallback
+   counts/light in original worker merge order. Original-cell analytic endpoint
+   accounts remain separate from queried template-corner support. Only small
+   spectra and endpoint/count/moment accounts survive a wave; there is no
+   parameter-node brightness store or private COO dependency in this route.
    `layered_spectra.py` and `layered_engine.py` retain the previous sparse-node
    method as an explicit comparison. `integrated_spectra.py` and
    `channel_fractions.py` retain explicit exact/1D-LUT references.

@@ -294,7 +294,8 @@ Omitted settings use the same defaults shown in the shared YAML:
 The 32-batch setting is sized for the bundled `256 x 256 x 2048` snapshot.
 Larger native full-z tiles, including the large Setonix simulations, require a
 smaller `chunk_workers` value to fit the existing 20-GiB process memory plan.
-The plan includes the current field tile and reserves worker space proportional
+Large Setonix comparisons explicitly use `chunk_workers: 16` and
+`query_chunk: 131072`; the local defaults above are unchanged. The plan includes the current field tile and reserves worker space proportional
 to `chunk_workers * query_chunk`; it refuses an oversized run before cell reads.
 Reduce concurrency for those inputs rather than disabling the memory guard.
 
@@ -403,33 +404,33 @@ fine transition knots near channel edges are retained. Each layer stores the
 union of all phase nodes' five-sigma supports plus zero guards, so shifting a
 mean into the window never mistakes an unstored supported bin for zero.
 
-The kernel locates two sigma layers and, separately on each, two phase knots.
+The engine locates two sigma layers and, separately on each, two phase knots.
 Linear interpolation in phase and in `ln(sigma)` supplies four nonnegative
-weights. NumPy/SciPy sum the weighted cell luminosities by identical template
-row and integer-bin shift, keeping line, dust and temperature accounts separate.
-Workers keep unsorted row/cell/weight contributions and read-only luminosity
-for one bounded wave. The same pool next assigns each spectrum profile to one
-writer, using SciPy 1.16.3's prebuilt private `coo_matvec` to add directly to its
-NumPy plane. No sorting or temporary luminosity histogram is required. Buffer
-checks and a startup addition probe protect this pinned private API; a SciPy
-upgrade requires renewed validation. All physical values remain float64.
-All writers finish before the original-cell luminosity is released.
-For a B-bin stored template row, exactly K+B-1 integer
-shifts can overlap K observed bins. Direct `np.convolve(..., mode="valid")` turns
-each occupied row of accumulated luminosities into the K-bin spectrum. No new grid or
-interpolation approximation is added. No whole-snapshot cell-by-channel matrix
-or retained original-cell arrays are created. No luminosity threshold drops cells. Stored template corners have individual five-sigma
-supports and are not renormalized. Valid sigmas outside prepared coverage use
-stable original-cell direct bin integrals, also truncated at +/-5sigma without
-renormalization. No luminosity threshold drops those cells. Invalid coordinates,
-unsafe integer shifts and nonpositive/nonfinite widths still raise.
+weights. For a bounded subbatch, it reads the four shifted templates and forms
+one `[N,400]` probability matrix. Public NumPy/SciPy multiplication/reduction
+uses this matrix and `[N,P]` luminosities to update small `[400,P]` spectra; P
+keeps the existing line/dust accounts for that width group. No `[N,400,P]`
+product array, whole-snapshot cell matrix or snapshot-wide node-luminosity store
+is constructed. No private COO operation or final template convolution is used.
+All physical values remain float64. Original-cell queues survive one bounded
+worker wave and are released when its queries finish. The main thread merges
+finished spectra in original batch order.
 
-For the default 400 bins, templates and 40 accounts, the main corner arrays
-have 5.402 GiB capacity. This is an array capacity, not measured process RSS.
-Wider template coverage increases this capacity. Array allocation, first writes,
-all raw-term preparation, sparse accumulation and final convolution remain timed; only the immutable
-Gaussian template is prepared outside process time. The 20 GiB process memory
-checks cover this route as well as field and worker buffers.
+`TemplateEngine.maximum_probability_rows` limits N. A single float64 probability
+matrix uses `N * 400 * 8` bytes; interpolation gathers, index arrays and other
+worker buffers are additional. The full query batch may contain more than N
+cells because the engine consumes successive probability subbatches. This is a
+per-worker array bound, not measured process RSS. Wider sigma coverage increases
+template memory, without allocating snapshot node accounts. All probability
+reads, interpolation, luminosity multiplication/reduction, original-cell accounts
+and profile merging remain timed; only immutable Gaussian preparation is
+outside process time. The process memory checks still cover fields and workers.
+
+Stored template corners have individual five-sigma supports without
+renormalization. Valid sigmas outside prepared coverage use stable original-cell
+direct bin integrals in bounded blocks, also truncated at +/-5sigma. No luminosity
+threshold drops cells. Invalid coordinates, unsafe integer shifts and
+nonpositive/nonfinite widths still raise.
 
 The fractional-mean table can be shifted to other finite means, but it does
 **not** store arbitrary sigmas. Set bounds to cover common emitting widths and
@@ -451,29 +452,24 @@ run before process timing. Increasing the upper bound increases prepared table
 memory; it changes coverage rather than clipping physical widths.
 
 For each bounded wave of up to `chunk_workers` batches, emission, image,
-gas-phase and full-moment preparation finishes first. Workers then prepare
-original corner contributions and calculate independent endpoint accounts and
-outside-width integrals. The same pool next accumulates disjoint spectrum
-profiles. Only after all writers join does the main thread merge small products
-in original batch order. Luminosity and raw contributions are then released;
-only NumPy corner accounts survive to final convolution. The one-worker setting
-uses the same phases, with no nested spectral thread pool.
+gas-phase and full-moment preparation finishes first. Workers then query each
+original-cell width group in bounded probability blocks, reduce its small
+spectrum and calculate independent endpoint accounts and outside-width
+integrals. After all queries join, the main thread merges the completed spectra
+and other products in original batch order. Original-cell queues and temporary
+probabilities are released; only accumulated products survive the wave.
+The one-worker setting uses the same phases, with no nested spectral pool.
 
-`processing_timings.gaussian.gaussian_worker_wave_seconds` records raw-term
-preparation, original-cell accounts, fallback and scheduling.
-`inplace_corner_scatter_wave_seconds` records the subsequent profile writes,
-contiguous input copies, checks and release. Both are inside
-`gaussian_wave_seconds_including_analytic_accounts_and_scheduling`; do not add
-the scatter time to that inclusive total again. Ordered product merge now
-contains only small products and accounts. `snapshot_corner_finalization_seconds`
-records occupied-row selection, convolution and addition to saved spectra.
-`gaussian_total_seconds_including_corner_store` adds initialization and final
-convolution to the Gaussian wave. Reports refresh timings after finalization.
-The activity union excludes independent analytic accounts and counts overlapping
-query/profile writes once. Raw owned-buffer and borrowed-luminosity counters
-have distinct scopes; neither is process RSS. No whole-snapshot cell arrays are
-retained.
-Worker call sums are diagnostic, not wall time or divided by worker count.
+`processing_timings.gaussian.query_and_profile_addition_seconds` counts the
+elapsed union of template lookup/interpolation, luminosity reduction and small
+profile additions; overlapping calls count once. The broader
+`gaussian_wave_seconds_including_analytic_accounts_and_scheduling` also includes
+independent original-cell accounts, dispatch and input release.
+`ordered_product_merge_wave_seconds` records the subsequent main merge.
+`gaussian_total_seconds` is the Gaussian-wave total; there is no deferred node
+expansion or final convolution to add. `maximum_retained_gaussian_input_bytes`
+reports the bounded wave's owned queues; it is not process RSS. Worker call sums
+are diagnostic, not wall time and not a quantity to divide by worker count.
 The complete process time includes initialization, field reads, physical
 calculations, all numerical work, checks and saving.
 
@@ -542,9 +538,8 @@ Concurrency belongs to distinct phases, not one multiplied worker count:
 | Raw-field I/O, reader pool | Up to 5 workers | Native FAB field/halo reads and RAM gather; derivation waits |
 | Array field derivation | Up to 32 tasks | Disjoint complete `(x,y)` columns; no batch processing yet |
 | Emission/products, batch pool | Up to 32 batches | Immutable views of one derived tile; main merge after each wave |
-| Gaussian preparation, same batch pool | Up to 32 batches | Raw corners, independent accounts and uncovered-width integrals |
-| Profile accumulation, same batch pool | Up to 32 workers | Disjoint profile planes; original batch/group order within each profile |
-| Ordered small-product merge and final convolution | One main thread | Merge original products in order; convolve each occupied template row |
+| Gaussian query/reduction, same batch pool | Up to 32 batches | Bounded original-cell channel probabilities, luminosity-weighted spectra, independent accounts and uncovered-width integrals |
+| Ordered product merge | One main thread | Merge completed small spectra and other products in original batch order |
 
 Reader derivation finishes before physical batches start. Each bounded wave
 finishes physical preparation and Gaussian queries before its successor.

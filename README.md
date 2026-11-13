@@ -233,17 +233,18 @@ The process defaults are original native full-z tiles, 262,144 cells per batch,
 32 concurrent batches, five field-read workers and 32 column-derivation tasks.
 The eight-x-cell `slab_nx` setting applies to the explicit z-contiguous source.
 Gaussian integration defaults to `direct-template`: each original cell locates
-four preintegrated fractional-mean/log-sigma templates and assigns its luminosity
-with the existing interpolation weights. Workers prepare original corner
-contributions. The same pool then processes disjoint spectrum profiles, adding
-weighted cell luminosities directly into profile-major NumPy rows. The guarded
-accumulator uses SciPy 1.16.3's prebuilt private `coo_matvec`; the version is
-pinned and a small startup probe verifies its addition behavior. No project
-compiler is used. Direct NumPy convolution of each occupied row produces
-the final 400-bin spectrum after all batches.
-This rearranges linear sums without introducing another interpolation grid.
-Original-cell luminosity survives only its bounded wave, until all profile
-writers finish. No whole-snapshot cell-by-channel matrix or cell queue is kept.
+four preintegrated fractional-mean/log-sigma templates. A bounded subbatch reads
+and interpolates their stored probabilities into an `N x 400` array. Public
+NumPy/SciPy operations multiply these probabilities by the group's cell
+luminosities and reduce directly into small channel profiles. The same
+probabilities serve every line/dust account with that width. There is no
+snapshot-wide node-luminosity array, private COO accumulator or final template
+convolution. Original-cell queues survive only their bounded worker wave;
+small finished spectra merge in configured batch order. No whole-snapshot
+cell-by-channel matrix or `N x 400 x accounts` array is kept. The engine's
+`maximum_probability_rows` bounds N; interpolation scratch is additional.
+For the large Setonix comparison, explicit runtime overrides use 16 batches of
+131072 cells; the bundled local defaults remain 32 batches of 262144 cells.
 Each template keeps its own five-sigma support without renormalization.
 The table's default sigma coverage is `1e-5` to `1024 km/s`, with natural-log
 spacing `0.03125`. Valid widths outside that table use original-cell stable bin

@@ -8,10 +8,10 @@ Each call owns its output; concurrent workers share only the immutable table.
 from __future__ import annotations
 
 from dataclasses import dataclass
-import threading
 from time import perf_counter, perf_counter_ns
 
 import numpy as np
+from scipy.linalg.blas import dgemm
 
 from .intervals import interval_probability
 from .template_coverage import TemplateGroupCoverage, sigma_range
@@ -50,10 +50,7 @@ class TemplateEngine:
         if not 1 <= table.K <= 400:
             raise ValueError("Require one to 400 template output channels")
         self.lookup_tables = table
-        self.portable_backend = "numpy-original-cell-templates"
-        self._corner_specs = {}
-        self._corner_spec_lock = threading.Lock()
-        self._corner_worker_context = threading.local()
+        self.portable_backend = "numpy-template-gather-scipy-dgemm"
         # Reuse exact results from the existing reference, not a new tail rule.
         self._clipped_interior_mass = float(interval_probability(-table.Z, table.Z))
         self._full_window_saturation = 12.0
@@ -62,32 +59,6 @@ class TemplateEngine:
         probe = interval_probability(probe_lower, probe_upper)
         if probe.tobytes() != np.ones(probe.shape, dtype=np.float64).tobytes():
             raise RuntimeError("Original-cell interval reference does not saturate at +/-12")
-
-    def prepare_corner_store(self, profile_count=40):
-        """Share immutable corner/shift indexing; allocate no snapshot luminosity."""
-        if type(profile_count) is not int or profile_count < 1:
-            raise ValueError("Corner-store profile_count must be a positive integer")
-        if profile_count not in self._corner_specs:
-            with self._corner_spec_lock:
-                if profile_count not in self._corner_specs:
-                    from .corner_store import RaggedCornerSpec
-                    self._corner_specs[profile_count] = RaggedCornerSpec(
-                        self.lookup_tables,
-                        profile_count=profile_count,
-                    )
-        return self._corner_specs[profile_count]
-
-    def corner_deposit_engine(self, profile_count=40):
-        """Reuse call-local deposit engines per worker and profile layout."""
-        if not hasattr(self._corner_worker_context, "engines"):
-            self._corner_worker_context.engines = {}
-        engines = self._corner_worker_context.engines
-        if profile_count not in engines:
-            from .corner_store import CornerDepositEngine
-            engines[profile_count] = CornerDepositEngine(
-                spec=self.prepare_corner_store(profile_count=profile_count),
-            )
-        return engines[profile_count]
 
     def validate_prepared_state(self):
         """Refuse table mutation after preparation outside the process clock."""
@@ -128,15 +99,18 @@ class TemplateEngine:
         )
 
     def _accumulate_probabilities(self, centers, sigmas, luminosity, outside):
-        """Reduce bounded [cell,channel] probabilities without a [cell,K,P] array.
+        """Query each original cell's four corners in bounded [cell,channel] scratch.
 
-        In-range cells retain the prepared four-corner interpolation and each
-        corner's stored five-sigma support. Outside widths use the existing
-        stable SciPy interval integral, clipped at the original cell's five
-        sigma. Only the floating-point luminosity summation order changes.
+        Apply a corner weight to [cell,profile] luminosities, then multiply the
+        gathered channel masses by those weighted luminosities using public
+        SciPy BLAS. This avoids repeatedly weighting and adding larger channel
+        matrices. It changes only floating-point association, not the four
+        interpolation nodes, their weights or their stored five-sigma supports.
+        All scratch and spectrum buffers belong to this call, never the table.
         """
         table = self.lookup_tables
-        output = np.zeros((luminosity.shape[1], table.K), dtype=np.float64)
+        profile_count = luminosity.shape[1]
+        output = np.zeros((table.K, profile_count), dtype=np.float64, order="F")
         counters = {
             "kernel_rows": centers.size,
             "active_rows": 0,
@@ -148,26 +122,94 @@ class TemplateEngine:
             "direct_product_updates": 0,
             "probability_subbatches": 0,
             "direct_probability_batches": 0,
+            "template_probability_seconds": 0.0,
+            "luminosity_contraction_seconds": 0.0,
         }
-        probability_seconds = 0.0
+        direct_probability_seconds = 0.0
+        scratch_rows = min(self.maximum_probability_rows, centers.size)
+        probability_scratch = np.empty((scratch_rows, table.K), dtype=np.float64)
+        index_scratch = np.empty((scratch_rows, table.K), dtype=np.int64)
+        weighted_scratch = np.empty(
+            (scratch_rows, profile_count),
+            dtype=np.float64,
+            order="F",
+        )
         for start in range(0, centers.size, self.maximum_probability_rows):
             stop = min(start + self.maximum_probability_rows, centers.size)
             active = np.any(luminosity[start:stop] > 0.0, axis=1)
             if not np.any(active):
                 continue
-            selected_centers = centers[start:stop][active]
-            selected_sigmas = sigmas[start:stop][active]
-            selected_luminosity = luminosity[start:stop][active]
-            direct = outside[start:stop][active]
-            probabilities = np.empty((selected_centers.size, table.K), dtype=np.float64)
-            covered = ~direct
-            if np.any(covered):
-                probabilities[covered] = table.evaluate(
-                    selected_centers[covered],
-                    selected_sigmas[covered],
-                    chunk_size=self.maximum_probability_rows,
-                )
+            if np.all(active):
+                selected_centers = centers[start:stop]
+                selected_sigmas = sigmas[start:stop]
+                selected_luminosity = luminosity[start:stop]
+                direct = outside[start:stop]
+            else:
+                selected_centers = centers[start:stop][active]
+                selected_sigmas = sigmas[start:stop][active]
+                selected_luminosity = luminosity[start:stop][active]
+                direct = outside[start:stop][active]
+            rows = selected_centers.size
             direct_count = int(np.count_nonzero(direct))
+            covered_count = rows - direct_count
+            if covered_count:
+                began = perf_counter()
+                if direct_count:
+                    covered_centers = selected_centers[~direct]
+                    covered_sigmas = selected_sigmas[~direct]
+                    covered_luminosity = selected_luminosity[~direct]
+                else:
+                    covered_centers = selected_centers
+                    covered_sigmas = selected_sigmas
+                    covered_luminosity = selected_luminosity
+                # integrate() has already validated these coordinates once.
+                coordinates = covered_centers / table.delta_v
+                integer_part = np.floor(coordinates)
+                phases = coordinates - integer_part
+                shifts = integer_part.astype(np.int64)
+                node_rows, corner_weights = table._interpolation_corners(
+                    sigmas=covered_sigmas,
+                    phases=phases,
+                )
+                probabilities = probability_scratch[:covered_count]
+                indices = index_scratch[:covered_count]
+                # A row slice of a Fortran array loses column contiguity when
+                # shorter than its owner. Keep the final partial equally small.
+                weighted_luminosity = (
+                    weighted_scratch if covered_count == scratch_rows else np.empty(
+                        (covered_count, profile_count),
+                        dtype=np.float64,
+                        order="F",
+                    )
+                )
+                counters["template_probability_seconds"] += perf_counter() - began
+                for corner_rows, weights in zip(node_rows, corner_weights):
+                    began = perf_counter()
+                    table._gather_corner(
+                        node_rows=corner_rows,
+                        shifts=shifts,
+                        output=probabilities,
+                        indices=indices,
+                    )
+                    counters["template_probability_seconds"] += perf_counter() - began
+                    began = perf_counter()
+                    np.multiply(
+                        covered_luminosity,
+                        weights[:, None],
+                        out=weighted_luminosity,
+                    )
+                    # Transposing the C probability scratch gives BLAS an F
+                    # view. The weighted luminosities and output are already F;
+                    # BLAS therefore needs no cell-by-channel matrix conversion.
+                    output = dgemm(
+                        alpha=1.0,
+                        a=probabilities.T,
+                        b=weighted_luminosity,
+                        beta=1.0,
+                        c=output,
+                        overwrite_c=1,
+                    )
+                    counters["luminosity_contraction_seconds"] += perf_counter() - began
             if direct_count:
                 began = perf_counter()
                 with np.errstate(over="ignore", invalid="ignore", divide="ignore", under="ignore"):
@@ -175,23 +217,31 @@ class TemplateEngine:
                         table.edges[None, :] - selected_centers[direct, None]
                     ) / selected_sigmas[direct, None]
                 np.clip(boundaries, -table.Z, table.Z, out=boundaries)
-                probabilities[direct] = interval_probability(
+                probabilities = interval_probability(
                     boundaries[:, :-1],
                     boundaries[:, 1:],
                 )
-                probability_seconds += perf_counter() - began
+                direct_probability_seconds += perf_counter() - began
+                began = perf_counter()
+                output = dgemm(
+                    alpha=1.0,
+                    a=probabilities.T,
+                    b=np.asfortranarray(selected_luminosity[direct]),
+                    beta=1.0,
+                    c=output,
+                    overwrite_c=1,
+                )
+                counters["luminosity_contraction_seconds"] += perf_counter() - began
                 counters["direct_probability_batches"] += 1
-            output += np.einsum("ik,ip->pk", probabilities, selected_luminosity, optimize=False)
-            rows = selected_centers.size
             counters["active_rows"] += rows
             counters["support_bins_visited"] += rows * table.K
-            counters["template_corner_values_read"] += (rows - direct_count) * 4 * table.K
-            counters["product_updates"] += rows * table.K * luminosity.shape[1]
+            counters["template_corner_values_read"] += covered_count * 4 * table.K
+            counters["product_updates"] += (covered_count * 4 + direct_count) * table.K * profile_count
             counters["direct_active_rows"] += direct_count
             counters["direct_support_bins_visited"] += direct_count * table.K
-            counters["direct_product_updates"] += direct_count * table.K * luminosity.shape[1]
+            counters["direct_product_updates"] += direct_count * table.K * profile_count
             counters["probability_subbatches"] += 1
-        return output, counters, probability_seconds
+        return output.T, counters, direct_probability_seconds
 
     def _original_window_probabilities(self, lower, upper):
         """Reuse saturated/full-cutoff masses; retain stable boundary integrals."""
@@ -311,7 +361,9 @@ class TemplateEngine:
             "product_updates": int(counts["product_updates"]),
             "integration_seconds": (query_finished_ns - query_started_ns) * 1e-9,
             "independent_window_accounting_seconds": accounting_seconds,
-            "template_probability_values_generated": int(counts["support_bins_visited"] - counts.get("direct_support_bins_visited", 0)),
+            "template_probability_values_generated": int(counts["template_corner_values_read"]),
+            "template_probability_seconds": counts["template_probability_seconds"],
+            "luminosity_contraction_seconds": counts["luminosity_contraction_seconds"],
             "template_subbatches": int(counts["probability_subbatches"]),
             "template_online_cdf_queries": 0,
             "fallback_rows": int(outside_rows.size),
@@ -335,10 +387,7 @@ class TemplateEngine:
 def prepare_template_engine(grid_parameters=None):
     """Build and verify the shared probability table before the process clock."""
     began = perf_counter()
-    from .corner_scatter import prepare_corner_scatter
-    prepare_corner_scatter()
     parameters = {} if grid_parameters is None else dict(grid_parameters)
     table = FractionalGaussianTable(**parameters)
     engine = TemplateEngine(table=table)
-    engine.prepare_corner_store()
     return engine, perf_counter() - began

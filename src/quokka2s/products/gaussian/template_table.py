@@ -308,8 +308,8 @@ class FractionalGaussianTable:
         np.clip(fractions, 0.0, 1.0, out=fractions)
         return lower, upper, fractions
 
-    def _evaluate_chunk(self, sigmas, shifts, phases):
-        """Gather four templates into [cell,channel], with bounded local scratch."""
+    def _interpolation_corners(self, sigmas, phases):
+        """Locate four stored rows and their weights for validated coordinates."""
         upper_layers = np.searchsorted(self.sigma_nodes, sigmas, side="left")
         lower_layers = np.maximum(upper_layers - 1, 0)
         lower_log = self.log_sigma_nodes[lower_layers]
@@ -330,20 +330,49 @@ class FractionalGaussianTable:
             sigma_fraction * (1.0 - high_fraction),
             sigma_fraction * high_fraction,
         )
-        base_bins = self.output_bin_indices[None, :] - shifts[:, None]
-        probabilities = np.zeros((sigmas.size, self.K), dtype=np.float64)
-        gathered = np.empty_like(probabilities)
-        for node_rows, weights in zip(rows, corner_weights):
-            relative_bins = base_bins - self.row_min_bins[node_rows, None]
-            np.clip(relative_bins, 0, self.row_bin_counts[node_rows, None] - 1, out=relative_bins)
-            relative_bins += self.row_value_offsets[node_rows, None]
-            # First/last stored bins are zero sentinels. Clipping an integer
-            # index therefore returns known-zero support outside the template;
-            # it never clips a Gaussian parameter or extrapolates a profile.
-            np.take(self.flat_values, relative_bins, out=gathered, mode="clip")
-            gathered *= weights[:, None]
-            probabilities += gathered
-        return probabilities
+        return rows, corner_weights
+
+    def _gather_corner(self, node_rows, shifts, output, indices):
+        """Read one corner into bounded scratch using its known-zero sentinels.
+
+        Inputs are validated cell coordinates and stored row IDs. Constructing
+        absolute table indices directly avoids a second cell-by-channel index
+        matrix. The first and last stored bins are exactly zero, so clamping
+        only the index preserves each node's original five-sigma support.
+        """
+        starts = self.row_value_offsets[node_rows]
+        ends = starts + self.row_bin_counts[node_rows] - 1
+        offsets = starts - self.row_min_bins[node_rows] - shifts
+        np.add(self.output_bin_indices[None, :], offsets[:, None], out=indices)
+        np.clip(indices, starts[:, None], ends[:, None], out=indices)
+        np.take(self.flat_values, indices, out=output, mode="clip")
+
+    def _evaluate_chunk(
+        self,
+        sigmas,
+        shifts,
+        phases,
+        *,
+        output=None,
+        indices=None,
+        gathered=None,
+    ):
+        """Fill [cell,channel] probabilities using call-local reusable scratch."""
+        shape = (sigmas.size, self.K)
+        if output is None:
+            output = np.empty(shape, dtype=np.float64)
+        if indices is None:
+            indices = np.empty(shape, dtype=np.int64)
+        if gathered is None:
+            gathered = np.empty(shape, dtype=np.float64)
+        rows, corner_weights = self._interpolation_corners(sigmas, phases)
+        for corner, (node_rows, weights) in enumerate(zip(rows, corner_weights)):
+            values = output if corner == 0 else gathered
+            self._gather_corner(node_rows, shifts, values, indices)
+            values *= weights[:, None]
+            if corner:
+                output += values
+        return output
 
     def evaluate(self, mu, sigma, *, chunk_size=2048):
         """Return stored-template masses [N,K], not luminosity densities.
@@ -355,12 +384,19 @@ class FractionalGaussianTable:
             raise ValueError("Template chunk_size must be a positive integer")
         _, sigmas, shifts, phases = self._validate_inputs(mu, sigma)
         output = np.empty((sigmas.size, self.K), dtype=np.float64)
+        scratch_rows = min(chunk_size, sigmas.size)
+        indices = np.empty((scratch_rows, self.K), dtype=np.int64)
+        gathered = np.empty((scratch_rows, self.K), dtype=np.float64)
         for start in range(0, sigmas.size, chunk_size):
             stop = min(start + chunk_size, sigmas.size)
-            output[start:stop] = self._evaluate_chunk(
+            rows = stop - start
+            self._evaluate_chunk(
                 sigmas=sigmas[start:stop],
                 shifts=shifts[start:stop],
                 phases=phases[start:stop],
+                output=output[start:stop],
+                indices=indices[:rows],
+                gathered=gathered[:rows],
             )
         return output
 

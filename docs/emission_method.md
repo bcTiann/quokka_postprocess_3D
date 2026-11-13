@@ -155,30 +155,30 @@ For one cell, let `beta=log(sigma/sigma_low)/log(sigma_high/sigma_low)` and let
 `alpha_low`, `alpha_high` be its two layer-specific phase fractions. The four
 template weights are `(1-beta)*(1-alpha_low)`, `(1-beta)*alpha_low`,
 `beta*(1-alpha_high)` and `beta*alpha_high`. They are nonnegative and sum to one.
-For corner q and account p, accumulate H[q,p] = sum_i weight[i,q] * L[i,p],
-where q identifies an existing template row and integer-bin shift. The final
-channel luminosity is sum_q probability[q,j] * H[q,p]. This is the same linear
-four-corner interpolation with a different floating-point summation order.
-Intrinsic/attenuated, line and cold/hot accounts remain separate. There is no
-cell-brightness cut or additional grid approximation.
+For original cell i and channel j, first calculate
+`P[i,j] = sum_q weight[i,q] * probability[q,j]`, where q ranges over its four
+shifted templates. Account p then receives
+`channel_luminosity[j,p] = sum_i P[i,j] * L[i,p]`; division by channel width gives
+`dL/dv`. This is the existing four-corner interpolation evaluated separately for
+every original cell. Intrinsic/attenuated, line and cold/hot accounts remain
+separate. There is no brightness cut or additional grid approximation.
 
-The immutable table is prepared outside process time. Worker batches use NumPy
-coordinates to prepare original corner contributions. Separate workers then own
-separate profile planes, accumulating weight times cell luminosity directly into
-NumPy arrays. The prebuilt private SciPy 1.16.3 `coo_matvec` kernel performs that
-arithmetic; no project code is compiled. Types, lengths, bounds and ownership are
-checked before the call. Writers join before their wave-local inputs are freed.
-These are identical sums at identical original nodes, with floating reduction
-differences, and do not change Gaussian parameter coverage. Every stored
-template row with B bins has K+B-1 possible integer shifts overlapping K observed
-bins; each account stores just that row-specific interval. Direct NumPy
-convolution in valid mode maps its accumulated shift luminosities to K channels.
-All raw-term preparation, in-place accumulation, convolution and
-luminosity multiplication remain inside process timing. Original-cell arrays
-survive only one bounded wave. Stored probabilities are zero outside each
-corner's own support; no original-cell support mask replaces that union.
-Each stored corner Gaussian truncates at its own `mu_node +/-5sigma_node`
-without renormalization. Original batch contents and width groups are unchanged.
+The immutable table is prepared outside process time. Workers read its stored
+probabilities in bounded original-cell subbatches and use public NumPy/SciPy
+operations for luminosity multiplication and reduction. A probability block has
+shape `[N,K]`, bounded by `TemplateEngine.maximum_probability_rows`; it is shared
+by the width group's P luminosity accounts. A `[N,K,P]` product array is not
+constructed. The result is a small `[K,P]` spectrum that merges into the existing
+profiles. Original-cell arrays survive only their bounded worker wave; there is
+no snapshot-wide node-luminosity accumulator, private COO dependency or final
+stored-template convolution.
+All probability lookup, interpolation, multiplication, reduction and original-cell
+analytic accounts remain inside process time. Stored probabilities are zero
+outside each corner's own support; no original-cell support mask replaces that
+union. Each stored corner Gaussian truncates at its own
+`mu_node +/-5sigma_node` without renormalization. Original batch contents, width
+groups, per-line missingness and complete moments are unchanged. Different
+floating reduction orders can change low-order bits.
 Finished products merge in deterministic native-tile order, with ascending
 batches within each tile; floating-point reductions can round differently from
 a full-grid batch walk. Full moments use an anchored centroid followed by a
@@ -218,15 +218,16 @@ with odd symmetry and its original handling of boundaries/error policies.
 These methods are explicit references, never an automatic fallback.
 The [usage settings](usage.md#spectral-integration) describe selection and reuse.
 
-The bounded reader uses five I/O streams followed by up to 32 complete-column
-derivation tasks in the same pool. Up to 32 batch workers prepare unchanged
-emission/products for one bounded wave. Those workers then prepare the original
-four template corners and directly integrate uncovered widths. The same pool
-adds corner luminosities into disjoint NumPy profile planes, preserving original
-batch/group order within each profile. All writers join before wave-local
-luminosity is released. One main thread merges the remaining small products.
-Final template convolution occurs after every original cell has been processed;
-it remains timed and is reported separately. There is no nested spectral pool.
+Native field reading uses up to five I/O workers, followed by up to 32
+complete-column derivation tasks. Up to 32 batch workers prepare unchanged
+emission/products for one bounded wave. Those workers then query original-cell
+template probabilities, multiply luminosities and reduce into small spectra;
+valid uncovered widths use direct integration. All queries finish before one
+main thread merges spectra and the remaining products in original batch order.
+Original-cell queues are released after the queries. There is no nested spectral
+pool, node-luminosity accumulation or final convolution. The bundled local
+configuration remains 32 batches of 262144 cells; the large Setonix comparison
+uses explicit runtime overrides of 16 batches of 131072 cells.
 Project calculations use NumPy/SciPy without custom compiled extensions.
 Independent retained reference methods use their stated Python worker pools.
 
