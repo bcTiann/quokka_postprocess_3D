@@ -131,8 +131,9 @@ than moved into edge channels. Each line and dust state has one integrated
 spectrum. Cold/hot contributions are retained separately.
 
 The process default `spectral_method: direct-template` evaluates original
-cells through preintegrated fractional-mean/log-sigma templates. With channel
-width `delta_v=1 km/s`, write `mu/delta_v=floor(mu/delta_v)+phase`. Integer shifts
+cells through preintegrated fractional-mean templates on logarithmically spaced
+sigma nodes. With channel width `delta_v=1 km/s`, write
+`mu/delta_v=floor(mu/delta_v)+phase`. Integer shifts
 move the stored template; the fractional phase lies in [0,1]. Natural-log sigma
 nodes have step 0.03125 and default coverage [1e-5,1024] km/s. The physical width
 floor remains 1e-5 km/s. Valid widths outside template coverage are integrated
@@ -151,10 +152,12 @@ profiles. Coverage counts, observed ranges and luminosity-weighted fallback
 fractions are saved per line, dust state and temperature branch. They describe
 whether extending the finite table would reduce direct integration work.
 
-For one cell, let `beta=log(sigma/sigma_low)/log(sigma_high/sigma_low)` and let
+For one cell, let `beta=(sigma-sigma_low)/(sigma_high-sigma_low)` and let
 `alpha_low`, `alpha_high` be its two layer-specific phase fractions. The four
 template weights are `(1-beta)*(1-alpha_low)`, `(1-beta)*alpha_low`,
 `beta*(1-alpha_high)` and `beta*alpha_high`. They are nonnegative and sum to one.
+The sigma nodes retain their logarithmic spacing; interpolation weights use
+linear sigma distances. Coincident sigma brackets select that layer directly.
 For corner q and account p, accumulate H[q,p] = sum_i weight[i,q] * L[i,p],
 where q identifies an existing template row and integer-bin shift. The final
 channel luminosity is sum_q probability[q,j] * H[q,p]. This is the same linear

@@ -1,7 +1,8 @@
 # Repository directories and reading order
 
 The Python production workflow defaults to `direct-template`: original cells
-locate four preintegrated fractional-mean/log-sigma templates. Checked sparse
+locate four preintegrated fractional-mean templates on logarithmically spaced
+sigma nodes, with weights linear in phase and sigma. Checked sparse
 contributions accumulate directly in disjoint NumPy profile planes, using a
 prebuilt, version-pinned SciPy kernel; direct row convolutions produce spectra. No new parameter grid is created. The default `field_source: native-columns` reads original full-z tiles
 into bounded RAM without writing a converted field copy. Snapshot metadata,
@@ -114,8 +115,9 @@ installed implementations and CPU dispatch. Plot reads only prepared arrays.
    finishes physical preparation, corner preparation and node accumulation in bounded waves. The
    native driver immediately merges each finished wave; no partials wait
    across tiles. [template_table.py](../src/quokka2s/products/gaussian/template_table.py)
-   prepares fractional-mean/log-sigma integrated-bin templates outside process
-   timing; [template_engine.py](../src/quokka2s/products/gaussian/template_engine.py)
+   prepares fractional-mean integrated-bin templates on logarithmically spaced
+   sigma nodes outside process timing;
+   [template_engine.py](../src/quokka2s/products/gaussian/template_engine.py)
    retains direct bounded-block integration for standalone comparisons and
    valid out-of-coverage widths. `template_corners.py` locates the unchanged four
    corners and prepares unsorted original contributions. `corner_scatter.py`

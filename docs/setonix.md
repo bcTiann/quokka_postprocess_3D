@@ -115,7 +115,8 @@ drawable with plot. Choose a fresh results root for a separate calculation;
 see the [reuse rules](usage.md#completed-result-reuse).
 
 The default `direct-template` implementation locates four preintegrated
-fractional-mean/log-sigma template corners for each original Gaussian. Bounded
+fractional-mean template corners on logarithmically spaced sigma nodes for each
+original Gaussian. Interpolation weights are linear in phase and sigma. Bounded
 physical batches prepare emission/products first; the same pool then prepares
 unsorted corner contributions and adds weighted luminosities to disjoint node
 profile planes. All writers finish before the wave releases its luminosities.

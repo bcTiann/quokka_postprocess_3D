@@ -519,7 +519,7 @@ class TemplateIntegratedSpectra(HistogramIntegratedSpectra):
                 "profiles": [entry for entry in coverage["profiles"] if entry["dust_state"] == dust_state],
             }
             dust_report["profile"] = (
-                "Original-cell four-corner phase/log-sigma templates inside coverage; "
+                "Original-cell four-corner linear phase/sigma interpolation on log-spaced sigma nodes inside coverage; "
                 "original mu/sigma stable bin integration outside sigma coverage"
             )
             dust_report["cutoff_applies_to"] = self.engine.cutoff_applies_to

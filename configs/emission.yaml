@@ -42,7 +42,8 @@ slab_nx: 8
 # Slab/cache settings apply to the explicit z-contiguous source and utilities.
 field_cache_slabs: 16
 field_cache_gib: 12
-# Locate four fractional-mean/log-sigma template corners for each cell.
+# Locate four fractional-mean template corners on logarithmically spaced sigma nodes.
+# Interpolation weights use linear phase and sigma distances.
 # Accumulate their weighted luminosities, then convolve once after all batches.
 # The public selector retains its existing name, direct-template.
 spectral_method: direct-template

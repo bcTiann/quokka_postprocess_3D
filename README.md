@@ -233,10 +233,10 @@ The process defaults are original native full-z tiles, 262,144 cells per batch,
 32 concurrent batches, five field-read workers and 32 column-derivation tasks.
 The eight-x-cell `slab_nx` setting applies to the explicit z-contiguous source.
 Gaussian integration defaults to `direct-template`: each original cell locates
-four preintegrated fractional-mean/log-sigma templates and assigns its luminosity
-with the existing interpolation weights. Workers prepare original corner
-contributions. The same pool then processes disjoint spectrum profiles, adding
-weighted cell luminosities directly into profile-major NumPy rows. The guarded
+four preintegrated fractional-mean templates on logarithmically spaced sigma
+nodes, with interpolation weights linear in phase and sigma. Workers prepare
+original corner contributions. The same pool then processes disjoint spectrum
+profiles, adding weighted cell luminosities directly into profile-major NumPy rows. The guarded
 accumulator uses SciPy 1.16.3's prebuilt private `coo_matvec`; the version is
 pinned and a small startup probe verifies its addition behavior. No project
 compiler is used. Direct NumPy convolution of each occupied row produces

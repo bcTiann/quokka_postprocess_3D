@@ -4,7 +4,8 @@ Start with one full snapshot and the shipped defaults. The public selector
 `direct-template` means stored Gaussian templates; the current implementation
 first accumulates cell luminosities at their four template corners and only
 later forms channel spectra. It does not expand every covered cell into 400
-probabilities. The core sequence is:
+probabilities. Sigma nodes remain logarithmically spaced, while the corner
+weights interpolate linearly in phase and sigma. The core sequence is:
 
 ```text
 main: arguments + YAML -> one ProcessSettings per snapshot
@@ -196,7 +197,7 @@ The package has five purpose-specific folders:
 |---|---|---|
 | Read settings | `load_process_configs()` | A fixed list of `ProcessSettings` records with YAML settings, command-line selection and resolved per-snapshot paths |
 | Reuse completed results | `process_reuse.reuse_completed_results()` | Complete, intact products with exact matching configuration and input/source identity, or a clear preserved-output error |
-| Prepare Gaussian tables | `products.gaussian.template_engine.prepare_template_engine()` | Integrated fractional-mean/log-sigma templates and prepared-state validation; before process |
+| Prepare Gaussian tables | `products.gaussian.template_engine.prepare_template_engine()` | Integrated fractional-mean templates on logarithmically spaced sigma nodes and prepared-state validation; before process |
 | Open inputs | `processing_inputs.load_processing_inputs(config)` | Fresh/restored `snapshot` metadata and `emission_calculator`, inside process time |
 | Create output arrays | `EmissionProducts(gaussian_engine=...)` | Initially empty image, node-luminosity, and gas-phase accumulators |
 | Prepare field source | `processing_inputs.prepare_processing_snapshot()` | Original-file native-column reader by default; an explicit z source owns or validates its cache |
@@ -763,8 +764,9 @@ go through a rebinned image. The default `direct-template` route is:
    `template_batches.py` then handles those groups in their original order.
 4. [template_corners.py](../src/quokka2s/products/gaussian/template_corners.py)
    splits each mean into integer shift and fractional phase, locates two sigma
-   layers and two phase knots on each layer, and retains the same four corner
-   weights. Arithmetic phase lookup first estimates an index, corrects it
+   layers and two phase knots on each layer. Linear phase and sigma fractions
+   give the four corner weights; logarithmic spacing applies only to sigma
+   node placement. Arithmetic phase lookup first estimates an index, corrects it
    against the actual stored knots, then computes the fraction from those knots.
    There is no new mu/sigma grid. A corner's destination is its existing
    template row plus integer channel shift. Workers retain the original

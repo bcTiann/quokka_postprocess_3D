@@ -134,7 +134,7 @@ def update_cutoff_report(report, payload, *, engine, audit):
         description = "fractional-mu and sigma integrated-bin templates"
     elif method == "fractional-phase-log-sigma-template":
         node_integration = None
-        description = "preintegrated fractional-mean/log-sigma templates"
+        description = "preintegrated phase templates on log-spaced sigma nodes"
     else:
         raise ValueError("Unsupported histogram-node integration table")
     for dust_index, dust_key in enumerate(payload["dust_state_keys"].tolist()):
@@ -170,7 +170,7 @@ def update_cutoff_report(report, payload, *, engine, audit):
         if original_cells:
             dust_report["profile"] = (
                 "Original-cell luminosities multiplied by interpolated integrated-bin templates; "
-                "fractional mean plus integer-bin shift; logarithmic sigma interpolation"
+                "fractional mean plus integer-bin shift; linear sigma interpolation on log-spaced sigma nodes"
             )
             dust_report["cutoff_reference_applies_to"] = "Original-cell Gaussians"
             dust_report["cutoff_accounting"] = (

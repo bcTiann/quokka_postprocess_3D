@@ -56,9 +56,10 @@ class ProcessSettings:
     Index ranges are [start, stop), or None for the full native axis.
     spectral_method="direct-template" uses the original cells' four stored
     template corners: sum their weighted luminosities first, then convolve.
-    Fractional mean position is interpolated separately on each natural-log
-    sigma layer; integer-bin mean shifts reuse those templates. Default width
-    coverage is 1e-5 to 1024 km/s; valid uncovered widths use direct integrals.
+    Fractional mean position is interpolated separately on each logarithmically
+    spaced sigma layer, with linear phase and sigma weights. Integer-bin mean
+    shifts reuse those templates. Default width coverage is 1e-5 to 1024 km/s;
+    valid uncovered widths use direct integrals.
     gaussian_grid can override template geometry without changing observation bins.
     histogram_merge_threads=None or 1 selects the ordered NumPy main merge.
     Other values raise; chunk_workers supplies independent batch parallelism.

@@ -53,7 +53,7 @@ def _readonly(array, dtype=None):
 
 
 class FractionalGaussianTable:
-    """Store integrated bin masses for phase/log-sigma interpolation.
+    """Store bin masses on log-spaced sigma nodes with linear sigma weights.
 
     A physical mean is split as mu/delta_v = integer + phase. Layer-specific
     phase nodes cover [0,1], with small spacings near narrow Gaussian bin edges.
@@ -312,11 +312,11 @@ class FractionalGaussianTable:
         """Gather four templates into [cell,channel], with bounded local scratch."""
         upper_layers = np.searchsorted(self.sigma_nodes, sigmas, side="left")
         lower_layers = np.maximum(upper_layers - 1, 0)
-        lower_log = self.log_sigma_nodes[lower_layers]
-        upper_log = self.log_sigma_nodes[upper_layers]
+        lower_sigma = self.sigma_nodes[lower_layers]
+        upper_sigma = self.sigma_nodes[upper_layers]
         sigma_fraction = np.divide(
-            np.log(sigmas) - lower_log,
-            upper_log - lower_log,
+            sigmas - lower_sigma,
+            upper_sigma - lower_sigma,
             out=np.zeros_like(sigmas),
             where=upper_layers != lower_layers,
         )
@@ -415,7 +415,7 @@ class FractionalGaussianTable:
                 "mean_decomposition": "mu/delta_v=floor(mu/delta_v)+phase; negative shifts use floor",
                 "phase_interpolation": "linear dimensionless phase separately on each sigma layer",
                 "phase_bracketing": "piecewise-uniform arithmetic corrected against actual stored knots",
-                "sigma_interpolation": "linear in natural log(sigma); node placement has the same logarithmic spacing",
+                "sigma_interpolation": "linear in sigma; node placement remains logarithmic",
                 "phase_spacing": "At most min(maximum_phase_step,mu_spacing_ratio*sigma/delta_v) in nonflat transition regions",
                 "flat_interior": "When 10*sigma < delta_v, only exact five-sigma-flat interior knots are omitted",
                 "velocity_storage": "Each layer spans the union of all phase five-sigma supports, with zero guard bins",

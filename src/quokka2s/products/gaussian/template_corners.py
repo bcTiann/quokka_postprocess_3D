@@ -19,11 +19,11 @@ def locate_corners(table, centers, sigmas):
     shifts = integer.astype(np.int64)
     upper = np.searchsorted(table.sigma_nodes, sigmas, side='left')
     lower = np.maximum(upper - 1, 0)
-    lower_log = table.log_sigma_nodes[lower]
-    upper_log = table.log_sigma_nodes[upper]
+    lower_sigma = table.sigma_nodes[lower]
+    upper_sigma = table.sigma_nodes[upper]
     fraction = np.divide(
-        np.log(sigmas) - lower_log,
-        upper_log - lower_log,
+        sigmas - lower_sigma,
+        upper_sigma - lower_sigma,
         out=np.zeros_like(sigmas),
         where=upper != lower,
     )

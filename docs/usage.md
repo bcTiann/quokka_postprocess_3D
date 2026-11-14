@@ -398,17 +398,19 @@ histogram_merge_threads: 1
 ```
 
 `gaussian_grid: null` selects these defaults. Write the mean in channel units as
-`mu/delta_v = floor(mu/delta_v) + phase`. Each natural-log sigma layer stores
-integrated-bin probabilities at phase knots from 0 to 1. Its phase transition
-spacing is at most `min(maximum_phase_step, mu_spacing_ratio*sigma/delta_v)`.
+`mu/delta_v = floor(mu/delta_v) + phase`. Each logarithmically spaced sigma layer
+stores integrated-bin probabilities at phase knots from 0 to 1. Its phase
+transition spacing is at most `min(maximum_phase_step, mu_spacing_ratio*sigma/delta_v)`.
 For very narrow Gaussians, exactly flat interior phase knots can be omitted;
 fine transition knots near channel edges are retained. Each layer stores the
 union of all phase nodes' five-sigma supports plus zero guards, so shifting a
 mean into the window never mistakes an unstored supported bin for zero.
 
 The kernel locates two sigma layers and, separately on each, two phase knots.
-Linear interpolation in phase and in `ln(sigma)` supplies four nonnegative
-weights. NumPy/SciPy sum the weighted cell luminosities by identical template
+Linear interpolation in phase and in sigma supplies four nonnegative weights.
+Sigma node placement remains logarithmic; `log_sigma_step` controls node spacing,
+not the coordinate used for interpolation weights.
+NumPy/SciPy sum the weighted cell luminosities by identical template
 row and integer-bin shift, keeping line, dust and temperature accounts separate.
 Workers keep unsorted row/cell/weight contributions and read-only luminosity
 for one bounded wave. The same pool next assigns each spectrum profile to one
