@@ -16,8 +16,8 @@ uv sync
 
 `.python-version` selects Python 3.11. On Setonix, load the Python module and
 add `--python "$(command -v python)"` to sync, as shown in the Setonix guide.
-In later shells, return to the repository and use `uv run process`
-or `uv run plot`. uv checks and synchronizes the environment automatically,
+In later shells, return to the repository and use `uv run python process_snapshot.py`
+or `uv run python plot_emission_results.py`. uv checks and synchronizes the environment automatically,
 reusing the locked versions rather than reinstalling everything on each run.
 The other Python tools below also work without an import-path export. For Setonix
 environment commands, see the [Setonix guide](setonix.md).
@@ -45,609 +45,144 @@ Do not manually edit `uv.lock`.
 
 ## Shared configuration
 
-Process and plot both read [configs/emission.yaml](../configs/emission.yaml).
-Choose one snapshot or a containing run directory in the YAML, or override its
-dataset, output group and x/y ranges with explicit command-line options. Process
-plots each snapshot after saving its numerical products unless `--no-plot` is supplied.
-Other settings continue to come from the YAML.
+Run the two independent scripts from the repository root:
 
-| Setting | Meaning |
-|---|---|
-| `jobname` | Output group name, for example `sigma13.v2`; use a distinct group for each simulation run |
-| `dataset` | Complete QUOKKA snapshot directory, or its containing run directory for process |
-| `results_dir` | Root containing all jobs and snapshots |
+```bash
+uv run python process_snapshot.py --dataset /absolute/path/run1/plt0008703
+uv run python plot_emission_results.py --dataset /absolute/path/run1/plt0008703
+```
+
+Process accepts exactly one snapshot containing `Header`. A run directory is
+an error and is never expanded. Process does not import or invoke the plot
+entry point. Plot reads saved numerical arrays and uses only the dataset folder
+name to locate them; it does not open the original snapshot or emission tables.
+
+[configs/emission.yaml](../configs/emission.yaml) provides shared defaults:
 
 ```yaml
-jobname: sigma13.v2
-dataset: ../inputs/snapshots/plt0655228
+jobname: reference_job
+dataset: null
 results_dir: ../output
+x_index_range: null
+y_index_range: null
 ```
 
-The snapshot name comes from the supplied `dataset` path, here `plt0655228`.
-Both commands select `results_dir/jobname/snapshot_name/`: process writes
-`processed/`, while plot reads `processed/` and writes the selected figure
-styles. Process invokes plot by default after saving each snapshot. The default
-is `figures_titled/png/`; selecting the untitled style writes `figures/`. They do
-not search for the latest snapshot.
-If either x/y index range is set, these directories go inside the corresponding
-`region_xSTART-STOP_ySTART-STOP/` folder. An omitted or `null` axis uses `all`;
-with both axes omitted or `null`, no region folder is added.
+With `dataset: null`, supply `--dataset` on the command line. A non-null YAML
+dataset must also be an absolute path to one snapshot. `~` expands to the home
+directory; shell variables are not expanded. `--jobname my-run` optionally
+replaces the output group. Keep a distinct group for each simulation run.
+Relative table and result paths start at the YAML file. Bundled tables remain
+defaults when their path entries are omitted.
 
-```text
-output/
-├── sigma13.v2/
-│   ├── plt0655228/
-│   │   ├── processed/
-│   │   ├── figures/
-│   │   ├── figures_titled/
-│   │   └── region_x64-66_y64-66/
-│   │       ├── processed/
-│   │       ├── figures/
-│   │       └── figures_titled/
-│   └── plt0916720/
-└── sigma50/
-    └── plt0655228/
-```
-
-The two bundled tables are selected automatically:
-`inputs/tables/despotic/interpolated.npz` and
-`inputs/tables/cloudy/emission.npz`. DESPOTIC now supplies the validated expanded
-55 × 60 × 64 interpolated table; the previous table is retained unchanged at
-`inputs/tables/despotic/interpolated_old.npz`. Cloudy supplies 7 × 12 × 21 states,
-including two added low-density planes; its original 7 × 10 × 21 table is kept
-at `inputs/tables/cloudy/emission_old.npz`. Its NH and temperature axes and all
-original nodes are unchanged. The dust table is unchanged.
-The expanded DESPOTIC table still has 184 unavailable nodes outside
-the finite-support hull. Coordinate coverage alone does not guarantee a usable
-interpolation stencil or physical accuracy.
-
-The supplied YAML explicitly names `despotic_table`, `cloudy_table`, and
-`dust_opacity_table` using paths relative to `configs/`. If you copy that YAML
-elsewhere, update these paths, use absolute paths, or remove those three entries
-to use the source checkout's bundled defaults. Omitted table settings stay
-anchored to the checkout even when the YAML is elsewhere. To reproduce an old
-run, explicitly select `interpolated_old.npz` and use a new results root; changing
-the table does not update existing saved products.
-
-The supplied YAML uses repository-local input and output paths. To store data
-elsewhere, set `dataset` and `results_dir` to the desired locations. The
-[Setonix guide](setonix.md) keeps the repository, bundled tables and generated
-results under `$MYSOFTWARE`. With `results_dir: ../output`, results stay in the
-repository's `output/` directory. Original snapshots remain at their supplied
-absolute paths and are read-only.
-
-Relative paths are resolved from the YAML file's directory, so `../inputs/` in
-`configs/emission.yaml` refers to this clone's `inputs/` directory.
-For process, `dataset` may point to an individual snapshot containing `Header`
-or a run directory containing snapshot directories. Run discovery selects only
-direct subdirectories named `plt` plus digits, sorts them by numeric suffix,
-and fixes the list before processing begins. It does not recurse or watch for
-new snapshots. Each snapshot keeps its own output directory.
-Complete results with matching source identity and exact saved calculation
-settings are reused after product-integrity checks, before loading inputs or
-preparing the temporary z-contiguous fields. Incomplete, conflicting or
-legacy `processed/` directories are reported without being overwritten. Choose
-another results root for a separate calculation of the same job, snapshot and
-region selection; the [reuse rules](#completed-result-reuse) explain the checks.
-There is no emission slab checkpoint: an interrupted snapshot must be restarted
-from the beginning in a new directory. Table-building checkpoints are separate.
-
-Existing numerical products can be reused without rerunning process. Place
-their complete directory at `results_dir/jobname/snapshot_name/processed/`,
-then run plot with that job and snapshot selected. For region results, retain
-the region folder and set the same x/y ranges in the shared YAML.
+The scripts select `results_dir/jobname/snapshot_name/`. Process writes
+`processed/`; plot writes the chosen `figures/` or `figures_titled/` styles.
+Explicit x/y selections place both under the same region directory, for example
+`region_x64-66_y64-66/`. They do not search for a latest snapshot or scan a run.
 
 ### Path rules
 
-| Where a path is supplied | Base for a relative path |
+| Path | Resolution |
 |---|---|
-| Inside a YAML configuration | Directory containing that YAML file, except `prepared_z_fields`, which must be absolute |
-| Command-line `--config` | Current terminal working directory |
-| Command-line `--dataset` | Must be absolute after expanding `~`; no relative-path base |
-| Bundled reference data | Source checkout containing `src/quokka2s/` |
+| CLI or YAML `dataset` | Absolute snapshot path after expanding `~` |
+| Other YAML paths | Relative to the YAML file, or absolute |
+| CLI `--config` | Relative to the terminal working directory, or absolute |
+| Omitted bundled table paths | Anchored to the source checkout |
 
-Paths used by each command are resolved to absolute `Path` objects at the entry
-point; calculations receive those resolved paths. The YAML file retains its
-relative paths, so moving or cloning the repository does not require changing
-the defaults.
-The program does not search for replacement inputs when a file is missing.
-Resolution does not create files or require output files to exist; input checks
-and output-overwrite rules remain in force.
-
-Absolute paths and `~/...` are supported in the supplied configurations too.
-Use absolute paths for snapshot and result locations outside the clone.
-YAML does not expand `$VARIABLE` expressions.
-
-### Override the dataset, output group or region on the command line
+### Select an x-y region
 
 ```bash
-uv run process --field-source z-contiguous --dataset /path/to/simulations/plt0008703 --jobname sigma13.v2 --x 64 128 --y 32 64
-uv run plot --dataset /path/to/simulations/plt0008703 --jobname sigma13.v2 --x 64 128 --y 32 64
+uv run python process_snapshot.py \
+  --dataset /absolute/path/run1/plt0008703 --jobname my-run \
+  --x 64 66 --y 64 66
+uv run python plot_emission_results.py \
+  --dataset /absolute/path/run1/plt0008703 --jobname my-run \
+  --x 64 66 --y 64 66
 ```
 
-Both commands accept `--dataset ABS_PATH`, `--jobname NAME`, `--x START STOP`,
-`--y START STOP` and `--config PATH`. Every explicit `--dataset` requires an
-explicit `--jobname`, even when the YAML already has the intended group.
-Argument parsing rejects a missing pair before reading configuration or input
-data and before creating output. This rule applies to the process/plot commands;
-other tools keep their own options.
+Each range includes START and excludes STOP. These commands select four full-z
+columns. An omitted axis retains its YAML range; `null` means the full axis.
+All selections must lie inside the actual grid. Repeat CLI selection overrides
+when plotting; they do not persist or change YAML. Column densities still use
+complete z columns, and gradients use neighbours in the original global grid.
+Halo cells do not enter images or spectra.
 
-CLI `--dataset` must be an absolute path after expanding `~`; a relative CLI
-dataset is rejected. Relative datasets inside YAML continue to resolve from the
-YAML directory. Without CLI `--dataset`, the YAML dataset is used. CLI
-`--jobname` alone overrides the output group while keeping that dataset; without
-CLI `--jobname`, the YAML group is used. Each x/y option replaces only its own
-YAML range. Native ranges are half-open, and z spans complete original columns.
-
-`jobname` only names the output group. Choose it manually when switching runs;
-no job number or run name is inferred from the dataset. Both commands select
-the same result directory, for example
-`results_dir/jobname/plt0008703/region_x64-128_y32-64/`.
-Process reads the selected snapshot, or processes the run's snapshots in order.
-Existing complete results are reused only when their settings and saved
-input/source identity match.
-Plot uses only the dataset folder name to select saved products, without
-checking the original snapshot or opening tables. Use the same effective
-dataset, jobname and region for process and plot.
-
-`emission_report.json` saves the effective `run_configuration`, including
-dataset/result paths, ranges, tables and execution settings. CLI overrides do
-not edit YAML; a later command or diagnostic does not inherit them.
-
-### Process a whole run and plot its saved results
-
-```bash
-# Calculate, save and draw one snapshot before starting the next.
-uv run process --dataset /path/to/simulations/run1/ --jobname sigma13.v2
-
-# Or calculate the entire run now and draw it later.
-uv run process --dataset /path/to/simulations/run1/ --jobname sigma13.v2 --no-plot
-uv run plot --all --jobname sigma13.v2
-```
-
-The same directory selection works in YAML. There is no separate batch config
-and snapshots are processed sequentially; worker settings still apply inside
-each snapshot. Before starting, process prints the fixed snapshot inventory.
-During the run it prints the current snapshot number and the existing slab/batch
-progress. At the end it summarizes completed, reused and failed snapshots.
-
-`--no-plot` suppresses drawing and does not validate or use plotting settings.
-Otherwise process accepts the same `--png`, `--pdf`, `--titled` and `--untitled`
-flags as plot, applying them after each snapshot's products are safely saved.
-A drawing failure retains those products; a later invocation can reuse them
-without recalculating the snapshot. Ordinary failures affect that snapshot and
-the batch continues; any failure gives a nonzero exit status. Ctrl-C stops the
-batch immediately. Failed or incomplete result directories are never deleted
-or replaced automatically.
-
-`plot --all` scans direct `plt` plus digits directories in the selected
-`results_dir/jobname/`, in numeric order. Use `plot --all --jobname sigma50` for
-that output group; bare `plot --all` uses the YAML group. It reads saved products
-only and does not need `dataset` in YAML or access the original simulation and
-table paths.
-It cannot be combined with explicit `--dataset`. Missing products, failed
-loads and incomplete diagnostic results are reported per snapshot; other
-snapshots continue and the command exits nonzero if any failed. The existing
-`allow_partial: true` option explicitly permits diagnostic plots.
-
-Automatic plotting uses the same selected job group as process. For a later
-batch plot, repeat the selected `--jobname`, configuration and x/y overrides.
-CLI overrides do not persist or write YAML:
-
-```bash
-uv run process --field-source z-contiguous --config /path/to/emission.yaml --dataset /path/to/run1/ --jobname sigma13.v2 --x 64 66 --y 32 34 --no-plot
-uv run plot --config /path/to/emission.yaml --all --jobname sigma13.v2 --x 64 66 --y 32 34 --pdf --untitled
-```
-
-An output group should correspond to one simulation run: two runs may contain
-the same snapshot names, and `plot --all` selects all matching results in that
-group rather than interpreting the original run path.
+Grid dimensions come from snapshot metadata. Rectangular level-zero layouts
+and shorter edge FABs are supported; grid dimensions do not have to divide a
+hardcoded tile or query size. For example, Nz=2028 is valid. Batches can end
+with fewer than `query_chunk` cells. Multilevel AMR is a separate unsupported
+layout, not another grid size. The native x and z dimensions need at least two cells for the existing
+finite-difference implementation; a one-column selected region is valid.
 
 ### Completed-result reuse
 
-Before skipping a calculation, `process_reuse.py` requires both `status.json`
-and `emission_report.json` to say `completed` with `processing_complete: true`.
-The saved `run_configuration` must match the current resolved settings exactly,
-including execution settings. All three numerical NPZ products must pass ZIP
-CRC checks and load through the current saved-product reader with the required
-fields. Completion refers to the selected region: a regional result may have
-`full_snapshot: false` while `processing_complete: true` and is reusable.
-
-The report also saves `input_identity`, containing each snapshot file's relative
-path, size and nanosecond modification time, plus SHA-256 hashes of the DESPOTIC,
-Cloudy and dust input files and the package's Python sources and the numerical runtime/CPU dispatch. Snapshot
-payload bytes are not hashed; their identity check uses file metadata only.
-Identity is captured before calculation and checked again before saving. These
-are additive report fields; numerical array formats and scientific calculations
-are unchanged. Table hashes govern reuse of a saved result, while physical
-compatibility checks for loading a table remain unchanged.
-
-With the explicit z source and null `prepared_z_fields`, its temporary copy is removed and its
-random path is not needed for reuse. An explicit prepared cache adds its
-manifest, raw field file states, original-source identity and optional metadata
-sidecar SHA to `input_identity`; it must still match when reusing those results.
-
-Older results without `input_identity` are preserved and rejected for automatic
-process reuse. They can still be drawn using `plot` or `plot --all`, which only
-need their saved numerical products. Changed, incomplete or corrupt results are
-also preserved; choose another `results_dir` for a new calculation. No snapshot
-or output is deleted to make reuse succeed.
+Process reuses only completed, intact results with matching configuration,
+input file metadata, table/source hashes and numerical runtime identity.
+A selected region can be complete while `full_snapshot` is false. Conflicting,
+incomplete and legacy outputs are preserved and reported. Use a fresh
+`results_dir` for another calculation. Existing products remain drawable even
+when process refuses to reuse them. There is no partial snapshot checkpoint.
 
 ## Processing settings
 
-Optional execution settings control memory and concurrency, not the physics.
-Omitted settings use the same defaults shown in the shared YAML:
-
 | Setting | Meaning | Default |
 |---|---|---|
-| `field_source` | Original full-z native tiles in RAM; explicit z-contiguous supports regional/reference runs | native-columns |
-| `slab_nx` | Number of x cells per slab in the explicit z source | 8 |
-| `query_chunk` | Maximum cells in one table-query batch | 262,144 |
-| `chunk_workers` | Concurrent query batches within the loaded tile/slab | 32 |
-| `spectral_workers` | Per-batch spectral workers; direct-template requires one and uses chunk_workers for batch parallelism | 1 |
-| `z_reader_threads` | Shared reader/complete-column derivation pool size | 32 |
-| `z_read_workers` | Simultaneous raw-field file streams before derivation | 5 |
-| `histogram_merge_threads` | Ordered main product merge; accepts null or one | 1 |
-| `prepared_z_fields` | Keep null for native-columns; explicit z source may reuse an absolute cache | null |
-| `field_cache_slabs`, `field_cache_gib` | Retained native-reader settings; unused by bounded eager process | 16, 12 |
-
-The 32-batch setting is sized for the bundled `256 x 256 x 2048` snapshot.
-Larger native full-z tiles, including the large Setonix simulations, require a
-smaller `chunk_workers` value to fit the existing 20-GiB process memory plan.
-The plan includes the current field tile and reserves worker space proportional
-to `chunk_workers * query_chunk`; it refuses an oversized run before cell reads.
-Reduce concurrency for those inputs rather than disabling the memory guard.
+| `query_chunk` | Maximum cells per physical/Gaussian batch | 262144 |
+| `chunk_workers` | Concurrent batches in one bounded wave | 32 |
+| `z_read_workers` | Concurrent original FAB-field reads | 5 |
+| `z_reader_threads` | Complete-column derivation tasks | 32 |
+| `gaussian_grid` | Optional Gaussian template geometry overrides | null |
 
 ### Original native-column fields
 
-The default `field_source: native-columns` reads regular level-zero FAB columns
-directly from the original snapshot into one full-z RAM tile. It writes no field
-cache. The gradient pass uses original momenta and global neighbour faces before
-releasing x/y momenta; density/z momentum storage is then reused for physical
-density/velocity, temperature is reused, and the two column arrays are filled.
-Six read-only fields feed unchanged physical and Gaussian batches.
+The sole process reader reads selected original full-z XY tiles into RAM.
+`np.fromfile` reads a complete intersecting FAB field, then NumPy copies the
+selected values to z-contiguous RAM arrays. Required global x/y neighbour faces
+are read separately and reused. A very small region can still read a complete
+intersecting FAB field; it does not trigger conversion of a complete snapshot.
 
-All core reads and density/x-momentum/y-momentum neighbour reads use complete
-native FAB fields through one `np.fromfile` helper. The first tile supplies its
-already-read face values; remaining FABs read those three fields before NumPy
-slices out the required planes. Each call closes its source file. No persistent
-descriptor cache, mapped array or special tiny-row reader is retained.
-
-Processing requires the complete box, `direct-template`, `max_slabs: null` and
-`prepared_z_fields: null`. `query_chunk` must contain complete z columns and
-align with original y rows and native tile boundaries. Geometry/alignment is
-checked after opening metadata, before reading cell fields. Unsupported cases
-raise, with no automatic switch to another source. Shared configuration loaders
-remain usable by auxiliary tools that have their own regional read paths.
-
-Finished products merge immediately in deterministic native-tile order, with
-ascending batches within each tile. Original batch contents remain unchanged;
-floating-point sums across tiles may round differently from a full-grid batch
-walk. Raw/derived arrays and Gaussian queues release before the next tile.
-A conservative preflight and 20 GiB process RSS guard include concurrent workers. Read statistics distinguish
-unique five-field payload, actual API requests including neighbour rereads and
-RAM layout; they do not claim to measure physical storage traffic.
-For `B` equal-size FABs, `B0` in the first tile, and `F` bytes per native field,
-one complete pass requests `(5*B + 3*(B-B0))*F` bytes. For a float64
-512x512x4096 domain with four equal XY tiles, this is 58 GiB of API requests
-versus 40 GiB of unique five-field payload. These are source-layout counts,
-not a measured disk-traffic or runtime claim.
-
-`native_columns.read_statistics.method` is `numpy-fromfile`. Its actual
-read-call/requested/received counters and phase wall times include complete-field
-reads and copying. The reader does not collect per-field worker timings,
-worker-active unions, separate gather-only times or source-range unions; those
-fields are absent rather than reported as zero.
-
-### Explicit prepared or temporary z-contiguous fields
-
-Select `field_source: z-contiguous` or `--field-source z-contiguous` for regional
-processing, limited slabs or retained Gaussian comparison methods.
-
-`dataset` always names the original snapshot. In this explicit source, with `prepared_z_fields: null`,
-process converts density, temperature and three momentum-density fields into
-five raw float64 `.npy` arrays with original `(Nx, Ny, Nz)` C-order geometry.
-It assembles/writes one complete field at a time, preserving raw units and
-physical coordinates, then releases that buffer before the next field.
-Its `.zfields-*/fields` directory beside outputs is owned by that calculation
-and removed on success/failure, before plotting or the next snapshot.
-
-To use an existing compatible cache, set an absolute path:
-
-```yaml
-field_source: z-contiguous
-prepared_z_fields: /absolute/path/to/prepared_fields
-```
-
-The directory must contain the five fields and their manifest. Process checks
-shape, dtype, layout, file identity and original-source identity, then reads
-without adding, overwriting or deleting any cache file. An optional
-`snapshot_metadata.json` restores geometry, units and native block descriptors
-inside input loading, avoiding `yt.load` and native header rescanning. It holds
-no derived fields or products. Without the sidecar, original yt metadata
-loading remains available. A fresh owned conversion writes its sidecar using
-the already-loaded snapshot. Original plotfiles are always read-only.
-
-A new conversion needs approximately `40 * Nx * Ny * Nz` bytes of disk and one
-`8 * Nx * Ny * Nz`-byte raw field buffer in RAM, plus runtime overhead and final
-products. It covers complete fields even for a selected region. Supplying a
-compatible existing cache avoids that conversion. Subsequent bounded reads
-hold only current slab inputs and derived core arrays, not full fields or
-multi-slab groups. Plot needs only saved products, never this cache.
+Only the current tile and bounded worker wave stay resident. Six derived
+physical arrays replace/reuse raw allocations, and each tile is released before
+the next read. Preflight estimates raw, derived, worker, neighbour and headroom
+storage. A 20 GiB process RSS guard catches excess high-water usage; lower
+`query_chunk` or `chunk_workers` if needed. This is a memory guard, not proof
+that every possible grid or FAB layout fits at every worker setting.
 
 ### Spectral integration
 
-The public name `direct-template` selects preintegrated Gaussian templates.
-The default implementation locates each cell's four template corners, accumulates
-their weighted luminosities, and convolves the completed node arrays into the
-400 bins from -200 to +200 km/s. It does not expand each covered cell into a
-cell-by-channel probability array.
-The same cells, temperatures, thermal widths, luminosities, per-line masks and
-complete Gaussian moments are used by all products. Default settings are:
+The only production method accumulates original Gaussian luminosities at four
+stored fractional-mean/sigma template corners, then convolves completed rows.
+There is no algorithm selector. Means use integer-channel shifts and fractional
+phase; sigma nodes are logarithmically placed with **linear sigma weights**.
+The observed grid remains 400 channels over [-200,200] km/s.
+
+Default template sigma coverage is [1e-5,1024] km/s, with natural-log node step
+1/32. A known wider range can be configured before table preparation:
 
 ```yaml
-spectral_method: direct-template
-gaussian_grid:
-  sigma_min: 0.00001
-  sigma_max: 1024.0
-  log_sigma_step: 0.03125
-  mu_spacing_ratio: 0.1
-  maximum_phase_step: 0.1
-spectral_workers: 1
-histogram_merge_threads: 1
-```
-
-`gaussian_grid: null` selects these defaults. Write the mean in channel units as
-`mu/delta_v = floor(mu/delta_v) + phase`. Each logarithmically spaced sigma layer
-stores integrated-bin probabilities at phase knots from 0 to 1. Its phase
-transition spacing is at most `min(maximum_phase_step, mu_spacing_ratio*sigma/delta_v)`.
-For very narrow Gaussians, exactly flat interior phase knots can be omitted;
-fine transition knots near channel edges are retained. Each layer stores the
-union of all phase nodes' five-sigma supports plus zero guards, so shifting a
-mean into the window never mistakes an unstored supported bin for zero.
-
-The kernel locates two sigma layers and, separately on each, two phase knots.
-Linear interpolation in phase and in sigma supplies four nonnegative weights.
-Sigma node placement remains logarithmic; `log_sigma_step` controls node spacing,
-not the coordinate used for interpolation weights.
-NumPy/SciPy sum the weighted cell luminosities by identical template
-row and integer-bin shift, keeping line, dust and temperature accounts separate.
-Workers keep unsorted row/cell/weight contributions and read-only luminosity
-for one bounded wave. The same pool next assigns each spectrum profile to one
-writer, using SciPy 1.16.3's prebuilt private `coo_matvec` to add directly to its
-NumPy plane. No sorting or temporary luminosity histogram is required. Buffer
-checks and a startup addition probe protect this pinned private API; a SciPy
-upgrade requires renewed validation. All physical values remain float64.
-All writers finish before the original-cell luminosity is released.
-For a B-bin stored template row, exactly K+B-1 integer
-shifts can overlap K observed bins. Direct `np.convolve(..., mode="valid")` turns
-each occupied row of accumulated luminosities into the K-bin spectrum. No new grid or
-interpolation approximation is added. No whole-snapshot cell-by-channel matrix
-or retained original-cell arrays are created. No luminosity threshold drops cells. Stored template corners have individual five-sigma
-supports and are not renormalized. Valid sigmas outside prepared coverage use
-stable original-cell direct bin integrals, also truncated at +/-5sigma without
-renormalization. No luminosity threshold drops those cells. Invalid coordinates,
-unsafe integer shifts and nonpositive/nonfinite widths still raise.
-
-For the default 400 bins, templates and 40 accounts, the main corner arrays
-have 5.402 GiB capacity. This is an array capacity, not measured process RSS.
-Wider template coverage increases this capacity. Array allocation, first writes,
-all raw-term preparation, sparse accumulation and final convolution remain timed; only the immutable
-Gaussian template is prepared outside process time. The 20 GiB process memory
-checks cover this route as well as field and worker buffers.
-
-The fractional-mean table can be shifted to other finite means, but it does
-**not** store arbitrary sigmas. Set bounds to cover common emitting widths and
-reduce direct integration. Final log lines beginning `Gaussian template coverage`
-and `Gaussian fallback account`, plus `spectral_report.*.template_coverage`, give
-outside counts, sigma ranges, direct-probability work and each line/dust/branch's
-outside input and five-sigma window-reference luminosity. A physical cell can
-occur in several width groups; these row counts are not distinct physical cells.
-For example, a large snapshot with widths above 1024 km/s can use:
-
-```yaml
-spectral_method: direct-template
 gaussian_grid:
   sigma_max: 8192.0
 ```
 
-Other keys retain their defaults. Table construction and prepared-state validation
-run before process timing. Increasing the upper bound increases prepared table
-memory; it changes coverage rather than clipping physical widths.
+Each template stores its own five-sigma support plus zero guards, including
+bins outside the final observation window that can shift into it. Valid
+out-of-coverage sigmas use stable original-cell bin integration with the same
+five-sigma cutoff. No nonzero luminosity is discarded by a brightness threshold,
+and no truncated tail is renormalized. Logs/reports retain coverage counts,
+width ranges and fallback luminosity by line, dust state and temperature branch.
 
-For each bounded wave of up to `chunk_workers` batches, emission, image,
-gas-phase and full-moment preparation finishes first. Workers then prepare
-original corner contributions and calculate independent endpoint accounts and
-outside-width integrals. The same pool next accumulates disjoint spectrum
-profiles. Only after all writers join does the main thread merge small products
-in original batch order. Luminosity and raw contributions are then released;
-only NumPy corner accounts survive to final convolution. The one-worker setting
-uses the same phases, with no nested spectral thread pool.
-
-`processing_timings.gaussian.gaussian_worker_wave_seconds` records raw-term
-preparation, original-cell accounts, fallback and scheduling.
-`inplace_corner_scatter_wave_seconds` records the subsequent profile writes,
-contiguous input copies, checks and release. Both are inside
-`gaussian_wave_seconds_including_analytic_accounts_and_scheduling`; do not add
-the scatter time to that inclusive total again. Ordered product merge now
-contains only small products and accounts. `snapshot_corner_finalization_seconds`
-records occupied-row selection, convolution and addition to saved spectra.
-`gaussian_total_seconds_including_corner_store` adds initialization and final
-convolution to the Gaussian wave. Reports refresh timings after finalization.
-The activity union excludes independent analytic accounts and counts overlapping
-query/profile writes once. Raw owned-buffer and borrowed-luminosity counters
-have distinct scopes; neither is process RSS. No whole-snapshot cell arrays are
-retained.
-Worker call sums are diagnostic, not wall time or divided by worker count.
-The complete process time includes initialization, field reads, physical
-calculations, all numerical work, checks and saving.
-
-Analytic window references use the original cells, whereas the queried spectra
-interpolate template corners with their own supports. The signed residual
-therefore includes interpolation, shifted support and floating reduction.
-Images, gas phases, original-cell complete moments and per-line missingness
-retain their definitions. Use named product and reference-spectrum comparisons
-to assess interpolation error, especially for narrow profiles and weak wings.
-
-The previous sparse default is retained as an explicit reference:
-
-```yaml
-field_source: z-contiguous
-spectral_method: histogram-layered
-gaussian_grid: null
-histogram_merge_threads: 1
-```
-
-It distributes luminosity to on-demand `(sigma-layer,mean-index)` nodes with
-mean spacing 0.1 times the layer sigma and natural-log step 1/32. A standard-normal
-prefix table expands occupied nodes after the ordered main merge. Its analytic
-window references describe the node mixture. The bounded `histogram-2d` method
-keeps its rectangular axes, dense main histogram and strict finite coverage.
-Neither is an automatic fallback for direct-template. Use a separate YAML and
-output group when selecting a different method; method-specific grid mappings
-are not converted by a CLI override.
-
-Explicit reference methods remain available:
-
-```bash
-uv run process --field-source z-contiguous --jobname reference-exact --spectral-method exact
-uv run process --field-source z-contiguous --jobname reference-lut --spectral-method linear-lut
-```
-
-`exact` calls SciPy's double-precision erf. `linear-lut` uses the retained 1D
-erf table on [0,8] with spacing 1/4096 and odd symmetry. Those reference paths
-keep their existing cell chunks, boundary handling and error-policy behavior.
-`--spectral-method direct-template` explicitly selects the default. CLI overrides
-apply only to that invocation and to every selected snapshot in a run. Plot
-reads the saved method/products and does not recalculate integration.
-
-The saved effective method, template geometry, cutoff, validation and NumPy/SciPy
-backend describe the calculation. Result reuse requires exact configuration and
-input/source identity; choose another jobname/results root for a comparison.
+Gaussian template preparation/validation is measured separately before process
+timing. Metadata, original reads, physical lookups, four-corner accumulation,
+convolution, checks and file saving are timed. Worker-call durations can overlap;
+do not add their sums to wall-clock stages. The final status includes saving.
+No custom Cython module or project compiler step is used.
 
 ### Memory, concurrency and progress
 
-The default native-column reader uses up to five read workers to gather one
-full-z native tile and the necessary original neighbour faces. Up to 32 tasks
-derive its physical fields before batch work starts. Finished products merge
-in fixed native-tile order, with original batch order inside each tile.
-
-The explicit z source's bounded eager reader opens up to five field streams, reads the current
-x slab plus its two periodic x neighbours, and closes those files before
-derivation. Raw buffers retain native full y and full z; selecting fewer y
-cells reduces derivation/products but not those full-y reads. The same
-32-thread pool then distributes complete selected `(x,y)` columns through the
-bounded NumPy derived-field blocks. It releases raw fields before batch work.
-The legacy native-reader group settings do not change this process route.
-
-Concurrency belongs to distinct phases, not one multiplied worker count:
-
-| Phase and owner | Default | Work sharing |
-|---|---|---|
-| Raw-field I/O, reader pool | Up to 5 workers | Native FAB field/halo reads and RAM gather; derivation waits |
-| Array field derivation | Up to 32 tasks | Disjoint complete `(x,y)` columns; no batch processing yet |
-| Emission/products, batch pool | Up to 32 batches | Immutable views of one derived tile; main merge after each wave |
-| Gaussian preparation, same batch pool | Up to 32 batches | Raw corners, independent accounts and uncovered-width integrals |
-| Profile accumulation, same batch pool | Up to 32 workers | Disjoint profile planes; original batch/group order within each profile |
-| Ordered small-product merge and final convolution | One main thread | Merge original products in order; convolve each occupied template row |
-
-Reader derivation finishes before physical batches start. Each bounded wave
-finishes physical preparation and Gaussian queries before its successor.
-No completed product partials wait across native tiles.
-These phases do not multiply into a nested worker count.
-Explicit node methods use their stated Python workers for independent blocks.
-Histogram merges accept `histogram_merge_threads: null` or `1` and run in order.
-
-Project calculations use NumPy/SciPy without custom compiled extensions.
-Independent batches provide parallel work; numerical library versions and CPU
-dispatch remain part of result identity. No project compiler or forced OpenMP
-wait policy is required.
-
-Memory limits for legacy field groups are not total process RSS controls.
-Current raw slab buffers, six derived arrays, owned Gaussian input waves,
-templates and result arrays have separate lifetimes.
-More workers can increase memory and need not reduce full process time.
-With the explicit z source, `max_slabs: 1` makes a partial diagnostic run; omit it to finish the
-selected region/full snapshot.
-
-The native path prints tile bounds and updates status after each finished tile.
-The explicit z path reports input loading, cache preparation, field reading, fused
-derivation, batch stages, ordered merges, output construction, checks and save.
-A ten-second observer reports active stages without reading arrays. A computed
-batch waiting for an earlier one is distinct from a merged batch; completion
-advances only after the original ordered merge.
-
-`processing_timings.native_columns` describes original reads, RAM derivation,
-immediately merged products and memory. Gradient and combined units/columns passes
-have separate clocks. The explicit z source separates eager field reading from `fused_derivation` and
-from batch compute/ordered merge. Foreground/shielding columns and gradients
-share that fused pass, so their old individual callback categories do not
-provide independently measured costs on this route. `field_preprocessing`
-records payload bytes, read/close counts, retained bytes, reader settings and
-cache reuse/retention. Concurrent worker times are not wall-time fractions and
-must not be added as if sequential.
-
-Gaussian tables/geometry and their synthetic arithmetic gate are prepared
-before the process clock. The clock starts before identity checks, metadata
-construction/restoration and physical DESPOTIC/Cloudy/dust table loading.
-The default source excludes Gaussian preparation only: every original read,
-neighbour operation and RAM rearrangement is timed. For the explicit z source,
-only actually-created conversion time is additionally deducted; existing-cache validation,
-sidecar restoration, reader/unit/NPY-header setup, all payload reads, derivation,
-emission, products, expansion, conservation checks, saves and cleanup remain
-timed. No snapshot object or cell result is precomputed outside this boundary.
-`processing_timings.z_conversion_seconds` and
-`gaussian_table_build_seconds_excluded` record the separate costs.
-
-Cell ETA covers the tile/slab calculation loop. `emission_report.json.elapsed_seconds` stops at
-report construction; final `status.json.elapsed_seconds` also includes result
-writing and reader/cache cleanup. Use final status for one snapshot's numerical
-process. CLI startup, run discovery and optional subsequent plotting have their
-own durations. Gaussian preparation is excluded in both report/status durations;
-only the explicit z source additionally excludes actual temporary conversion.
-
-## Select an x-y region
-
-Set native cell-index ranges in the [shared YAML](../configs/emission.yaml),
-or use `--x START STOP` and `--y START STOP` on both commands.
-Keep the same `results_dir`; process and plot automatically select a region folder:
-
-```yaml
-field_source: z-contiguous
-x_index_range: [64, 128]
-y_index_range: [32, 96]
-```
-
-Indices start at zero and the stop is excluded: this example selects
-`64 × 64 × Nz` cells, where `Nz` is read from the snapshot (`2048` for the
-reference snapshot). An omitted or `null` axis uses its full extent; z always spans
-the original box. No cell averaging is performed. Gradients use neighbours
-from the original simulation, and both shielding and dust columns use the
-complete original z column.
-The selected region applies to derived quantities and products. An owned
-conversion still writes all five complete snapshot fields; the bounded reader
-then reads selected x slabs with native full y and z, as described above.
-
-Run both commands with the same YAML:
-
-```bash
-uv run process
-uv run plot
-```
-
-This example saves under
-`output/sigma13.v2/plt0655228/region_x64-128_y32-96/`.
-Setting only x gives `region_x64-128_yall/`; setting only y gives
-`region_xall_y32-96/`. With both ranges omitted or `null`, outputs remain directly
-under the snapshot folder. Explicit ranges use their supplied indices in the
-folder name, even if they cover an entire axis.
-The region's images retain their physical x/y coordinates.
-Its spectra, full-profile sigma, and gas-phase statistics use only selected
-cells; spectra per projected area use the region's x-y area. A finished region
-is a complete result and does not require `allow_partial`.
-Image-resolution preparation must divide both selected image dimensions; the
-default native resolution works for any region. The separate slice, multiview-map and emission
-phase-histogram tools still use full-box configurations.
+Each tile finishes physical preparation, corner preparation and profile-plane
+accumulation in bounded waves. One writer owns each spectrum profile plane;
+small products merge in input order. Original-cell luminosities are released
+only after all wave writers finish. Final convolution runs after the last tile.
+Logs print selected tile bounds and update status after completed tiles.
 
 ## Saved products
 
@@ -722,7 +257,7 @@ For a single plot, the basename of `dataset` selects the saved snapshot. Its
 original Setonix path can remain unchanged;
 plot does not require that path or the tables to exist locally. Retain the same
 x/y ranges to select a downloaded region; omit them to select the full-box result.
-Use `plot --all` to redraw the entire output group without a dataset selection.
+Use the plotting script to redraw the entire output group without a dataset selection.
 
 | Plot setting | Meaning |
 |---|---|
@@ -740,17 +275,17 @@ figure_styles: [titled]
 ```
 
 Replace the old `titled_figures` setting with `figure_styles`. These choices
-apply to all figures from `uv run plot` and process's automatic plots, including
+apply to all figures from `uv run python plot_emission_results.py` and process's automatic plots, including
 luminosity images.
 The command-line equivalents are:
 
 | Command | Formats | Styles |
 |---|---|---|
-| `uv run plot` | YAML value, otherwise PNG | YAML value, otherwise titled |
-| `uv run plot --pdf` | PDF only | YAML value, otherwise titled |
-| `uv run plot --png --pdf` | PNG and PDF | YAML value, otherwise titled |
-| `uv run plot --untitled` | YAML value, otherwise PNG | Untitled only |
-| `uv run plot --titled --untitled` | YAML value, otherwise PNG | Titled and untitled |
+| `uv run python plot_emission_results.py` | YAML value, otherwise PNG | YAML value, otherwise titled |
+| `uv run python plot_emission_results.py --pdf` | PDF only | YAML value, otherwise titled |
+| `uv run python plot_emission_results.py --png --pdf` | PNG and PDF | YAML value, otherwise titled |
+| `uv run python plot_emission_results.py --untitled` | YAML value, otherwise PNG | Untitled only |
+| `uv run python plot_emission_results.py --titled --untitled` | YAML value, otherwise PNG | Titled and untitled |
 
 An explicitly selected category replaces its YAML list. For example,
 `--pdf` does not also save PNG just because PNG is the default. Combine
@@ -770,7 +305,7 @@ once from the matching original snapshot, then redraw only the titled style:
 uv run python -m quokka2s.prepare_plot_metadata \
   --products /absolute/path/to/output/sigma13.v2/plt0655228/processed \
   --dataset /absolute/path/to/simulations/plt0655228
-uv run plot --dataset /absolute/path/to/simulations/plt0655228 \
+uv run python plot_emission_results.py --dataset /absolute/path/to/simulations/plt0655228 \
   --jobname sigma13.v2 --titled
 ```
 
@@ -778,15 +313,14 @@ The preparation command reads snapshot metadata and updates the saved report;
 it preserves the numerical NPZ files. Add `--jobname sigma13.v2` to preparation
 only when the legacy report has no saved jobname. Use the exact region's
 `processed/` directory and repeat its x/y selection when redrawing a region.
-For a batch of legacy results, prepare each snapshot's report before using
-`plot --all --jobname sigma13.v2 --titled`. Snapshot numbers and file dates are
+For legacy results, prepare and plot each explicitly selected snapshot separately. Snapshot numbers and file dates are
 never used to guess simulation time. Normal plotting continues to work without
 the original snapshots after metadata preparation.
 
 To use a factor of 2, prepare that resolution once from the saved native pixels:
 
 ```bash
-uv run python -m quokka2s.prepare_emission_results --image-downsample-factor 2
+uv run python -m quokka2s.prepare_emission_results --products /absolute/path/to/processed --image-downsample-factor 2
 ```
 
 This writes `images_factor_2.npz` in the configured products directory, summing
@@ -1150,9 +684,9 @@ snapshot reader. Slice and projection maps query DESPOTIC temperature only;
 emission phase histograms reuse the full cell-emission calculator:
 
 ```bash
-uv run python tools/figures/build_table_input_slice.py --config configs/emission.yaml \
+uv run python tools/figures/build_table_input_slice.py --config configs/emission.yaml --dataset /absolute/path/to/plt0655228 \
   --output-dir output/sigma13.v2/plt0655228/table_input_slice --slice-index 216 --no-plot
-uv run python tools/figures/build_emission_phase_histograms.py --config configs/emission.yaml \
+uv run python tools/figures/build_emission_phase_histograms.py --config configs/emission.yaml --dataset /absolute/path/to/plt0655228 \
   --output-dir output/sigma13.v2/plt0655228/emission_phase_histograms --no-plot
 ```
 

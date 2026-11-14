@@ -136,6 +136,8 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument('--config', type=Path, default=ROOT / DEFAULT_CONFIG)
+    parser.add_argument('--dataset', type=Path, help='Absolute path to one snapshot containing Header')
+    parser.add_argument('--jobname', help='Override the output group in the shared YAML')
     parser.add_argument('--output-dir', type=Path, required=True)
     parser.add_argument('--slice-index', type=int, default=216)
     parser.add_argument('--plot-only', action='store_true', help='Render saved slice_data.npz only')
@@ -153,7 +155,11 @@ def main():
 
     from quokka2s.processing_inputs import load_processing_inputs
 
-    settings = load_process_config(args.config)
+    settings = load_process_config(
+        path=args.config,
+        dataset=args.dataset,
+        jobname=args.jobname,
+    )
     settings = replace(settings, output_dir=output_dir)
     snapshot, emission_calculator = load_processing_inputs(settings)
     payload = calculate_slice_fields(

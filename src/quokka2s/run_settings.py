@@ -1,8 +1,8 @@
 """Read shared YAML defaults and explicit selection or plotting arguments.
 
-Only the paths, execution and plotting settings listed below are accepted. A
-relative path in the YAML file is relative to that file, not to the shell's
-current working directory. A leading ~ expands to the user's home directory;
+Only the paths, execution and plotting settings listed below are accepted.
+dataset must be an absolute path to one snapshot. Other relative YAML paths
+start at that file's directory. A leading ~ expands to the user's home directory;
 environment variables such as $HOME are not expanded.
 """
 from __future__ import annotations
@@ -19,7 +19,6 @@ from quokka2s.input_paths import (
     DEFAULT_DRAINE_TABLE,
 )
 from quokka2s.paths import resolve_path
-from quokka2s.snapshot_inventory import is_snapshot_name, list_snapshot_directories
 
 
 # Relative names only: the entry points use the working directory; standalone
@@ -47,29 +46,14 @@ class RunSelection:
 
 @dataclass(frozen=True)
 class ProcessSettings:
-    """Resolved inputs and execution settings for one snapshot process.
+    """Resolved inputs and settings for one explicitly selected snapshot.
 
-    Paths are absolute. Slab/query sizes count cells; workers count threads.
-    Omitted execution settings use the same defaults as the shipped YAML.
-    Each concurrent batch can use spectral_workers integration threads.
-    Defaults use 32 concurrent batches and one integration thread per batch.
-    Index ranges are [start, stop), or None for the full native axis.
-    spectral_method="direct-template" uses the original cells' four stored
-    template corners: sum their weighted luminosities first, then convolve.
-    Fractional mean position is interpolated separately on each logarithmically
-    spaced sigma layer, with linear phase and sigma weights. Integer-bin mean
-    shifts reuse those templates. Default width coverage is 1e-5 to 1024 km/s;
-    valid uncovered widths use direct integrals.
-    gaussian_grid can override template geometry without changing observation bins.
-    histogram_merge_threads=None or 1 selects the ordered NumPy main merge.
-    Other values raise; chunk_workers supplies independent batch parallelism.
-    Exact/linear-lut remain explicit internal comparison methods, not fallbacks.
-    field_source defaults to native-columns: original full-z FAB columns are
-    read into RAM without a disk copy. Processing requires a full box, regular
-    FABs, direct-template and aligned batches; auxiliary tools may use these
-    settings without running that processing path. The explicit z-contiguous
-    source supports regions and retained comparison methods. Its slab/cache
-    settings bound field retention, not total process RSS.
+    dataset is an absolute path to a directory containing Header. Index ranges
+    are native [start, stop) cell indices; omitted axes select their full extent.
+    query_chunk bounds cells per batch and chunk_workers bounds concurrent batches.
+    Gaussian templates use logarithmically placed sigma nodes with linear phase
+    and sigma weights. Valid uncovered widths use direct stable integrals.
+    The process selects its work exclusively through the x/y region.
     """
 
     dataset: Path
@@ -79,22 +63,13 @@ class ProcessSettings:
     despotic_table: Path = DEFAULT_DESPOTIC_TABLE
     cloudy_table: Path = DEFAULT_CLOUDY_TABLE
     dust_opacity_table: Path = DEFAULT_DRAINE_TABLE
-    slab_nx: int = 8
     query_chunk: int = 262_144
     chunk_workers: int = 32
-    spectral_workers: int = 1
-    max_slabs: int | None = None
     x_index_range: tuple[int, int] | None = None
     y_index_range: tuple[int, int] | None = None
-    spectral_method: str = "direct-template"
     gaussian_grid: dict | None = None
-    histogram_merge_threads: int | None = None
-    prepared_z_fields: Path | None = None
     z_reader_threads: int = 32
     z_read_workers: int = 5
-    field_cache_slabs: int = 16
-    field_cache_gib: int = 12
-    field_source: str = "native-columns"
 
 
 @dataclass(frozen=True)
@@ -119,19 +94,21 @@ class PlotSettings:
 _RUN_REQUIRED_SETTINGS = {"dataset", "jobname", "results_dir"}
 _PROCESS_TABLE_PATHS = ("despotic_table", "cloudy_table", "dust_opacity_table")
 _PROCESS_INTEGERS = (
-    "slab_nx", "query_chunk", "chunk_workers", "spectral_workers", "max_slabs",
-    "field_cache_slabs", "field_cache_gib", "z_reader_threads", "z_read_workers",
-    "histogram_merge_threads",
+    "query_chunk", "chunk_workers", "z_reader_threads", "z_read_workers",
 )
 _REGION_INDEX_RANGES = ("x_index_range", "y_index_range")
+_PROCESS_SETTING_NAMES = (
+    *_PROCESS_TABLE_PATHS,
+    *_PROCESS_INTEGERS,
+    "gaussian_grid",
+)
 _PROCESS_DEFAULTS = {
     field.name: field.default
     for field in fields(ProcessSettings)
-    if field.default is not MISSING
-    and field.name not in _REGION_INDEX_RANGES
+    if field.name in _PROCESS_SETTING_NAMES
 }
 for name in _PROCESS_TABLE_PATHS:
-    # Bundled defaults stay anchored to this repository, even for external YAML.
+    # Bundled defaults remain anchored to this repository for external YAML files.
     _PROCESS_DEFAULTS[name] = str(_PROCESS_DEFAULTS[name])
 _PLOT_DEFAULTS = {
     field.name: field.default
@@ -140,8 +117,6 @@ _PLOT_DEFAULTS = {
 }
 _FIGURE_FORMATS = ("png", "pdf")
 _FIGURE_STYLES = ("untitled", "titled")
-SPECTRAL_METHODS = ("direct-template", "histogram-layered", "histogram-2d", "exact", "linear-lut")
-FIELD_SOURCES = ("z-contiguous", "native-columns")
 _ALLOWED_SETTINGS = (
     _RUN_REQUIRED_SETTINGS
     | set(_PROCESS_DEFAULTS)
@@ -151,28 +126,25 @@ _ALLOWED_SETTINGS = (
 
 
 def add_run_selection_arguments(parser: argparse.ArgumentParser) -> None:
-    """Add shared YAML defaults and explicit job, dataset and native x/y overrides.
+    """Add one absolute snapshot path, an output group and native x/y overrides.
 
-    Example: --dataset /simulations/plt0008703 --jobname sigma50 --x 64 128.
-    An explicit dataset requires an explicit jobname. Omitted options retain
-    YAML values; overrides affect this invocation only and stops remain exclusive.
+    Example: --dataset /simulations/plt0008703 --x 64 66 --y 64 66.
+    Omitted options retain YAML values. Stops are exclusive; z remains complete.
     """
     parser.add_argument(
         "--dataset",
         type=Path,
         metavar="PATH",
         help=(
-            "Absolute dataset path overriding YAML: process accepts one snapshot "
-            "or its run directory; plot selects one snapshot by folder name; "
-            "requires --jobname"
+            "Absolute path to one snapshot containing Header; process never scans "
+            "a parent directory. Plot uses its folder name to select saved products"
         ),
     )
     parser.add_argument(
         "--jobname",
         metavar="NAME",
         help=(
-            "Output job group overriding YAML for this invocation only; "
-            "required with --dataset"
+            "Output job group overriding YAML for this invocation only"
         ),
     )
     parser.add_argument(
@@ -291,12 +263,9 @@ def read_run_selection(
     """Select one saved-result directory without accessing original inputs.
 
     Explicit CLI options replace only their corresponding YAML values, without
-    updating the file. An explicit dataset requires an explicit jobname rather
-    than silently retaining the YAML output group. dataset supplies the spelled
-    snapshot name without inspecting its source; plot works without that source.
+    updating the file. dataset supplies the spelled snapshot name without opening
+    its source, so plot works after the original snapshot has been moved away.
     """
-    if dataset is not None and jobname is None:
-        raise ValueError("--dataset requires --jobname; select the output job group explicitly")
     required = {"results_dir"}
     if dataset is None:
         required.add("dataset")
@@ -332,23 +301,21 @@ def read_run_selection(
 
 
 def _selected_dataset(supplied: dict, dataset: str | Path | None) -> str:
-    """Validate a spelled dataset path without accessing the original source.
+    """Require one absolute snapshot path without opening the original data.
 
-    YAML may use paths relative to its own directory. CLI overrides must be
-    absolute after expanding ~; preserving the spelled basename keeps plot
-    independent of source availability and symlink targets.
+    Both YAML and CLI paths expand ~. The spelled basename selects saved products
+    independently of source availability and symlink targets.
     """
-    if dataset is not None:
-        if not isinstance(dataset, (str, Path)) or not str(dataset).strip():
-            raise ValueError("--dataset must be a nonempty absolute snapshot path")
-        expanded = Path(dataset).expanduser()
-        if not expanded.is_absolute():
-            raise ValueError("--dataset must be an absolute snapshot path")
-        return str(expanded)
-    value = supplied.get("dataset")
-    if type(value) is not str or not value.strip():
-        raise ValueError("dataset must be a nonempty path string")
-    return value
+    value = supplied.get("dataset") if dataset is None else dataset
+    if not isinstance(value, (str, Path)) or not str(value).strip():
+        raise ValueError(
+            "Supply --dataset /absolute/path/to/pltNNNNNNN, or set an absolute "
+            "dataset path in the YAML file"
+        )
+    expanded = Path(value).expanduser()
+    if not expanded.is_absolute():
+        raise ValueError("dataset must be an absolute path to one snapshot")
+    return str(expanded)
 
 
 def _positive_int(name: str, value: object, *, nullable: bool = False) -> int | None:
@@ -407,98 +374,14 @@ def load_process_config(
     jobname: str | None = None,
     x_index_range: list[int] | None = None,
     y_index_range: list[int] | None = None,
-    spectral_method: str | None = None,
-    field_source: str | None = None,
 ) -> ProcessSettings:
-    """Read processing settings and derive the selected processed/ directory.
+    """Read one snapshot's settings and select its processed/ result directory.
 
-    Paths are relative to the YAML directory. Slab and query sizes count cells;
-    worker settings count threads. x/y_index_range selects native cell indices;
-    omitted axes use the full extent. The z axis always remains complete.
-    Plot options in the shared file are accepted but not used by process.
-    Explicit overrides replace only their matching YAML settings for this run.
-    spectral_method overrides the YAML algorithm only when explicitly supplied.
-    A CLI dataset must be absolute and accompanied by an explicit jobname.
+    dataset must be absolute and contain Header. A parent run directory is
+    rejected rather than expanded into multiple snapshots. Other YAML paths
+    are relative to the YAML file. Plot options are accepted but unused here.
     """
     config_path, supplied = _read_mapping(path)
-    return _process_settings(
-        config_path=config_path,
-        supplied=supplied,
-        dataset=dataset,
-        jobname=jobname,
-        x_index_range=x_index_range,
-        y_index_range=y_index_range,
-        spectral_method=spectral_method,
-        field_source=field_source,
-    )
-
-
-def load_process_configs(
-    path: str | Path,
-    *,
-    dataset: str | Path | None = None,
-    jobname: str | None = None,
-    x_index_range: list[int] | None = None,
-    y_index_range: list[int] | None = None,
-    spectral_method: str | None = None,
-    field_source: str | None = None,
-) -> list[ProcessSettings]:
-    """Select one snapshot or the direct plt+digits children of a run directory.
-
-    A directory containing Header, or a supplied plt+digits name, selects one
-    snapshot. A missing Header on a named snapshot remains a processing failure;
-    it is not treated as an empty run. All snapshots share the selected x/y
-    ranges, output job and execution settings. An explicit dataset requires an
-    explicit jobname. Directory discovery never reads cell data.
-    An explicit spectral_method applies to every selected snapshot.
-    """
-    config_path, supplied = _read_mapping(path)
-    selected = _process_settings(
-        config_path=config_path,
-        supplied=supplied,
-        dataset=dataset,
-        jobname=jobname,
-        x_index_range=x_index_range,
-        y_index_range=y_index_range,
-        spectral_method=spectral_method,
-        field_source=field_source,
-    )
-    if is_snapshot_name(selected.snapshot_name) or (selected.dataset / "Header").is_file():
-        return [selected]
-
-    snapshots = list_snapshot_directories(directory=selected.dataset)
-    if not snapshots:
-        raise ValueError(f"No plt+digits snapshot directories found in {selected.dataset}")
-    configurations = []
-    for snapshot in snapshots:
-        config = _process_settings(
-            config_path=config_path,
-            supplied=supplied,
-            dataset=snapshot,
-            jobname=selected.jobname,
-            x_index_range=x_index_range,
-            y_index_range=y_index_range,
-            spectral_method=spectral_method,
-            field_source=field_source,
-        )
-        if config.output_dir.resolve().is_relative_to(selected.dataset):
-            raise ValueError("results_dir must be outside the input run directory")
-        configurations.append(config)
-    return configurations
-
-
-def _process_settings(
-    *,
-    config_path: Path,
-    supplied: dict,
-    dataset: str | Path | None,
-    jobname: str | None,
-    x_index_range: list[int] | None,
-    y_index_range: list[int] | None,
-    spectral_method: str | None,
-    field_source: str | None = None,
-) -> ProcessSettings:
-    """Validate one snapshot's paths, index ranges and calculation settings."""
     run = read_run_selection(
         supplied=supplied,
         config_directory=config_path.parent,
@@ -507,8 +390,13 @@ def _process_settings(
         x_index_range=x_index_range,
         y_index_range=y_index_range,
     )
-    dataset = _path_value("dataset", _selected_dataset(supplied, dataset), config_path.parent)
-    if run.directory.resolve().is_relative_to(dataset):
+    dataset = Path(_selected_dataset(supplied, dataset))
+    if not (dataset / "Header").is_file():
+        raise ValueError(
+            "dataset must point to ONE snapshot directory containing Header, "
+            f"not its parent: {dataset}"
+        )
+    if run.directory.resolve().is_relative_to(dataset.resolve()):
         raise ValueError("results_dir must be outside the snapshot")
     values = {
         name: supplied.get(name, default)
@@ -517,57 +405,25 @@ def _process_settings(
     for name in _PROCESS_TABLE_PATHS:
         values[name] = _path_value(name, values[name], config_path.parent)
     for name in _PROCESS_INTEGERS:
-        values[name] = _positive_int(name, values[name], nullable=name in ("max_slabs", "histogram_merge_threads"))
-    if spectral_method is not None:
-        values["spectral_method"] = spectral_method
-    if field_source is not None:
-        values["field_source"] = field_source
-    if values["field_source"] not in FIELD_SOURCES:
-        raise ValueError(f"field_source must be one of {', '.join(FIELD_SOURCES)}")
-    if (
-        type(values["spectral_method"]) is not str
-        or values["spectral_method"] not in SPECTRAL_METHODS
-    ):
-        raise ValueError(f"spectral_method must be one of {', '.join(SPECTRAL_METHODS)}")
-    if values['prepared_z_fields'] is not None:
-        if not isinstance(values['prepared_z_fields'], str) or not Path(values['prepared_z_fields']).expanduser().is_absolute():
-            raise ValueError('prepared_z_fields must be an absolute existing cache directory')
-        values['prepared_z_fields'] = _path_value('prepared_z_fields', values['prepared_z_fields'], config_path.parent)
-    if values['z_read_workers'] > 5:
-        raise ValueError('z_read_workers cannot exceed the five native fields')
-    if values["gaussian_grid"] is not None and not isinstance(values["gaussian_grid"], dict):
-        raise ValueError("gaussian_grid must be a mapping of Gaussian grid parameters or null")
-    if values["histogram_merge_threads"] not in (None, 1):
-        raise ValueError("NumPy histogram merges require histogram_merge_threads: null or 1")
-    if values["spectral_method"] == "direct-template":
-        if values["spectral_workers"] != 1:
-            raise ValueError("direct-template requires spectral_workers: 1; chunk_workers supplies batch parallelism")
-        grid = values["gaussian_grid"]
-        if grid is not None:
-            supported = {
-                "sigma_min", "sigma_max", "log_sigma_step",
-                "mu_spacing_ratio", "maximum_phase_step",
-            }
-            unsupported = set(grid) - supported
-            if unsupported:
-                names = ", ".join(sorted(str(name) for name in unsupported))
-                raise ValueError("Unsupported direct-template gaussian_grid keys: " + names)
-    if values["spectral_method"] == "histogram-layered":
-        grid = values["gaussian_grid"]
-        if grid is not None:
-            supported = {"mu_spacing_ratio", "log_sigma_step", "mu_anchor"}
-            unsupported = set(grid) - supported
-            if unsupported:
-                names = ", ".join(sorted(str(name) for name in unsupported))
-                raise ValueError(
-                    "histogram-layered gaussian_grid accepts only mu_spacing_ratio, "
-                    "log_sigma_step and mu_anchor; remove bounded-grid keys or "
-                    f"select histogram-2d explicitly. Unsupported keys: {names}"
-                )
-    if values["query_chunk"] > 1000000:
+        values[name] = _positive_int(name, values[name])
+    if values["z_read_workers"] > 5:
+        raise ValueError("z_read_workers cannot exceed the five native fields")
+    grid = values["gaussian_grid"]
+    if grid is not None:
+        if not isinstance(grid, dict):
+            raise ValueError("gaussian_grid must be a mapping of template settings or null")
+        supported = {
+            "sigma_min", "sigma_max", "log_sigma_step",
+            "mu_spacing_ratio", "maximum_phase_step",
+        }
+        unsupported = set(grid) - supported
+        if unsupported:
+            names = ", ".join(sorted(str(name) for name in unsupported))
+            raise ValueError("Unsupported gaussian_grid keys: " + names)
+    if values["query_chunk"] > 1_000_000:
         raise ValueError("query_chunk must be at most 1000000 cells")
     return ProcessSettings(
-        dataset=dataset,
+        dataset=dataset.resolve(),
         output_dir=run.directory / "processed",
         jobname=run.jobname,
         snapshot_name=run.snapshot_name,
@@ -595,8 +451,8 @@ def load_plot_config(
     CLI figure selections replace only their specified category. Other choices
     use YAML values, then the PNG/titled defaults. Each selection is a nonempty
     list; repeated choices are saved once in the standard format/style order.
-    Explicit dataset selection requires an explicit jobname. Neither override
-    modifies YAML; jobname alone may select a different saved output group.
+    Overrides do not modify YAML. jobname alone may select a different saved
+    output group; the original snapshot does not need to remain available.
     """
     config_path, supplied = _read_mapping(path)
     return _plot_settings(
@@ -609,69 +465,6 @@ def load_plot_config(
         figure_formats=figure_formats,
         figure_styles=figure_styles,
     )
-
-
-def load_plot_configs(
-    path: str | Path,
-    *,
-    all_snapshots: bool = False,
-    dataset: str | Path | None = None,
-    jobname: str | None = None,
-    x_index_range: list[int] | None = None,
-    y_index_range: list[int] | None = None,
-    figure_formats: list[str] | None = None,
-    figure_styles: list[str] | None = None,
-) -> list[PlotSettings]:
-    """Select one saved result or every plt+digits directory in the output job.
-
-    all_snapshots ignores YAML dataset entirely and lists results_dir/jobname
-    only. Source snapshots and emission tables may be absent. The same native
-    x/y region and figure choices apply to each selected result; missing products
-    remain visible to the plotting caller rather than disappearing from the list.
-    jobname overrides the YAML group only for this invocation. Without --all,
-    an explicit dataset also requires an explicit jobname.
-    """
-    if all_snapshots and dataset is not None:
-        raise ValueError("--all cannot be combined with --dataset")
-    config_path, supplied = _read_mapping(path)
-    if not all_snapshots:
-        return [_plot_settings(
-            config_path=config_path,
-            supplied=supplied,
-            dataset=dataset,
-            jobname=jobname,
-            x_index_range=x_index_range,
-            y_index_range=y_index_range,
-            figure_formats=figure_formats,
-            figure_styles=figure_styles,
-        )]
-
-    required = {"results_dir"}
-    if jobname is None:
-        required.add("jobname")
-    missing = required - set(supplied)
-    if missing:
-        raise ValueError(f"Missing setting(s): {', '.join(sorted(missing))}")
-    jobname = _folder_name("jobname", supplied["jobname"] if jobname is None else jobname)
-    results_dir = _path_value("results_dir", supplied["results_dir"], config_path.parent)
-    job_directory = results_dir / jobname
-    snapshots = list_snapshot_directories(directory=job_directory)
-    if not snapshots:
-        raise ValueError(f"No plt+digits result directories found in {job_directory}")
-    configurations = []
-    for snapshot in snapshots:
-        config = _plot_settings(
-            config_path=config_path,
-            supplied=supplied,
-            dataset=snapshot,
-            jobname=jobname,
-            x_index_range=x_index_range,
-            y_index_range=y_index_range,
-            figure_formats=figure_formats,
-            figure_styles=figure_styles,
-        )
-        configurations.append(config)
-    return configurations
 
 
 def _plot_settings(

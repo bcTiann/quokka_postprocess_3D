@@ -17,7 +17,8 @@ if TYPE_CHECKING:
 from quokka2s.physics.line_emissivity import CIII_CIV_LINE_KEYS
 from quokka2s.physics.gas_fields import mixed_gas_temperature_K
 from quokka2s.products.cold_despotic_luminosity import ColdGasLuminosityByDespoticTemperature
-from quokka2s.products.integrated_spectra import IntegratedSpectra, check_spectrum_luminosity
+from quokka2s.products.gaussian.accounting import check_histogram_luminosity
+from quokka2s.products.gaussian.template_spectra import TemplateIntegratedSpectra
 from quokka2s.products.gas_phase_velocity import GasPhaseVelocityAccumulator, check_phase_accounting
 from quokka2s.products.velocity_grid import velocity_channel_edges_kms
 from quokka2s.products.line_luminosity_images import (
@@ -84,12 +85,9 @@ class EmissionProducts:
         self,
         snapshot,
         line_keys,
-        spectral_workers,
         *,
-        spectral_method="direct-template",
         gaussian_engine=None,
-        histogram_partial=False,
-        histogram_merge_threads=None,
+        batch_partial=False,
     ):
         """Create image, spectrum and gas-phase accumulators for one run.
 
@@ -100,16 +98,9 @@ class EmissionProducts:
             native image size, with the original z depth.
         line_keys : sequence of str
             From CellEmissionCalculator.line_keys; fixes the line order of every accumulator.
-        spectral_workers : int
-            Thread count for Gaussian channel integration within each batch.
-        spectral_method : {"direct-template", "histogram-layered", "histogram-2d", "exact", "linear-lut"}, optional
-            The default accumulates cell luminosity at four stored-template
-            corners and convolves the completed node arrays into channel spectra.
-            Other methods are explicit comparisons, not automatic fallbacks.
         gaussian_engine : object, optional
-            Shared immutable template/coordinate preparation for the selected
-            Gaussian method. Required for direct-template and both node references.
-        histogram_partial : bool, optional
+            Shared immutable Gaussian template and coordinate preparation.
+        batch_partial : bool, optional
             True for worker-owned increments. Direct-template workers retain one
             bounded batch of original Gaussians until corner preparation; its
             luminosities survive until that wave's node writers finish.
@@ -127,7 +118,6 @@ class EmissionProducts:
         products = EmissionProducts(
             snapshot=snapshot,
             line_keys=emission_calculator.line_keys,
-            spectral_workers=1,
             gaussian_engine=prepared_engine,
         )
         """
@@ -140,7 +130,7 @@ class EmissionProducts:
         velocity_edges_kms = velocity_channel_edges_kms()
 
         image_class = LineLuminosityImageAccumulator
-        if histogram_partial and spectral_method in ("direct-template", "histogram-layered", "histogram-2d"):
+        if batch_partial:
             from .compact_images import CompactImageAccumulator
             image_class = CompactImageAccumulator
         self.images = image_class(
@@ -148,30 +138,14 @@ class EmissionProducts:
             native_xy_shape=snapshot.processing_shape[:2],
             image_xy_origin=snapshot.processing_xy_origin,
         )
-        if spectral_method in ("direct-template", "histogram-layered", "histogram-2d"):
-            if spectral_method == "direct-template":
-                from .gaussian.template_spectra import TemplateIntegratedSpectra as histogram_class
-            elif spectral_method == "histogram-layered":
-                from .gaussian.layered_spectra import LayeredIntegratedSpectra as histogram_class
-            else:
-                from .gaussian.spectra import HistogramIntegratedSpectra as histogram_class
-            if gaussian_engine is None:
-                raise ValueError("Prepare the shared Gaussian engine before constructing spectra")
-            self.spectra = histogram_class(
-                line_keys=self.line_keys,
-                velocity_edges_kms=velocity_edges_kms,
-                engine=gaussian_engine,
-                batch_partial=histogram_partial,
-                merge_threads=histogram_merge_threads,
-                workers=spectral_workers,
-            )
-        else:
-            self.spectra = IntegratedSpectra(
-                line_keys=self.line_keys,
-                velocity_edges_kms=velocity_edges_kms,
-                workers=spectral_workers,
-                spectral_method=spectral_method,
-            )
+        if gaussian_engine is None:
+            raise ValueError("Prepare the shared Gaussian templates before constructing spectra")
+        self.spectra = TemplateIntegratedSpectra(
+            line_keys=self.line_keys,
+            velocity_edges_kms=velocity_edges_kms,
+            engine=gaussian_engine,
+            batch_partial=batch_partial,
+        )
         self.phases = GasPhaseVelocityAccumulator(velocity_edges_kms)
         self.counts = {
             "all": 0,                      # Number of processed cells.
@@ -407,11 +381,7 @@ class EmissionProducts:
             self.intrinsic_luminosity_erg_s,
             self.attenuated_luminosity_erg_s,
         ))
-        if self.spectra.spectral_method in ("direct-template", "histogram-layered", "histogram-2d"):
-            from .gaussian.accounting import check_histogram_luminosity
-            check_histogram_luminosity(outputs.spectrum_payload, expected_luminosity)
-        else:
-            check_spectrum_luminosity(outputs.spectrum_payload, expected_luminosity)
+        check_histogram_luminosity(outputs.spectrum_payload, expected_luminosity)
         image_conservation = self.check_line_products(
             image_payload=outputs.image_payload,
             spectrum_payload=outputs.spectrum_payload,

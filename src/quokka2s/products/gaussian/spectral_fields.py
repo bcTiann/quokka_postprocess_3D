@@ -111,7 +111,7 @@ def prepare_available_group(
     velocity_kms, cold_cells, available_rows, intrinsic_fields, attenuated_fields,
     temperature_fields, cell_volume_cm3, speed_of_light_kms,
 ):
-    """Retain [line,cell] Fortran-layout branches for the reference methods."""
+    """Retain Fortran-layout branch preparation under custom NumPy error policies."""
     branches = prepare_branch_rows(
         available_rows=available_rows,
         cold_cells=cold_cells,
@@ -140,7 +140,7 @@ def prepare_available_group(
     return tuple(output)
 
 
-def pack_width_group(intrinsic_luminosity, attenuated_luminosity, shared_lines, cell_major=False):
+def pack_width_group(intrinsic_luminosity, attenuated_luminosity, shared_lines):
     """Own one [cell,account] matrix without two selected-line matrix copies."""
     if intrinsic_luminosity.shape != attenuated_luminosity.shape:
         raise ValueError("Both dust states must have matching branch shapes")
@@ -149,9 +149,7 @@ def pack_width_group(intrinsic_luminosity, attenuated_luminosity, shared_lines, 
         or np.any(shared_lines >= intrinsic_luminosity.shape[0])
     ):
         raise IndexError("A shared-width line index is outside the branch matrix")
-    multiple_rows_and_lines = shared_lines.size > 1 and intrinsic_luminosity.shape[1] > 1
-    order = "F" if not cell_major and multiple_rows_and_lines else "C"
-    output = np.empty((intrinsic_luminosity.shape[1], 2 * shared_lines.size), order=order)
+    output = np.empty((intrinsic_luminosity.shape[1], 2 * shared_lines.size), order="C")
     for dust_index, values in enumerate((intrinsic_luminosity, attenuated_luminosity)):
         for column, line_index in enumerate(shared_lines):
             output[:, dust_index * shared_lines.size + column] = values[line_index]

@@ -44,12 +44,9 @@ def process_template_batches(
                 stage_progress = lambda stage: progress.set_stage(batch_number, stage)
             partial = EmissionProducts(
                 gaussian_engine=products.spectra.engine,
-                histogram_partial=True,
-                histogram_merge_threads=config.histogram_merge_threads,
+                batch_partial=True,
                 snapshot=snapshot,
                 line_keys=emission_calculator.line_keys,
-                spectral_workers=config.spectral_workers,
-                spectral_method=config.spectral_method,
             )
             try:
                 accumulate_batch(

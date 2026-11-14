@@ -23,10 +23,6 @@ dependencies = [
     "yt @ git+https://github.com/yt-project/yt@fd4cf99963cdebcd0c578dc2e5ab8dea77be6437",
 ]
 
-[project.scripts]
-process = "quokka2s.process_snapshot:main"
-plot = "quokka2s.plot_emission_results:main"
-
 [tool.setuptools.packages.find]
 where = ["src"]
 

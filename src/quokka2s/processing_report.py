@@ -25,69 +25,39 @@ from quokka2s.products.velocity_grid import VELOCITY_CHANNELS
 
 
 def build_field_preprocessing_report(
-    *, config, snapshot, preprocessing, processing_timings,
+    *, config, snapshot, processing_timings,
 ) -> dict:
-    """Describe the selected field source using its completed reader statistics.
+    """Describe original-file reads and the selected RAM-tile memory plan.
 
-    config and snapshot describe the processed selection. preprocessing comes
-    from prepare_processing_snapshot(); processing_timings comes from the cell
-    loop. Return the existing field_preprocessing report, without reading fields
-    or changing arrays. Counts, layouts and times retain their source-specific
-    meanings: native RAM tiles and an explicit z-contiguous disk cache differ.
+    Reader counters and timings come from the completed process loop. This
+    function only packages metadata; it never reads or modifies cell arrays.
     """
-    if config.field_source == "native-columns":
-        native = processing_timings['native_columns']
-        return {
-            'method': 'original-native-columns-inplace-ram',
-            'field_source': config.field_source,
-            'disk_copy_created': False,
-            'conversion_excluded_from_process': False,
-            'seconds': 0.0,
-            'shape': list(snapshot.shape),
-            'fields': [
-                'gasDensity',
-                'temperature',
-                'x-GasMomentum',
-                'y-GasMomentum',
-                'z-GasMomentum',
-            ],
-            'source_stored_dtype': native['read_statistics']['native_dtype'],
-            'source_layout': native['source_layout'],
-            'ram_dtype': 'float64',
-            'ram_layout': native['ram_layout'],
-            'cache_file_bytes': 0,
-            'reader_threads': config.z_reader_threads,
-            'read_workers': config.z_read_workers,
-            'native_reading': native['read_statistics'],
-            'memory_plan': native['memory_plan'],
-            'finished_products': native['finished_products'],
-            'retention': 'one RAM tile; released before reading the next tile',
-        }
-
-    cache_identity = preprocessing['identity']
+    native = processing_timings['native_columns']
     return {
-        'method': 'disk-z-contiguous-bounded-eager-fused',
-        'snapshot_metadata': preprocessing['identity']['snapshot_metadata'],
-        'metadata_sidecar_write': preprocessing['metadata_sidecar_write'],
-        'prepared_cache_reused': preprocessing['cache_reused'],
+        'method': 'original-native-columns-inplace-ram',
+        'field_source': 'native-columns',
+        'disk_copy_created': False,
+        'conversion_excluded_from_process': False,
+        'seconds': 0.0,
+        'shape': list(snapshot.shape),
+        'fields': [
+            'gasDensity',
+            'temperature',
+            'x-GasMomentum',
+            'y-GasMomentum',
+            'z-GasMomentum',
+        ],
+        'source_stored_dtype': native['read_statistics']['native_dtype'],
+        'source_layout': native['source_layout'],
+        'ram_dtype': 'float64',
+        'ram_layout': native['ram_layout'],
+        'cache_file_bytes': 0,
         'reader_threads': config.z_reader_threads,
         'read_workers': config.z_read_workers,
-        'bounded_eager_reading': dict(preprocessing['reader_statistics']),
-        'fused_derivation': dict(preprocessing['derivation_statistics']),
-        'conversion_excluded_from_process': True,
-        'seconds': preprocessing['preprocessing_seconds'],
-        'shape': cache_identity['shape'],
-        'fields': list(cache_identity['fields']),
-        'stored_dtype': cache_identity['stored_dtype'],
-        'layout': cache_identity['layout'],
-        'cache_file_bytes': sum(
-            record['size_bytes']
-            for record in cache_identity['fields'].values()
-        ),
-        'retention': (
-            'retained explicit cache' if preprocessing['cache_reused']
-            else 'temporary; removed when snapshot processing exits'
-        ),
+        'native_reading': native['read_statistics'],
+        'memory_plan': native['memory_plan'],
+        'finished_products': native['finished_products'],
+        'retention': 'one selected RAM tile; released before reading the next tile',
     }
 
 
@@ -103,9 +73,8 @@ def build_processing_report(
     runs from began to report construction, before saving; final status.json
     includes saving time. Luminosities are erg/s and dispersions km/s.
     processing_timings optionally holds the process loop's per-slab and total
-    wall seconds. Native-column timings separate original reads, gradient and
-    combined units/columns passes. The explicit z source retains its eager
-    read/derivation categories; nested worker times are not wall-time fractions.
+    wall seconds. Timings separate original reads, gradients and combined
+    units/column passes; nested worker times are not wall-time fractions.
     """
     from quokka2s.physics import settings as cfg
 
@@ -155,14 +124,11 @@ def build_processing_report(
         'image_shape': list(products.images.native_xy_shape),
         'velocity_channels': VELOCITY_CHANNELS,
         'execution': {
-            'field_source': config.field_source,
-            'slab_nx': config.slab_nx,
+            'field_source': 'native-columns',
             'query_chunk': config.query_chunk,
             'chunk_workers': config.chunk_workers,
-            'spectral_workers_per_chunk': config.spectral_workers,
-            'field_cache_slabs': config.field_cache_slabs,
-            'field_cache_gib': config.field_cache_gib,
-            'spectral_method': config.spectral_method,
+            'spectral_workers_per_chunk': 1,
+            'spectral_method': 'direct-template',
         },
         # Integrated luminosities, dispersions and query clipping counts.
         'intrinsic_luminosity_erg_s': products.intrinsic_luminosity_erg_s.tolist(),

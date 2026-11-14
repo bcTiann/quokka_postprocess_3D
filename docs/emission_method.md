@@ -1,7 +1,7 @@
 # Current emission physics and products
 
-The current entry points are `uv run process` and
-`uv run plot`, after automatic editable installation with `uv sync`.
+The current entry points are `uv run python process_snapshot.py` and
+`uv run python plot_emission_results.py`, after automatic editable installation with `uv sync`.
 Each uses its default YAML in `configs/`; `--config PATH` selects another file.
 Use the [root README](../README.md) for the main commands, the
 [usage guide](usage.md) for settings and table building, and the
@@ -103,34 +103,23 @@ images, integrated spectra, and gas-phase velocity distributions. By default
 these cover the full box. Optional native x/y index ranges select a region with
 the original full z depth; gradients still use original-box neighbours, and
 column densities still use complete z columns. Original snapshots are read-only.
-With null `prepared_z_fields`, process prepares five temporary C-order XYZ
-float64 copies of raw density, temperature and momentum densities, preserving
-native coordinates/units and buffering one complete field at a time. An explicit
-absolute cache path is validated and only read; process never creates,
-overwrites or deletes a file there. Its optional metadata sidecar contains
-geometry, units and native block descriptors only. Metadata is restored inside
-input loading, or yt opens the original snapshot if no sidecar is present.
-Only an owned temporary cache is removed when processing finishes or fails.
+Process reads intersecting original level-zero FAB fields into bounded
+z-contiguous RAM tiles. It writes no converted snapshot. Metadata supplies grid
+sizes and selected x/y bounds; shorter edge blocks and final partial batches
+are supported. Only selected core cells enter products. Gradients retain
+global periodic x/y neighbours and one-sided outer-z differences; shielding
+and foreground columns retain the complete native z depth.
+The six derived arrays preserve the density, temperature, column, gradient and
+velocity definitions above. Surface-luminosity spectra use the selected x/y area.
+Plot reads only saved products.
 
-The bounded eager reader reads current core x cells and periodic x neighbours
-with native full y and complete z, then closes its five field streams. Bounded
-NumPy array blocks derive selected complete columns with original unit-conversion
-order and momentum/density division, fills six core arrays and releases raw
-slab fields. It preserves original periodic x/y gradient neighbours and
-one-sided outer-z differences. This route uses no persistent mmap or grouped
-multi-slab field cache. Plot reads only saved products.
-
-The six copied core-slab arrays retain the density,
-temperature, column, gradient and velocity definitions and units listed in the
-[code walkthrough](code_walkthrough.md). All products accumulate only selected
-cells, and surface-luminosity spectra use the selected projected area.
 Spectra have
 400 channels over −200 to +200 km/s. Gaussian thermal profiles are integrated
 over channel boundaries. Luminosity outside that window is recorded rather
 than moved into edge channels. Each line and dust state has one integrated
 spectrum. Cold/hot contributions are retained separately.
 
-The process default `spectral_method: direct-template` evaluates original
+The sole process Gaussian method evaluates original
 cells through preintegrated fractional-mean templates on logarithmically spaced
 sigma nodes. With channel width `delta_v=1 km/s`, write
 `mu/delta_v=floor(mu/delta_v)+phase`. Integer shifts
@@ -207,21 +196,7 @@ Images, gas phases, physical temperatures/widths, per-line missingness and full
 moments retain their definitions. Compare spectra and finite-window moments
 against a named reference when assessing grid accuracy.
 
-The retained explicit `histogram-layered` method instead accumulates brightness
-in sparse sigma-layer nodes whose mean spacing is0.1 times the layer sigma; it
-has no configured rectangular coverage box. A standard-normal prefix table
-expands occupied nodes. Its analytic accounts describe its node mixture.
-Explicit `histogram-2d` keeps the previous bounded axes and dense main histogram.
-Both raise on invalid or unrepresentable coordinates and retain their own
-accounting definitions. Neither is an automatic direct-template fallback.
-
-Explicit `spectral_method: exact` uses SciPy's double-precision erf, and
-`linear-lut` retains the one-dimensional erf table on [0,8] at spacing 1/4096
-with odd symmetry and its original handling of boundaries/error policies.
-These methods are explicit references, never an automatic fallback.
-The [usage settings](usage.md#spectral-integration) describe selection and reuse.
-
-The bounded reader uses five I/O streams followed by up to 32 complete-column
+The original-file reader uses five read workers followed by up to 32 complete-column
 derivation tasks in the same pool. Up to 32 batch workers prepare unchanged
 emission/products for one bounded wave. Those workers then prepare the original
 four template corners and directly integrate uncovered widths. The same pool
@@ -231,11 +206,9 @@ luminosity is released. One main thread merges the remaining small products.
 Final template convolution occurs after every original cell has been processed;
 it remains timed and is reported separately. There is no nested spectral pool.
 Project calculations use NumPy/SciPy without custom compiled extensions.
-Independent retained reference methods use their stated Python worker pools.
 
-Gaussian template preparation/validation and actual z-copy conversion
-are separately measured outside process elapsed time. Input identity, metadata
-construction/restoration, physical table loading, cache validation, every
+Gaussian template preparation/validation is separately measured outside process
+elapsed time. Input identity, metadata construction, physical table loading, every
 payload/derived/emission/product operation, checks, save and cleanup remain
 inside final `status.json.elapsed_seconds`. The report is assembled before its
 own save, so its elapsed time ends earlier. Plotting is a later separate step.

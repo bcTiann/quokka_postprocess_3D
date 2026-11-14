@@ -14,7 +14,7 @@ import weakref
 
 import numpy as np
 
-from .bounded_z_reader import scalar_unit_stages
+from .snapshot_units import scalar_unit_stages
 from .native_snapshot_reader import NATIVE_FIELD_NAMES
 from .physics import settings
 from .physics.slab_derive import (

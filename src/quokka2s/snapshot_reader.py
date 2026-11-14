@@ -25,8 +25,8 @@ class Snapshot:
         Native cell-index bounds, e.g. {'x': (64, 128), 'y': (80, 144)}.
         Stops are excluded; omitted axes span the original box. z is always full.
     field_reader : NativeSnapshotReader, optional
-        Prepared raw-field source. Process supplies its z-contiguous copy;
-        standalone snapshot utilities use the original native reader.
+        Optional raw-field source for standalone utilities. Production processing
+        owns a separate original-FAB column reader without a disk copy.
 
     Geometry properties are calculated from this dataset, so callers do not
     repeat its shape, cell widths, or volume in the constructor.
@@ -95,7 +95,7 @@ class Snapshot:
 
     @cached_property
     def processing_cell_count(self) -> int:
-        """Number of selected cells before any diagnostic max_slabs limit."""
+        """Number of selected cells, retaining complete original z columns."""
         return int(np.prod(self.processing_shape))
 
     @cached_property

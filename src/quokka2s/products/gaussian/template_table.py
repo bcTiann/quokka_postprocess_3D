@@ -240,23 +240,6 @@ class FractionalGaussianTable:
         if self.signature() != self._signature:
             raise ValueError("The prepared integrated template table was modified")
 
-    def _validate_inputs(self, centers, sigmas):
-        centers = np.asarray(centers, dtype=np.float64)
-        sigmas = np.asarray(sigmas, dtype=np.float64)
-        if centers.ndim != 1 or sigmas.shape != centers.shape:
-            raise ValueError("Template Gaussian means and widths must be equal vectors")
-        if not np.isfinite(centers).all() or not np.isfinite(sigmas).all():
-            raise ValueError("Template means and widths must be finite")
-        if np.any(sigmas < self.sigma_nodes[0]) or np.any(sigmas > self.sigma_nodes[-1]):
-            raise ValueError("Gaussian sigma lies outside the stored template coverage")
-        coordinates = centers / self.delta_v
-        if not np.isfinite(coordinates).all() or np.any(np.abs(coordinates) >= 2**62):
-            raise ValueError("Gaussian integer-bin shifts must fit safe signed int64 coordinates")
-        shifts_float = np.floor(coordinates)
-        phases = coordinates - shifts_float
-        shifts = shifts_float.astype(np.int64)
-        return centers, sigmas, shifts, phases
-
     def _phase_brackets(self, layer_ids, phases):
         """Invert the existing uniform segments, then use actual stored knots.
 
@@ -307,62 +290,6 @@ class FractionalGaussianTable:
             raise AssertionError("Arithmetic phase search failed to bracket an input")
         np.clip(fractions, 0.0, 1.0, out=fractions)
         return lower, upper, fractions
-
-    def _evaluate_chunk(self, sigmas, shifts, phases):
-        """Gather four templates into [cell,channel], with bounded local scratch."""
-        upper_layers = np.searchsorted(self.sigma_nodes, sigmas, side="left")
-        lower_layers = np.maximum(upper_layers - 1, 0)
-        lower_sigma = self.sigma_nodes[lower_layers]
-        upper_sigma = self.sigma_nodes[upper_layers]
-        sigma_fraction = np.divide(
-            sigmas - lower_sigma,
-            upper_sigma - lower_sigma,
-            out=np.zeros_like(sigmas),
-            where=upper_layers != lower_layers,
-        )
-        np.clip(sigma_fraction, 0.0, 1.0, out=sigma_fraction)
-        low_left, low_right, low_fraction = self._phase_brackets(lower_layers, phases)
-        high_left, high_right, high_fraction = self._phase_brackets(upper_layers, phases)
-        rows = (low_left, low_right, high_left, high_right)
-        corner_weights = (
-            (1.0 - sigma_fraction) * (1.0 - low_fraction),
-            (1.0 - sigma_fraction) * low_fraction,
-            sigma_fraction * (1.0 - high_fraction),
-            sigma_fraction * high_fraction,
-        )
-        base_bins = self.output_bin_indices[None, :] - shifts[:, None]
-        probabilities = np.zeros((sigmas.size, self.K), dtype=np.float64)
-        gathered = np.empty_like(probabilities)
-        for node_rows, weights in zip(rows, corner_weights):
-            relative_bins = base_bins - self.row_min_bins[node_rows, None]
-            np.clip(relative_bins, 0, self.row_bin_counts[node_rows, None] - 1, out=relative_bins)
-            relative_bins += self.row_value_offsets[node_rows, None]
-            # First/last stored bins are zero sentinels. Clipping an integer
-            # index therefore returns known-zero support outside the template;
-            # it never clips a Gaussian parameter or extrapolates a profile.
-            np.take(self.flat_values, relative_bins, out=gathered, mode="clip")
-            gathered *= weights[:, None]
-            probabilities += gathered
-        return probabilities
-
-    def evaluate(self, mu, sigma, *, chunk_size=2048):
-        """Return stored-template masses [N,K], not luminosity densities.
-
-        Work is vectorized over a subbatch and all channels. The only Python
-        loops select bounded subbatches and the fixed four interpolation corners.
-        """
-        if type(chunk_size) is not int or chunk_size < 1:
-            raise ValueError("Template chunk_size must be a positive integer")
-        _, sigmas, shifts, phases = self._validate_inputs(mu, sigma)
-        output = np.empty((sigmas.size, self.K), dtype=np.float64)
-        for start in range(0, sigmas.size, chunk_size):
-            stop = min(start + chunk_size, sigmas.size)
-            output[start:stop] = self._evaluate_chunk(
-                sigmas=sigmas[start:stop],
-                shifts=shifts[start:stop],
-                phases=phases[start:stop],
-            )
-        return output
 
     def info(self):
         """Describe actual storage, finite coverage and interpolation semantics."""

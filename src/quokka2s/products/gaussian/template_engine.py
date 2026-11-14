@@ -1,10 +1,7 @@
-"""Share Gaussian validation, original-cell accounts and prepared templates.
+"""Share immutable templates, worker preparation and original-cell accounts.
 
-The default corner-preparation engine overrides the accumulation hook: it
-prepares covered-cell contributions for the snapshot luminosity store and
-integrates only valid outside-table widths directly. This base engine also
-retains standalone original-cell table integration as a reference. Both routes
-use the same coordinates, five-sigma rules and independent analytic accounts.
+Workers prepare covered-cell corner contributions for the snapshot luminosity
+store. Only valid outside-table widths use direct channel integration.
 """
 from __future__ import annotations
 
@@ -23,9 +20,9 @@ from .template_table import FractionalGaussianTable
 class TemplateGroupResult:
     """Route profiles[K,P], original-cell window totals[P] and activity timing.
 
-    Profiles use erg/s/(km/s), and window totals use erg/s. The standalone base
-    engine returns complete profiles; corner preparation returns outside-width
-    profiles only, with covered contributions carried by its separate increment.
+    Profiles use erg/s/(km/s), and window totals use erg/s. Profiles contain
+    only directly integrated outside-width light; covered contributions are
+    carried by the separate corner increment.
     """
 
     profiles: np.ndarray
@@ -37,13 +34,13 @@ class TemplateGroupResult:
 
 
 class TemplateEngine:
-    """Validate Gaussian groups, dispatch accumulation and calculate accounts.
+    """Coordinate immutable tables and thread-local original-cell preparation.
 
     N is the current width group's original-cell count. Means[N] and widths[N]
     use km/s; luminosity[N,P] uses erg/s, with one to twelve local accounts P.
     Output profiles[K,P] use erg/s/(km/s), with at most 400 velocity channels K.
-    The default CornerPreparationEngine overrides _accumulate_probabilities;
-    the base implementation directly queries cells for reference comparisons.
+    CornerPreparationEngine owns each worker's mutable contribution buffers.
+    Shared validation and analytic accounting remain here.
     """
 
     coordinate_rule = "original-cell"
@@ -105,7 +102,7 @@ class TemplateEngine:
         """Refuse table mutation after preparation outside the process clock."""
         self.lookup_tables.validate_prepared_state()
 
-    def _prepare_coordinates(self, centers, sigmas, *, require_coverage=True):
+    def _prepare_coordinates(self, centers, sigmas):
         """Prepare contiguous float64 coordinates and validate safe shifts."""
         centers = np.ascontiguousarray(centers, dtype=np.float64)
         sigmas = np.ascontiguousarray(sigmas, dtype=np.float64)
@@ -119,33 +116,14 @@ class TemplateEngine:
             raise ValueError("Gaussian integer-bin shifts must fit safe signed int64 coordinates")
         if not np.isfinite(sigmas).all() or np.any(sigmas <= 0.0):
             raise ValueError("Gaussian sigma must be finite and positive")
-        minimum = self.lookup_tables.sigma_nodes[0]
-        maximum = self.lookup_tables.sigma_nodes[-1]
-        if require_coverage and (np.any(sigmas < minimum) or np.any(sigmas > maximum)):
-            raise ValueError(
-                "Gaussian sigma lies outside the prepared template coverage: "
-                f"required [{sigmas.min():.17g}, {sigmas.max():.17g}] km/s, "
-                f"prepared [{minimum:.17g}, {maximum:.17g}] km/s. "
-                "Set gaussian_grid sigma_min/sigma_max before preparing the table."
-            )
         return centers, sigmas
 
-    def evaluate(self, centers, sigmas):
-        """Return template probabilities[N,K] for bounded diagnostic inputs."""
-        centers, sigmas = self._prepare_coordinates(centers, sigmas)
-        return self.lookup_tables.evaluate(
-            centers,
-            sigmas,
-            chunk_size=self.maximum_probability_rows,
-        )
+    def _integrate_outside_widths(self, centers, sigmas, luminosity):
+        """Integrate selected outside-table widths in bounded channel arrays.
 
-    def _accumulate_probabilities(self, centers, sigmas, luminosity, outside):
-        """Reduce bounded [cell,channel] probabilities without a [cell,K,P] array.
-
-        In-range cells retain the prepared four-corner interpolation and each
-        corner's stored five-sigma support. Outside widths use the existing
-        stable SciPy interval integral, clipped at the original cell's five
-        sigma. Only the floating-point luminosity summation order changes.
+        The caller supplies only valid out-of-coverage rows, in original order.
+        Standardized channel edges are clipped at five sigma without restoring
+        discarded tails. Each output account keeps its existing reduction order.
         """
         table = self.lookup_tables
         output = np.zeros((luminosity.shape[1], table.K), dtype=np.float64)
@@ -170,34 +148,24 @@ class TemplateEngine:
             selected_centers = centers[start:stop][active]
             selected_sigmas = sigmas[start:stop][active]
             selected_luminosity = luminosity[start:stop][active]
-            direct = outside[start:stop][active]
             probabilities = np.empty((selected_centers.size, table.K), dtype=np.float64)
-            covered = ~direct
-            if np.any(covered):
-                probabilities[covered] = table.evaluate(
-                    selected_centers[covered],
-                    selected_sigmas[covered],
-                    chunk_size=self.maximum_probability_rows,
-                )
-            direct_count = int(np.count_nonzero(direct))
-            if direct_count:
-                began = perf_counter()
-                with np.errstate(over="ignore", invalid="ignore", divide="ignore", under="ignore"):
-                    boundaries = (
-                        table.edges[None, :] - selected_centers[direct, None]
-                    ) / selected_sigmas[direct, None]
-                np.clip(boundaries, -table.Z, table.Z, out=boundaries)
-                probabilities[direct] = interval_probability(
-                    boundaries[:, :-1],
-                    boundaries[:, 1:],
-                )
-                probability_seconds += perf_counter() - began
-                counters["direct_probability_batches"] += 1
+            direct_count = selected_centers.size
+            began = perf_counter()
+            with np.errstate(over="ignore", invalid="ignore", divide="ignore", under="ignore"):
+                boundaries = (
+                    table.edges[None, :] - selected_centers[:, None]
+                ) / selected_sigmas[:, None]
+            np.clip(boundaries, -table.Z, table.Z, out=boundaries)
+            probabilities[:] = interval_probability(
+                boundaries[:, :-1],
+                boundaries[:, 1:],
+            )
+            probability_seconds += perf_counter() - began
+            counters["direct_probability_batches"] += 1
             output += np.einsum("ik,ip->pk", probabilities, selected_luminosity, optimize=False)
             rows = selected_centers.size
             counters["active_rows"] += rows
             counters["support_bins_visited"] += rows * table.K
-            counters["template_corner_values_read"] += (rows - direct_count) * 4 * table.K
             counters["product_updates"] += rows * table.K * luminosity.shape[1]
             counters["direct_active_rows"] += direct_count
             counters["direct_support_bins_visited"] += direct_count * table.K
@@ -232,13 +200,12 @@ class TemplateEngine:
             )
         return full, clipped
 
-    def integrate(self, centers, sigmas, luminosity):
-        """Validate one group, run its accumulation route and keep cell accounts.
+    def _prepare_group_result(self, centers, sigmas, luminosity):
+        """Validate one worker group and retain its original-cell accounts.
 
-        The default preparation route returns raw covered-corner terms through
-        prepare_group(), plus directly integrated outside-width profiles here.
-        The standalone base route instead returns complete queried profiles.
-        query_interval_ns covers validation and the selected accumulation hook;
+        CornerPreparationEngine.prepare_group() returns raw covered-corner terms
+        separately from the directly integrated outside-width profiles here.
+        query_interval_ns covers validation and contribution preparation;
         independent original-cell endpoint accounts are timed separately after it.
         """
         query_started_ns = perf_counter_ns()
@@ -247,9 +214,7 @@ class TemplateEngine:
             and values.flags.c_contiguous and values.flags.owndata
             for values in (centers, sigmas, luminosity)
         )
-        centers, sigmas = self._prepare_coordinates(
-            centers, sigmas, require_coverage=False,
-        )
+        centers, sigmas = self._prepare_coordinates(centers, sigmas)
         luminosity = np.ascontiguousarray(luminosity, dtype=np.float64)
         if luminosity.ndim != 2 or luminosity.shape[0] != centers.size:
             raise ValueError("Luminosity must have shape(cell count, profile count)")
@@ -261,7 +226,7 @@ class TemplateEngine:
         above = sigmas > self.lookup_tables.sigma_nodes[-1]
         outside = below | above
         outside_rows = np.flatnonzero(outside).astype(np.int64, copy=False)
-        channel_mass, counts, probability_seconds = self._accumulate_probabilities(
+        channel_mass, counts, probability_seconds = self._prepare_contributions(
             centers, sigmas, luminosity, outside,
         )
         channel_mass = np.ascontiguousarray(channel_mass.T)

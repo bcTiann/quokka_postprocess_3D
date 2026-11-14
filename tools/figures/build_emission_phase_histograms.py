@@ -65,7 +65,7 @@ def accumulate_phase_batch(histograms, cells, emission_calculator):
     }
 
 
-def process_phase_histograms(snapshot, emission_calculator, settings):
+def process_phase_histograms(snapshot, emission_calculator, settings, *, max_slabs=None):
     """Read one slab at a time and retain only small accumulated 0.2-dex bins."""
     from quokka2s.products.emission_phase_histograms import PANELS, DexHistogram
     from quokka2s.snapshot_reader import slab_windows
@@ -85,10 +85,10 @@ def process_phase_histograms(snapshot, emission_calculator, settings):
     selected_slabs = list(slab_windows(
         x_start=0,
         x_stop=snapshot.shape[0],
-        slab_nx=settings.slab_nx,
+        slab_nx=8,
     ))
-    if settings.max_slabs is not None:
-        selected_slabs = selected_slabs[:settings.max_slabs]
+    if max_slabs is not None:
+        selected_slabs = selected_slabs[:max_slabs]
     began = time.monotonic()
     for slab_number, (x_start, x_stop) in enumerate(selected_slabs, start=1):
         slab = snapshot.read_slab(
@@ -181,6 +181,8 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument('--config', type=Path, default=ROOT / DEFAULT_CONFIG)
+    parser.add_argument('--dataset', type=Path, help='Absolute path to one snapshot containing Header')
+    parser.add_argument('--jobname', help='Override the output group in the shared YAML')
     parser.add_argument('--output-dir', type=Path, required=True)
     parser.add_argument('--max-slabs', type=int, help='Limit this diagnostic run to its first N slabs')
     parser.add_argument('--plot-only', action='store_true', help='Render saved phase_histograms.npz only')
@@ -196,17 +198,18 @@ def main():
     else:
         from quokka2s.processing_inputs import load_processing_inputs
 
-        settings = load_process_config(args.config)
-        settings = replace(
-            settings,
-            output_dir=output_dir,
-            max_slabs=(settings.max_slabs if args.max_slabs is None else args.max_slabs),
+        settings = load_process_config(
+            path=args.config,
+            dataset=args.dataset,
+            jobname=args.jobname,
         )
+        settings = replace(settings, output_dir=output_dir)
         snapshot, emission_calculator = load_processing_inputs(settings)
         histograms, totals = process_phase_histograms(
             snapshot=snapshot,
             emission_calculator=emission_calculator,
             settings=settings,
+            max_slabs=args.max_slabs,
         )
         panels, display_panel_keys = save_phase_histograms(
             histograms=histograms,

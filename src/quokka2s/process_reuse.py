@@ -96,8 +96,6 @@ def processing_input_identity(config: ProcessSettings) -> dict:
     reuse to its numerical implementation. These records govern result reuse,
     not physical table compatibility.
     """
-    if config.field_source == "native-columns" and config.prepared_z_fields is not None:
-        raise ValueError("native-columns cannot use prepared_z_fields")
     if not (config.dataset / "Header").is_file():
         raise FileNotFoundError(f"Missing snapshot Header: {config.dataset / 'Header'}")
     package_directory = Path(__file__).parent
@@ -111,20 +109,12 @@ def processing_input_identity(config: ProcessSettings) -> dict:
         for name in ("despotic_table", "cloudy_table", "dust_opacity_table")
     }
     snapshot_state = snapshot_file_state(dataset=config.dataset)
-    prepared_identity = None
-    if config.prepared_z_fields is not None:
-        from .z_contiguous_cache import z_contiguous_cache_identity
-        prepared_identity = z_contiguous_cache_identity(
-            cache_directory=config.prepared_z_fields,
-            source_identity=snapshot_state,
-        )
     return {
         "snapshot_files": snapshot_state,
         "table_sha256": table_hashes,
         "source_sha256": source_hashes,
         "runtime_identity": _runtime_numerical_identity(),
-        "prepared_z_fields": prepared_identity,
-        "field_source": config.field_source,
+        "field_source": "native-columns",
     }
 
 

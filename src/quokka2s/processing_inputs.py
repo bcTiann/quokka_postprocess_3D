@@ -1,10 +1,8 @@
 """Load run inputs: a native snapshot, two emission tables, and dust opacity."""
 from __future__ import annotations
 
-from contextlib import contextmanager, nullcontext
-from dataclasses import replace
+from contextlib import contextmanager
 from pathlib import Path
-from tempfile import TemporaryDirectory
 import time
 
 from quokka2s.cloudy.lookup import CloudyLookup
@@ -21,7 +19,6 @@ from quokka2s.snapshot_reader import Snapshot
 from quokka2s.despotic.table_files import load_table
 from quokka2s.despotic.lookup import DespoticLookup
 from quokka2s.despotic.snapshot_domain import validate_table_domain
-from quokka2s.z_contiguous_cache import prepare_z_contiguous_cache, z_contiguous_cache_identity
 
 
 def load_processing_inputs(config):
@@ -30,24 +27,13 @@ def load_processing_inputs(config):
     config contains the snapshot, table, dust-opacity, and output Paths from
     load_process_config(). Return Snapshot and the shared CellEmissionCalculator.
     This step reads metadata and emission tables, not snapshot cell fields.
-    Native columns later load full-z tiles; the explicit z-contiguous source
-    later loads its slabs through read_slab().
+    Native columns later load the selected full-z tiles directly from the snapshot.
     """
     print('Inputs: checking snapshot and table paths...', flush=True)
     check_input_paths(config)
     region = {"x": config.x_index_range, "y": config.y_index_range}
-    sidecar = None if config.prepared_z_fields is None else config.prepared_z_fields / 'snapshot_metadata.json'
-    if sidecar is not None and sidecar.exists():
-        from .snapshot_metadata import open_snapshot_metadata
-        print('Inputs: restoring validated snapshot metadata; no yt load...', flush=True)
-        snapshot = open_snapshot_metadata(
-            dataset_path=config.dataset,
-            metadata_path=sidecar,
-            xy_region=region,
-        )
-    else:
-        print('Inputs: opening snapshot metadata with yt...', flush=True)
-        snapshot = open_snapshot(dataset_path=config.dataset, xy_region=region)
+    print('Inputs: opening snapshot metadata with yt...', flush=True)
+    snapshot = open_snapshot(dataset_path=config.dataset, xy_region=region)
     print_snapshot_summary(snapshot=snapshot)
     emission_calculator = load_emission_calculator(config=config)
 
@@ -59,108 +45,23 @@ def load_processing_inputs(config):
 
 
 @contextmanager
-def prepare_z_contiguous_snapshot(
-    *, snapshot: Snapshot, dataset_path: Path, work_directory: Path, source_identity: dict,
-    prepared_directory: Path | None = None, reader_threads: int = 8,
-    read_workers: int = 5,
-):
-    """Prepare/reuse z fields, then own one bounded reader until processing exits.
+def prepare_processing_snapshot(*, snapshot: Snapshot, read_workers: int = 5):
+    """Own the original-snapshot reader until this snapshot finishes.
 
-    Snapshot and native metadata are initialized by the timed process. Only
-    prepare_z_contiguous_cache()'s created conversion cost may be excluded.
-    Reader construction, unit factors and existing-cache checks remain timed.
+    Read selected full-z XY tiles into bounded RAM. Global neighbouring faces
+    remain available for gradients; no converted snapshot is written to disk.
+    Initialization and every subsequent field read remain inside process time.
     """
-    from .bounded_z_reader import BoundedEagerReader
-    native_reader = snapshot.native_reader
-    if prepared_directory is None:
-        storage = TemporaryDirectory(prefix='.zfields-', dir=work_directory)
-    else:
-        prepared_directory = Path(prepared_directory).resolve(strict=True)
-        storage = nullcontext(prepared_directory)
-    with storage as directory:
-        cache_directory = Path(directory) / 'fields' if prepared_directory is None else Path(directory)
-        preparation = prepare_z_contiguous_cache(
-            native_reader=native_reader,
-            cache_directory=cache_directory,
-            source_identity=source_identity,
-        )
-        if prepared_directory is not None and preparation['created']:
-            raise AssertionError('An explicitly prepared cache cannot be converted during process')
-        metadata_write = None
-        if preparation['created']:
-            from .snapshot_metadata import write_snapshot_metadata
-            metadata_write = write_snapshot_metadata(
-                snapshot=snapshot,
-                dataset_path=dataset_path,
-                metadata_path=cache_directory / 'snapshot_metadata.json',
-                source_identity=source_identity,
-            )
-            preparation['identity'] = z_contiguous_cache_identity(
-                cache_directory=cache_directory,
-                source_identity=source_identity,
-            )
-        preparation['metadata_sidecar_write'] = metadata_write
-        initialization_began = time.monotonic()
-        reader = BoundedEagerReader(
-            native_reader,
-            cache_directory=preparation['directory'],
-            reader_threads=reader_threads,
-            read_workers=read_workers,
-        )
-        preparation['reader_initialization_seconds'] = time.monotonic() - initialization_began
-        preparation['conversion_seconds'] = preparation['preprocessing_seconds'] if preparation['created'] else 0.0
-        preparation['cache_reused'] = not preparation['created']
-        preparation['reader_statistics'] = reader.read_statistics
-        preparation['derivation_statistics'] = reader.derivation_statistics
-        try:
-            yield replace(snapshot, field_reader=reader), preparation
-        finally:
-            reader.close()
-
-
-@contextmanager
-def prepare_processing_snapshot(
-    *, snapshot: Snapshot, dataset_path: Path, work_directory: Path,
-    source_identity: dict, field_source: str = "native-columns",
-    prepared_directory: Path | None = None, reader_threads: int = 8,
-    read_workers: int = 5,
-):
-    """Own the explicitly selected field reader; never mix the two sources.
-
-    The native-column reader retains metadata and small immutable neighbour
-    faces between tiles. Each NumPy field read closes its file.
-    Snapshot.native_reader remains the original metadata reader, so unit and
-    global geometry access is intact.
-    No native-column initialization/read cost is excluded from process timing.
-    """
-    if field_source == "z-contiguous":
-        with prepare_z_contiguous_snapshot(
-            snapshot=snapshot,
-            dataset_path=dataset_path,
-            work_directory=work_directory,
-            source_identity=source_identity,
-            prepared_directory=prepared_directory,
-            reader_threads=reader_threads,
-            read_workers=read_workers,
-        ) as prepared:
-            yield prepared
-        return
-    if field_source != "native-columns":
-        raise ValueError("Unsupported processing field source: " + str(field_source))
-    if prepared_directory is not None:
-        raise ValueError("native-columns cannot use prepared_z_fields")
     from .native_column_reader import NativeColumnReader
 
     initialized = time.monotonic()
-    with NativeColumnReader(snapshot.native_reader, read_workers=read_workers) as reader:
+    with NativeColumnReader(
+        snapshot.native_reader,
+        read_workers=read_workers,
+        xy_region=snapshot.xy_region,
+    ) as reader:
         initialization_seconds = time.monotonic() - initialized
-        yield snapshot, {
-            "native_column_reader": reader,
-            "conversion_seconds": 0.0,
-            "preprocessing_seconds": 0.0,
-            "cache_reused": False,
-            "reader_initialization_seconds": initialization_seconds,
-        }
+        yield reader, initialization_seconds
 
 
 def print_snapshot_summary(snapshot: Snapshot) -> None:

@@ -22,7 +22,7 @@ from quokka2s.run_settings import (
     PlotSettings,
     add_plot_arguments,
     add_run_selection_arguments,
-    load_plot_configs,
+    load_plot_config,
 )
 
 
@@ -148,8 +148,7 @@ def plot_one_snapshot(config: PlotSettings) -> int:
     """Read one saved snapshot/region and return the number of figure files.
 
     config contains resolved product/output paths and display choices only.
-    This is also the post-processing action used by the process command; it
-    reopens saved arrays rather than receiving live numerical accumulators.
+    This independent plotting script reads only saved numerical arrays.
     """
     started = time.perf_counter()
     print(f'Plot: reading saved numerical products from {config.products}', flush=True)
@@ -176,36 +175,18 @@ def plot_one_snapshot(config: PlotSettings) -> int:
 
 
 def main(argv=None) -> None:
-    """Plot one selection or all saved snapshots in the configured output job.
-
-    argv is a sequence of command arguments, or None for sys.argv[1:].
-    --all discovers results under results_dir/jobname without accessing raw
-    snapshots or tables. --jobname replaces the YAML output group; an explicit
-    --dataset requires it. --x/--y and figure flags apply to every selection.
-    Ordinary batch failures are listed after the remaining snapshots finish.
-    """
+    """Plot one saved snapshot/region without opening snapshot or table inputs."""
     parser = argparse.ArgumentParser(
-        prog='plot',
+        prog="plot_emission_results.py",
         description=__doc__,
     )
     add_run_selection_arguments(parser)
     add_plot_arguments(parser)
-    parser.add_argument(
-        '--all',
-        dest='all_snapshots',
-        action='store_true',
-        help='Plot every saved plt+digits snapshot in the configured output job',
-    )
     args = parser.parse_args(argv)
-    if args.all_snapshots and args.dataset is not None:
-        parser.error('--all cannot be combined with --dataset')
-    if args.dataset is not None and args.jobname is None:
-        parser.error('--dataset requires --jobname; explicitly name the output group')
     print(f'Plot configuration: {args.config}', flush=True)
     try:
-        configs = load_plot_configs(
+        config = load_plot_config(
             path=args.config,
-            all_snapshots=args.all_snapshots,
             dataset=args.dataset,
             jobname=args.jobname,
             x_index_range=args.x_index_range,
@@ -215,40 +196,7 @@ def main(argv=None) -> None:
         )
     except (ValueError, OSError) as exc:
         parser.error(str(exc))
-
-    started = time.perf_counter()
-    succeeded = 0
-    file_count = 0
-    failures = []
-    snapshot_count = len(configs)
-    if args.jobname is not None:
-        print(f'Output group: {args.jobname} (from --jobname)', flush=True)
-    print(f'Plot: selected {snapshot_count} snapshot(s).', flush=True)
-    for snapshot_index, config in enumerate(configs, start=1):
-        print(
-            f'Plot snapshot {snapshot_index}/{snapshot_count}: {config.products.parent}',
-            flush=True,
-        )
-        try:
-            file_count += plot_one_snapshot(config=config)
-            succeeded += 1
-        except Exception as exc:
-            if not args.all_snapshots:
-                raise
-            error = f'{type(exc).__name__}: {exc}'
-            failures.append((config.products.parent, error))
-            print(f'Plot failed: {config.products.parent}: {error}', flush=True)
-
-    elapsed_seconds = time.perf_counter() - started
-    print(
-        f'Plot summary: {succeeded} succeeded, {len(failures)} failed; '
-        f'saved {file_count} files in {elapsed_seconds:.1f} s.',
-        flush=True,
-    )
-    for directory, error in failures:
-        print(f'  Failed: {directory}: {error}', flush=True)
-    if failures:
-        raise SystemExit(1)
+    plot_one_snapshot(config=config)
 
 
 if __name__ == "__main__":

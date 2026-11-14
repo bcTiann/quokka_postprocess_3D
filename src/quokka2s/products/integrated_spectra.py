@@ -1,25 +1,24 @@
-"""Streaming LOS spectra from exact or tabulated Gaussian channel integrals.
+"""Prepare available line Gaussians, complete moments and saved spectrum arrays.
 
-This module receives each named line's emissivities and gas temperature,
-selects its available cells, and accumulates both dust states. It does not
-select a chemistry model, interpolate emissivity tables, or apply transfer.
+The template accumulator supplies four-corner accumulation and convolution.
+This shared preparation preserves per-line missingness, temperature branches,
+original-cell luminosities and complete Gaussian moments.
 """
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
-
 import numpy as np
-from scipy.special import geterr as scipy_geterr
 
 from quokka2s.constants import ATOMIC_MASS_UNIT_G, BOLTZMANN_ERG_K, SPEED_OF_LIGHT_KMS
 from quokka2s.line_definitions import LINE_DEFINITIONS
 from quokka2s.products import DUST_STATES, REGIME_KEYS
-from quokka2s.products.gaussian.channel_fractions import channel_fractions
-from quokka2s.products.gaussian_lookup import (
-    LINEAR_ERF_ARGUMENT_MAXIMUM,
-    LINEAR_ERF_ARGUMENT_STEP,
-    LINEAR_ERF_NODE_COUNT,
-    LINEAR_ERF_VALUES,
+from quokka2s.products.gaussian.spectral_fields import (
+    calculate_centered_full_moments,
+    pack_width_group,
+    prepare_available_group,
+    prepare_branch_rows,
+    prepare_direct_group_luminosity,
+    selected_temperatures_equal,
+    validate_branch_emission,
 )
 from quokka2s.products.line_velocity_moments import (
     LineVelocityMoments,
@@ -30,161 +29,79 @@ from quokka2s.products.profile_preparation import add_spectral_display_fields
 
 # Allow measured float64 summation-order differences between independent sums.
 SPECTRUM_LUMINOSITY_RTOL = 1e-10
-# Bound temporary (velocity channel, emitting cell) arrays per integration task.
-# This controls memory and task size, not the physical Gaussian calculation.
-DEFAULT_SPECTRAL_CELL_CHUNK = 8192
 
 
-def accumulate_velocity_spectra(
-    velocity_kms: np.ndarray,
-    thermal_width_kms: np.ndarray,
-    luminosity_matrix: np.ndarray,
-    velocity_edges_kms: np.ndarray,
-    *,
-    cell_chunk: int = DEFAULT_SPECTRAL_CELL_CHUNK,
-    workers: int = 1,
-    spectral_method: str = "exact",
-) -> np.ndarray:
-    """Integrate each cell's Gaussian over channel edges and sum dL/dv.
+def shared_width_moments(*, velocity_kms, thermal_width_kms, luminosity_by_dust, shared_lines):
+    """Return stable full moments, reusing only identical input vectors.
 
-    Parameters
-    ----------
-    velocity_kms, thermal_width_kms : array-like, shape (R,)
-        Cell LOS velocities and Gaussian standard deviations [km/s].
-    luminosity_matrix : array-like, shape (R, Nprofile)
-        Retained cell luminosities [erg/s]; columns share thermal widths.
-        For one line with both dust states, columns are intrinsic and attenuated.
-    velocity_edges_kms : array-like, shape (Nchannel + 1,)
-        Increasing, uniformly spaced channel edges [km/s].
-    cell_chunk, workers : int, optional
-        Maximum cells per kernel chunk and number of integration threads.
-    spectral_method : {"exact", "linear-lut"}, optional
-        Exact SciPy erf coefficients, or approximate one-dimensional linear
-        lookup with NumPy luminosity reduction. Chunk and
-        batch partials retain the same ordered merges.
-
-    Returns
-    -------
-    numpy.ndarray, shape (Nchannel, Nprofile)
-        Channel-average dL/dv [erg/s/(km/s)], in input profile order.
-
-    Notes
-    -----
-    Exact mode integrates each Gaussian analytically over channel edges.
-    Linear-lut mode approximates erf on the same boundaries using spacing
-    1/4096 and reciprocal widths. Custom NumPy/SciPy error policies and
-    unaligned boundaries retain the original exact NumPy/SciPy path.
-    Several lines with identical widths share one Gaussian evaluation. The
-    1 cm/s minimum width is retained; flux outside the window is not restored.
-
-    Examples
-    --------
-    profile = accumulate_velocity_spectra(velocity, sigma, cell_light, edges)
+    A profile keeps its own positive-luminosity mask and first positive velocity
+    anchor. NumPy receives the same contiguous reduction vectors as before;
+    no C reduction or raw-second-moment subtraction replaces those operations.
     """
-    if spectral_method not in ("exact", "linear-lut"):
-        raise ValueError(f"Unknown spectral_method: {spectral_method!r}")
-    velocity = np.asarray(velocity_kms, dtype=float).reshape(-1)
-    thermal = np.asarray(thermal_width_kms, dtype=float).reshape(-1)
-    luminosity = np.asarray(luminosity_matrix, dtype=float)
-    velocity_edges_kms = np.asarray(velocity_edges_kms, dtype=float)
-    # The process command constructs a uniform channel grid once. Inputs here
-    # have already been selected and prepared by IntegratedSpectra.
-
-    emitting = np.any(luminosity != 0.0, axis=1)
-    velocity = velocity[emitting]
-    thermal = thermal[emitting]
-    luminosity = luminosity[emitting]
-    output_shape = (velocity_edges_kms.size - 1, luminosity.shape[1])
-    delta_v = float(velocity_edges_kms[1] - velocity_edges_kms[0])
-    channel_chunk = 64
-
-    def accumulate_chunk(cell0: int) -> np.ndarray:
-        """Return this cell chunk's (channel, profile) dL/dv [erg/s/(km/s)]."""
-        cell1 = min(cell0 + cell_chunk, velocity.size)
-        centers = velocity[cell0:cell1]
-        chunk_luminosity = luminosity[cell0:cell1]
-        sigma = np.maximum(
-            thermal[cell0:cell1],
-            MINIMUM_GAUSSIAN_WIDTH_KMS,
-        )
-        denominator = np.sqrt(2.0) * sigma
-        error_policies = scipy_geterr()
-        numpy_error_policies = np.geterr()
-        use_lookup = (
-            velocity_edges_kms.flags.aligned
-            and numpy_error_policies == {
-                "divide": "warn",
-                "over": "warn",
-                "under": "ignore",
-                "invalid": "warn",
-            }
-            and all(
-                policy == "ignore"
-                for category, policy in error_policies.items()
-                if category != "memory"
+    effective_width = np.maximum(thermal_width_kms, MINIMUM_GAUSSIAN_WIDTH_KMS)
+    contexts = []
+    result = {}
+    for dust_state, luminosity in luminosity_by_dust.items():
+        for line_index in shared_lines:
+            emitting_cells = luminosity[line_index] > 0.0
+            if not np.any(emitting_cells):
+                result[dust_state, line_index] = LineVelocityMoments()
+                continue
+            selected_luminosity = luminosity[line_index][emitting_cells]
+            total_luminosity = float(np.sum(selected_luminosity, dtype=np.float64))
+            context = None
+            for previous_cells, previous_context in contexts:
+                if np.array_equal(previous_cells, emitting_cells):
+                    context = previous_context
+                    break
+            if context is None:
+                selected_velocity = velocity_kms[emitting_cells]
+                selected_width = effective_width[emitting_cells]
+                velocity_anchor = selected_velocity[0]
+                velocity_offset = selected_velocity - velocity_anchor
+                thermal_variance = selected_width ** 2
+                context = (velocity_anchor, velocity_offset, thermal_variance)
+                contexts.append((emitting_cells, context))
+            velocity_anchor, velocity_offset, thermal_variance = context
+            mean_offset = float(
+                np.sum(selected_luminosity * velocity_offset) / total_luminosity
             )
-        )
-        lookup_values = LINEAR_ERF_VALUES if use_lookup and spectral_method == "linear-lut" else None
-        # Each returned partial owns its output while executor.map consumes it.
-        partial = np.zeros(output_shape, dtype=float)
-        for channel0 in range(0, output_shape[0], channel_chunk):
-            channel1 = min(channel0 + channel_chunk, output_shape[0])
-            edges = velocity_edges_kms[channel0:channel1 + 1]
-            fractions = channel_fractions(
-                edges=edges,
-                centers=centers,
-                denominator=denominator,
-                lookup_values=lookup_values,
+            centroid = float(velocity_anchor + mean_offset)
+            bulk_variance = (velocity_offset - mean_offset) ** 2
+            centered_second = float(
+                np.sum(selected_luminosity * (bulk_variance + thermal_variance))
             )
-            partial[channel0:channel1] = np.einsum(
-                "kc,cm->km", fractions, chunk_luminosity, optimize=False,
-            ) / delta_v
-        return partial
-
-    chunk_starts = range(0, velocity.size, cell_chunk)
-    output = np.zeros(output_shape, dtype=float)
-    if workers <= 1:
-        for cell0 in chunk_starts:
-            output += accumulate_chunk(cell0)
-    else:
-        with ThreadPoolExecutor(max_workers=workers) as executor:
-            for partial in executor.map(accumulate_chunk, chunk_starts):
-                output += partial
-    return output
+            result[dust_state, line_index] = LineVelocityMoments(
+                luminosity_erg_s=total_luminosity,
+                centroid_kms=centroid,
+                centered_second_moment=centered_second,
+            )
+    return result
 
 
 class IntegratedSpectra:
-    """Whole-box line profiles and complete moments from bounded cell batches.
+    """Prepare bounded batches and own the common saved spectral products.
 
     dL_dv is (2, L, 2, K) [erg/s/(km/s)]: intrinsic/attenuated, line,
     cold/hot gas, velocity channel. input_luminosity is (2, L, 2) [erg/s].
-    Only these small sums and full-profile moments survive each add_batch().
+    The template subclass queues Gaussian groups and accumulates their corners.
     """
 
     def __init__(
         self,
         line_keys,
         velocity_edges_kms,
-        *,
-        workers=1,
-        cell_chunk=DEFAULT_SPECTRAL_CELL_CHUNK,
-        spectral_method="exact",
     ):
         """Create empty profiles on the run's fixed velocity-channel grid.
 
         line_keys follows CellEmissionCalculator.line_keys. Channel edges are
-        (K + 1,) [km/s]; workers and cell_chunk bound Gaussian integration.
-        spectral_method selects exact or linear-lut channel coefficients;
-        complete Gaussian moments retain their original cell calculation.
+        (K + 1,) [km/s]; batch ownership bounds temporary Gaussian preparation.
+        Complete Gaussian moments retain their original cell calculation.
         Example: ten lines and 400 channels give dL_dv.shape == (2, 10, 2, 400).
         """
-        if spectral_method not in ("direct-template", "histogram-layered", "histogram-2d", "exact", "linear-lut"):
-            raise ValueError(f"Unknown spectral_method: {spectral_method!r}")
         self.line_keys = tuple(line_keys)
         self.velocity_edges_kms = np.asarray(velocity_edges_kms, dtype=float).copy()
-        self.workers = int(workers)
-        self.cell_chunk = int(cell_chunk)
-        self.spectral_method = spectral_method
+        self.spectral_method = "direct-template"
         profile_shape = (2, len(self.line_keys), 2, self.velocity_edges_kms.size - 1)
         self.dL_dv = np.zeros(profile_shape)
         self.input_luminosity = np.zeros(profile_shape[:3])
@@ -247,56 +164,48 @@ class IntegratedSpectra:
                 groups.append(([line_key], available_cells))
         return groups
 
-    def pack_available_line_fields(self, *, emission, line_keys, available_cells):
-        """Select three (Lgroup, R) inputs in original available-cell order.
-
-        Returns intrinsic/attenuated epsilon [erg/s/cm^3] and temperature [K].
-        Fortran layout preserves the existing per-line luminosity reduction.
-        Example: a group's Halpha row comes from emission.lines["halpha"].
-        """
-        available_count = int(np.count_nonzero(available_cells))
-        shape = (len(line_keys), available_count)
-        intrinsic_emissivity = np.empty(shape, dtype=float, order="F")
-        attenuated_emissivity = np.empty(shape, dtype=float, order="F")
-        thermal_temperature_K = np.empty(shape, dtype=float, order="F")
-        for line_index, line_key in enumerate(line_keys):
-            line = emission.lines[line_key]
-            intrinsic_emissivity[line_index] = line.intrinsic_emissivity_erg_s_cm3[available_cells]
-            attenuated_emissivity[line_index] = line.attenuated_emissivity_erg_s_cm3[available_cells]
-            thermal_temperature_K[line_index] = line.temperature_K[available_cells]
-        return intrinsic_emissivity, attenuated_emissivity, thermal_temperature_K
-
     def calculate_available_line_group(
         self, *, cells, emission, line_keys, available_cells, cell_volume_cm3,
     ):
-        """Calculate one availability group's small profile/moment increments.
+        """Prepare one group of lines sharing exactly the same available cells.
 
-        The selected cell arrays are temporary. Returned profiles are
-        (2, Lgroup, 2, K); luminosities are (2, Lgroup, 2) [erg/s], and counts
-        are (Lgroup, 2). Both dust states share velocities and Gaussian widths.
+        Normal processing builds final C-order queues directly. A custom NumPy
+        error policy retains the original Fortran-order moment preparation.
         """
-        intrinsic, attenuated, temperature = self.pack_available_line_fields(
-            emission=emission,
-            line_keys=line_keys,
-            available_cells=available_cells,
+        default_numpy_errors = {
+            "divide": "warn",
+            "over": "warn",
+            "under": "ignore",
+            "invalid": "warn",
+        }
+        if np.geterr() == default_numpy_errors:
+            return self.calculate_direct_line_group(
+                cells=cells,
+                emission=emission,
+                line_keys=line_keys,
+                available_cells=available_cells,
+                cell_volume_cm3=cell_volume_cm3,
+            )
+        lines = tuple(emission.lines[line_key] for line_key in line_keys)
+        available_rows = np.flatnonzero(available_cells)
+        branches = prepare_available_group(
+            velocity_kms=np.asarray(cells.velocity_z_kms, dtype=np.float64),
+            cold_cells=np.asarray(emission.cold_cells, dtype=np.bool_),
+            available_rows=available_rows,
+            intrinsic_fields=tuple(
+                np.asarray(line.intrinsic_emissivity_erg_s_cm3, dtype=np.float64)
+                for line in lines
+            ),
+            attenuated_fields=tuple(
+                np.asarray(line.attenuated_emissivity_erg_s_cm3, dtype=np.float64)
+                for line in lines
+            ),
+            temperature_fields=tuple(
+                np.asarray(line.temperature_K, dtype=np.float64) for line in lines
+            ),
+            cell_volume_cm3=cell_volume_cm3,
+            speed_of_light_kms=SPEED_OF_LIGHT_KMS,
         )
-        velocity = np.asarray(cells.velocity_z_kms[available_cells], dtype=float)
-        cold = np.asarray(emission.cold_cells[available_cells], dtype=bool)
-        if not np.isfinite(velocity).all():
-            raise ValueError("velocity_kms must be finite")
-        if np.any(np.abs(velocity) >= SPEED_OF_LIGHT_KMS):
-            raise ValueError("The nonrelativistic profile requires abs(velocity) < c")
-        if not np.isfinite(temperature).all() or np.any(temperature < 0.):
-            raise ValueError("temperatures_K must be finite and nonnegative")
-        luminosity_by_dust = {}
-        for dust_state, emissivity in zip(DUST_STATES, (intrinsic, attenuated)):
-            if not np.isfinite(emissivity).all() or np.any(emissivity < 0.):
-                raise ValueError("emissivity must be finite and nonnegative")
-            with np.errstate(over="ignore", invalid="ignore"):
-                luminosity = emissivity * cell_volume_cm3
-            if not np.isfinite(luminosity).all():
-                raise ValueError("emissivity times volume must remain finite")
-            luminosity_by_dust[dust_state] = luminosity
         profile_shape = (2, len(line_keys), 2, self.velocity_edges_kms.size - 1)
         profiles = np.zeros(profile_shape)
         luminosities = np.zeros(profile_shape[:3])
@@ -311,45 +220,209 @@ class IntegratedSpectra:
         masses_g = np.array([
             LINE_DEFINITIONS[line_key].emitter_mass_amu for line_key in line_keys
         ]) * ATOMIC_MASS_UNIT_G
-        for branch_index, branch_cells in enumerate((cold, ~cold)):
-            if not np.any(branch_cells):
+        for branch_index, branch_fields in enumerate(branches):
+            velocity, temperature, intrinsic, attenuated = branch_fields
+            branch_count = velocity.size
+            if branch_count == 0:
                 continue
-            branch_luminosities = {
-                dust_state: luminosity[:, branch_cells]
-                for dust_state, luminosity in luminosity_by_dust.items()
-            }
-            branch_profiles, branch_moments = calculate_branch_spectra_and_moments(
+            branch_luminosities = dict(zip(DUST_STATES, (intrinsic, attenuated)))
+            branch_profiles, branch_moments = self.prepare_branch_gaussians_and_moments(
+                branch_index=branch_index,
                 line_keys=line_keys,
                 masses_g=masses_g,
-                velocity_kms=velocity[branch_cells],
-                temperature_K=temperature[:, branch_cells],
+                velocity_kms=velocity,
+                temperature_K=temperature,
                 luminosity_by_dust=branch_luminosities,
                 velocity_edges_kms=self.velocity_edges_kms,
-                cell_chunk=self.cell_chunk,
-                workers=self.workers,
-                spectral_method=self.spectral_method,
             )
             profiles[:, :, branch_index] = branch_profiles
-            counts[:, branch_index] = np.count_nonzero(branch_cells)
-            branch = ("cold", "hot")[branch_index]
+            counts[:, branch_index] = branch_count
+            branch_name = ("cold", "hot")[branch_index]
             for dust_index, dust_state in enumerate(DUST_STATES):
+                # F order is essential: preserve the frozen axis-1 sum order.
                 luminosities[dust_index, :, branch_index] = branch_luminosities[dust_state].sum(axis=1)
                 for line_key in line_keys:
-                    moments[dust_state][line_key][branch] = branch_moments[dust_state][line_key]
+                    moments[dust_state][line_key][branch_name] = branch_moments[dust_state][line_key]
         return profiles, luminosities, counts, moments
 
-    def merge(self, other):
-        """Add a completed worker batch in the caller's chosen input order."""
-        if self.spectral_method != other.spectral_method:
-            raise ValueError("Cannot merge spectra calculated with different spectral methods")
-        self.dL_dv += other.dL_dv
-        self.input_luminosity += other.input_luminosity
-        self.cell_counts += other.cell_counts
-        self.merge_full_line_moments(
-            moments=other.full_line_moments,
-            line_keys=self.line_keys,
+    def calculate_direct_line_group(
+        self, *, cells, emission, line_keys, available_cells, cell_volume_cm3,
+    ):
+        """Build final template queues directly from selected source fields.
+
+        No full branch temperature or luminosity matrix is retained. Lines may
+        share a queue only when their emitter masses and selected branch
+        temperatures are identical. Stable two-pass NumPy full moments reuse
+        the final queue; all masks and the Gaussian integration are unchanged.
+        """
+        lines = tuple(emission.lines[line_key] for line_key in line_keys)
+        intrinsic_fields = tuple(
+            np.asarray(line.intrinsic_emissivity_erg_s_cm3, dtype=np.float64)
+            for line in lines
         )
-        return self
+        attenuated_fields = tuple(
+            np.asarray(line.attenuated_emissivity_erg_s_cm3, dtype=np.float64)
+            for line in lines
+        )
+        temperature_fields = tuple(
+            np.asarray(line.temperature_K, dtype=np.float64) for line in lines
+        )
+        available_rows = np.flatnonzero(available_cells)
+        branches = prepare_branch_rows(
+            available_rows=available_rows,
+            cold_cells=np.asarray(emission.cold_cells, dtype=np.bool_),
+            velocity_kms=np.asarray(cells.velocity_z_kms, dtype=np.float64),
+            speed_of_light_kms=SPEED_OF_LIGHT_KMS,
+        )
+        line_count = len(line_keys)
+        profile_shape = (2, line_count, 2, self.velocity_edges_kms.size - 1)
+        profiles = np.zeros(profile_shape)
+        luminosities = np.zeros(profile_shape[:3])
+        counts = np.zeros((line_count, 2), dtype=np.int64)
+        moments = {
+            dust_state: {
+                line_key: {"cold": LineVelocityMoments(), "hot": LineVelocityMoments()}
+                for line_key in line_keys
+            }
+            for dust_state in DUST_STATES
+        }
+        masses_g = np.array([
+            LINE_DEFINITIONS[line_key].emitter_mass_amu for line_key in line_keys
+        ]) * ATOMIC_MASS_UNIT_G
+        for branch_index, (rows, velocity) in enumerate(branches):
+            counts[:, branch_index] = rows.size
+            if rows.size == 0:
+                continue
+            emitting_lines = validate_branch_emission(
+                rows=rows,
+                intrinsic_fields=intrinsic_fields,
+                attenuated_fields=attenuated_fields,
+                temperature_fields=temperature_fields,
+                cell_volume_cm3=cell_volume_cm3,
+                original_count=cells.cell_count,
+            )
+            remaining_lines = list(np.flatnonzero(emitting_lines))
+            while remaining_lines:
+                first_line = remaining_lines[0]
+                shared_lines = [
+                    line_index for line_index in remaining_lines
+                    if masses_g[line_index] == masses_g[first_line]
+                    and selected_temperatures_equal(
+                        rows=rows,
+                        first_temperature_K=temperature_fields[line_index],
+                        second_temperature_K=temperature_fields[first_line],
+                    )
+                ]
+                remaining_lines = [
+                    line_index for line_index in remaining_lines
+                    if line_index not in shared_lines
+                ]
+                thermal_width = calculate_thermal_width_kms(
+                    velocity_kms=velocity,
+                    temperature_K=temperature_fields[first_line][rows],
+                    mass_g=masses_g[first_line],
+                )
+                luminosity_matrix = prepare_direct_group_luminosity(
+                    rows=rows,
+                    intrinsic_fields=intrinsic_fields,
+                    attenuated_fields=attenuated_fields,
+                    shared_lines=np.asarray(shared_lines, dtype=np.int64),
+                    cell_volume_cm3=cell_volume_cm3,
+                )
+                full_moments = calculate_centered_full_moments(
+                    velocity_kms=velocity,
+                    thermal_width_kms=thermal_width,
+                    luminosity=luminosity_matrix,
+                    minimum_width_kms=MINIMUM_GAUSSIAN_WIDTH_KMS,
+                )
+                group_size = len(shared_lines)
+                branch_name = ("cold", "hot")[branch_index]
+                for dust_index, dust_state in enumerate(DUST_STATES):
+                    for shared_index, line_index in enumerate(shared_lines):
+                        profile = dust_index * group_size + shared_index
+                        values = full_moments[profile]
+                        luminosities[dust_index, line_index, branch_index] = values[0]
+                        moments[dust_state][line_keys[line_index]][branch_name] = LineVelocityMoments(
+                            luminosity_erg_s=float(values[0]),
+                            centroid_kms=float(values[1]),
+                            centered_second_moment=float(values[2]),
+                        )
+                channel_profiles = self.queue_gaussian_group(
+                    line_keys=tuple(line_keys[index] for index in shared_lines),
+                    branch_index=branch_index,
+                    velocity_kms=velocity,
+                    thermal_width_kms=thermal_width,
+                    luminosity_matrix=luminosity_matrix,
+                )
+                for dust_index in range(2):
+                    first_column = dust_index * group_size
+                    last_column = first_column + group_size
+                    profiles[dust_index, shared_lines, branch_index] = (
+                        channel_profiles[:, first_column:last_column].T
+                    )
+        return profiles, luminosities, counts, moments
+
+    def prepare_branch_gaussians_and_moments(
+        self, *, branch_index, line_keys, masses_g, velocity_kms, temperature_K,
+        luminosity_by_dust, velocity_edges_kms,
+    ):
+        """Keep the frozen width-group and deposit order without repacking.
+
+        The only changed moment work is sharing velocity offsets and sigma squared
+        between profiles whose positive masks match. Each line's sums stay separate.
+        """
+        profiles = np.zeros((2, len(line_keys), velocity_edges_kms.size - 1))
+        moments = {
+            dust_state: {line_key: LineVelocityMoments() for line_key in line_keys}
+            for dust_state in DUST_STATES
+        }
+        emitting_lines = np.zeros(len(line_keys), dtype=bool)
+        for luminosity in luminosity_by_dust.values():
+            emitting_lines |= np.any(luminosity != 0.0, axis=1)
+        remaining_lines = list(np.flatnonzero(emitting_lines))
+        while remaining_lines:
+            first_line = remaining_lines[0]
+            shared_lines = [
+                line_index for line_index in remaining_lines
+                if masses_g[line_index] == masses_g[first_line]
+                and np.array_equal(temperature_K[line_index], temperature_K[first_line])
+            ]
+            remaining_lines = [
+                line_index for line_index in remaining_lines if line_index not in shared_lines
+            ]
+            thermal_width = calculate_thermal_width_kms(
+                velocity_kms=velocity_kms,
+                temperature_K=temperature_K[first_line],
+                mass_g=masses_g[first_line],
+            )
+            group_moments = shared_width_moments(
+                velocity_kms=velocity_kms,
+                thermal_width_kms=thermal_width,
+                luminosity_by_dust=luminosity_by_dust,
+                shared_lines=shared_lines,
+            )
+            for dust_state in DUST_STATES:
+                for line_index in shared_lines:
+                    moments[dust_state][line_keys[line_index]] = group_moments[dust_state, line_index]
+            # Fill the exact final layout once, without two advanced-index copies.
+            luminosity_matrix = pack_width_group(
+                intrinsic_luminosity=luminosity_by_dust[DUST_STATES[0]],
+                attenuated_luminosity=luminosity_by_dust[DUST_STATES[1]],
+                shared_lines=np.asarray(shared_lines, dtype=np.int64),
+            )
+            channel_profiles = self.queue_gaussian_group(
+                line_keys=tuple(line_keys[index] for index in shared_lines),
+                branch_index=branch_index,
+                velocity_kms=velocity_kms,
+                thermal_width_kms=thermal_width,
+                luminosity_matrix=luminosity_matrix,
+            )
+            group_size = len(shared_lines)
+            for dust_index in range(2):
+                first_column = dust_index * group_size
+                last_column = first_column + group_size
+                profiles[dust_index, shared_lines] = channel_profiles[:, first_column:last_column].T
+        return profiles, moments
 
     def merge_full_line_moments(self, *, moments, line_keys):
         """Merge complete Gaussian moments in dust, line and cold/hot order.
@@ -475,21 +548,6 @@ class IntegratedSpectra:
                 "transfer": "none added; supplied emissivities are summed as epsilon times cell volume",
                 "lines": {},
             }
-            if self.spectral_method == "linear-lut":
-                dust_report["profile"] = (
-                    "Gaussian channel integral using one-dimensional linear erf lookup; "
-                    "existing Doppler width convention"
-                )
-                dust_report["lookup"] = {
-                    "function": "erf((edge-center)/(sqrt(2)*sigma)) with odd symmetry",
-                    "interpolation": "linear",
-                    "argument_step": LINEAR_ERF_ARGUMENT_STEP,
-                    "absolute_argument_maximum": LINEAR_ERF_ARGUMENT_MAXIMUM,
-                    "nonnegative_nodes": LINEAR_ERF_NODE_COUNT,
-                    "coordinate_arithmetic": "difference times reciprocal denominator",
-                    "tail_rule": "existing +/-8 erf saturation; no additional cutoff",
-                    "fallback": "exact NumPy/SciPy for custom error policies or unaligned boundaries",
-                }
             for line_index, line_key in enumerate(self.line_keys):
                 line_report = {
                     "total": make_luminosity_summary(
@@ -509,70 +567,6 @@ class IntegratedSpectra:
                 dust_report["lines"][line_key] = line_report
             report[dust_state] = dust_report
         return report
-
-
-def calculate_branch_spectra_and_moments(
-    *, line_keys, masses_g, velocity_kms, temperature_K, luminosity_by_dust,
-    velocity_edges_kms, cell_chunk, workers, spectral_method="exact",
-):
-    """Share one thermal Gaussian calculation across lines and dust states.
-
-    Selected temperatures and luminosities are (Lgroup, R); velocities are (R,).
-    Lines with identical masses and temperature arrays share channel fractions.
-    Returns (2, Lgroup, K) profiles and each line's complete Gaussian moments.
-    """
-    profiles = np.zeros((2, len(line_keys), velocity_edges_kms.size - 1))
-    moments = {
-        dust_state: {line_key: LineVelocityMoments() for line_key in line_keys}
-        for dust_state in DUST_STATES
-    }
-    emitting_lines = np.zeros(len(line_keys), dtype=bool)
-    for luminosity in luminosity_by_dust.values():
-        emitting_lines |= np.any(luminosity != 0., axis=1)
-    remaining_lines = list(np.flatnonzero(emitting_lines))
-    while remaining_lines:
-        first_line = remaining_lines[0]
-        shared_lines = [
-            line_index for line_index in remaining_lines
-            if masses_g[line_index] == masses_g[first_line]
-            and np.array_equal(temperature_K[line_index], temperature_K[first_line])
-        ]
-        remaining_lines = [
-            line_index for line_index in remaining_lines if line_index not in shared_lines
-        ]
-        thermal_width = calculate_thermal_width_kms(
-            velocity_kms=velocity_kms,
-            temperature_K=temperature_K[first_line],
-            mass_g=masses_g[first_line],
-        )
-        for dust_state, luminosity in luminosity_by_dust.items():
-            for line_index in shared_lines:
-                line_key = line_keys[line_index]
-                moments[dust_state][line_key] = LineVelocityMoments.from_cells(
-                    velocity_kms=velocity_kms,
-                    thermal_width_kms=thermal_width,
-                    luminosity_erg_s=luminosity[line_index],
-                )
-        # Column order matches the existing reduction: shared intrinsic lines,
-        # then shared attenuated lines. Evaluate each Gaussian only once.
-        luminosity_matrix = np.concatenate([
-            luminosity[shared_lines].T for luminosity in luminosity_by_dust.values()
-        ], axis=1)
-        channel_profiles = accumulate_velocity_spectra(
-            velocity_kms=velocity_kms,
-            thermal_width_kms=thermal_width,
-            luminosity_matrix=luminosity_matrix,
-            velocity_edges_kms=velocity_edges_kms,
-            cell_chunk=cell_chunk,
-            workers=workers,
-            spectral_method=spectral_method,
-        )
-        group_size = len(shared_lines)
-        for dust_index in range(2):
-            first_column = dust_index * group_size
-            last_column = first_column + group_size
-            profiles[dust_index, shared_lines] = channel_profiles[:, first_column:last_column].T
-    return profiles, moments
 
 
 def make_luminosity_summary(input_erg_s, captured_erg_s, outside_erg_s, outside_fraction):

@@ -16,7 +16,6 @@ import numpy as np
 from .accounting import add_cutoff_accounts, update_cutoff_report
 from .corner_store import RaggedCornerStore, check_corner_memory
 from .corner_scatter import prepare_corner_scatter
-from .spectra import HistogramIntegratedSpectra
 from .template_coverage import TemplateCoverageTotals, print_template_coverage
 from ..integrated_spectra import IntegratedSpectra
 from ..line_velocity_moments import MINIMUM_GAUSSIAN_WIDTH_KMS
@@ -53,22 +52,14 @@ class GaussianBatchGroup:
     sigmas: np.ndarray
     luminosity: np.ndarray
 
-class TemplateIntegratedSpectra(HistogramIntegratedSpectra):
+class TemplateIntegratedSpectra(IntegratedSpectra):
     """Keep original Gaussian rules while summing identical template corners."""
 
-    def __init__(self, line_keys, velocity_edges_kms, *, engine, batch_partial=False,
-                 workers=1, cell_chunk=8192, merge_threads=None):
-        if merge_threads is not None and (type(merge_threads) is not int or merge_threads != 1):
-            raise ValueError("Direct templates merge ordered batch profiles with one main thread")
-        if workers != 1:
-            raise ValueError("Direct templates use one NumPy query caller per batch")
+    def __init__(self, line_keys, velocity_edges_kms, *, engine, batch_partial=False):
         IntegratedSpectra.__init__(
             self,
             line_keys=line_keys,
             velocity_edges_kms=velocity_edges_kms,
-            workers=workers,
-            cell_chunk=cell_chunk,
-            spectral_method="direct-template",
         )
         if not np.array_equal(self.velocity_edges_kms, engine.lookup_tables.edges):
             raise ValueError("Spectral edges differ from the prepared integrated templates")
@@ -154,9 +145,17 @@ class TemplateIntegratedSpectra(HistogramIntegratedSpectra):
         finally:
             self.direct_statistics["spectral_add_batch_seconds"] += perf_counter() - began
 
-    def accumulate_group_histogram(
+    def _profile_ids(self, line_keys, branch_index):
+        """Map intrinsic-lines then attenuated-lines to (dust,line,branch)."""
+        return np.array([
+            (dust_index * len(self.line_keys) + self.line_keys.index(line_key)) * 2 + branch_index
+            for dust_index in range(2)
+            for line_key in line_keys
+        ], dtype=np.intp)
+
+    def queue_gaussian_group(
         self, *, line_keys, branch_index, velocity_kms, thermal_width_kms,
-        luminosity_matrix, velocity_edges_kms, cell_chunk, workers, spectral_method,
+        luminosity_matrix,
     ):
         """Implement the shared width-group hook by retaining original cells.
 
@@ -340,8 +339,6 @@ class TemplateIntegratedSpectra(HistogramIntegratedSpectra):
             raise ValueError("Cannot merge different template engines or line orders")
         if not other._queue_finished or other._queue_failed or other._groups:
             raise RuntimeError("Finish every Gaussian group before the ordered global merge")
-        if self.spectral_method != other.spectral_method:
-            raise ValueError("Cannot merge spectra calculated with different methods")
         if other._corner_increments:
             self._corner_failed = True
             raise RuntimeError("Scatter the complete raw wave before ordered product merge")

@@ -1,84 +1,46 @@
-# Shared selection. Relative YAML paths start at this file.
+# One snapshot only. Supply its absolute path here or with --dataset.
+# A containing run directory is rejected; sibling plt directories are never run.
+dataset: null
 jobname: reference_job
-dataset: ../inputs/snapshots/plt0655228
 results_dir: ../output
-# Results: ../output/reference_job/plt0655228/{processed,figures,figures_titled}/
+# Other relative paths are anchored to this YAML file.
+# Results: ../output/reference_job/pltNNNNNNN/{processed,figures,figures_titled}/
+# --jobname optionally selects a different output group for this invocation.
+# uv run python process_snapshot.py --dataset /absolute/path/plt0008703
+# uv run python plot_emission_results.py --dataset /absolute/path/plt0008703
+# Process saves numbers only. Plot independently reads those saved products.
 
-# jobname only names the output group; choose it manually for each simulation run.
-# Every CLI --dataset requires explicit --jobname, even if YAML has that group.
-# A missing pair is rejected before config/input access or output creation.
-# CLI dataset paths must be absolute; omitted dataset keeps the YAML path.
-# uv run process --field-source z-contiguous --dataset /absolute/path/plt0008703 --jobname my-run --x 64 128 --y 32 64
-# uv run plot --dataset /absolute/path/plt0008703 --jobname my-run --x 64 128 --y 32 64
-# Process also accepts /absolute/path/run1/ and plots each snapshot by default.
-# Use process --no-plot for numerical products only, then draw the chosen group:
-# uv run plot --all --jobname my-run
-# Repeat CLI jobname and x/y overrides later; they do not persist or edit YAML.
-# --jobname alone changes only the group; omitted jobname keeps the YAML group.
-# Bare plot --all uses the YAML group; automatic plots use process's chosen group.
-# Omitted x/y options keep their corresponding YAML range.
-
-# Optional native x-y region; null selects the full axis. z stays complete.
-# Regional process requires field_source: z-contiguous; plot/auxiliary tools
-# select their regions independently of the processing field source.
-# For example, x_index_range: [64, 128] selects x indices 64 through 127.
+# Native cell indices [start, stop); null selects the entire axis.
+# All selected columns retain their full z depth, regardless of grid dimensions.
+# uv run python process_snapshot.py --dataset /absolute/path/plt0008703 --x 64 66 --y 64 66
+# Use the same --x/--y selection with plot to select the matching saved region.
 x_index_range: null
 y_index_range: null
-# Explicit ranges automatically add a region subdirectory, for example
-# ../output/sigma13.v2/plt0655228/region_x64-128_yall/.
-# Process and plot select the same region directory from these settings.
 
-# Processing: cells per query batch, concurrent batches, threads per batch.
-# Read the original regular FAB columns into RAM; no z-field copy is written.
-# Requires full-box direct-template processing and complete-column batch alignment.
-# Select z-contiguous explicitly for regional/limited/reference-method process.
-field_source: native-columns
+# Bounded original-plt reads and NumPy calculation; no z-contiguous disk copy.
+# query_chunk is a maximum batch size; final batches may contain fewer cells.
 query_chunk: 262144
-# Sized for this bundled 256x256x2048 snapshot. Larger full-z tiles may need
-# fewer concurrent batches to pass the unchanged 20-GiB process memory plan.
 chunk_workers: 32
-spectral_workers: 1
-slab_nx: 8
-# Slab/cache settings apply to the explicit z-contiguous source and utilities.
-field_cache_slabs: 16
-field_cache_gib: 12
-# Locate four fractional-mean template corners on logarithmically spaced sigma nodes.
-# Interpolation weights use linear phase and sigma distances.
-# Accumulate their weighted luminosities, then convolve once after all batches.
-# The public selector retains its existing name, direct-template.
-spectral_method: direct-template
-# Null uses sigma=[1e-5,1024] km/s and delta_ln_sigma=1/32.
-# Nonflat phase transition spacing is at most 0.1; flat interior knots are omitted.
-# Phase transition spacing also satisfies delta_phase<=0.1*sigma/channel_width.
-# Valid widths outside coverage use direct +/-5sigma integration, without a
-# brightness threshold. Logs/report record counts, ranges and fallback light.
-# Optional keys: sigma_min, sigma_max, log_sigma_step, mu_spacing_ratio,
-# maximum_phase_step. The observation window stays [-200,200] with 400 channels.
-gaussian_grid: null
-# Optional absolute path of an existing validated raw z-field cache.
-# Keep null with native-columns. Only field_source: z-contiguous uses a cache:
-# null makes a scoped temporary conversion; a supplied cache is read-only.
-prepared_z_fields: null
-# Independent tasks within the single-snapshot reader and main accumulator.
 z_reader_threads: 32
 z_read_workers: 5
-# Null or 1 uses the ordered NumPy main merge. Independent batches use chunk_workers.
-histogram_merge_threads: null
-# The native-column source writes no copy. The explicit z source removes only
-# the temporary copy it creates, including after failure.
 
-# Plotting: PNG with titles by default; CLI flags override each selection.
+# Precompute stored Gaussian bin integrals, accumulate four corner luminosities,
+# then convolve completed luminosity arrays into 400 channels over [-200,200].
+# Sigma nodes are logarithmically spaced; weights use linear phase and sigma.
+# null uses sigma=[1e-5,1024] km/s, ln(sigma) spacing=1/32, maximum phase step=0.1.
+# Valid widths outside the table use direct +/-5sigma integration and are logged.
+# Optional keys: sigma_min, sigma_max, log_sigma_step, mu_spacing_ratio,
+# maximum_phase_step. These settings do not change the observation bins.
+gaussian_grid: null
+
+# Plot settings apply only to plot_emission_results.py.
 figure_formats: [png]
 figure_styles: [titled]
 image_downsample_factor: 1
-# To select factor 2, first prepare it without rereading the simulation:
-# uv run python -m quokka2s.prepare_emission_results --image-downsample-factor 2
+# To select factor 2, first prepare it from existing products:
+# uv run python -m quokka2s.prepare_emission_results --products /absolute/path/to/processed --image-downsample-factor 2
 
-# Explicit bundled inputs, relative to this YAML file.
-# DESPOTIC is the validated expanded 55 x 60 x 64 interpolated table.
-# The previous table is kept as interpolated_old.npz for reproducibility.
+# Bundled physical tables and dust opacity, relative to this YAML file.
 despotic_table: ../inputs/tables/despotic/interpolated.npz
-# Cloudy includes two extra low-density planes; NH and temperature are unchanged.
-# The original table and every original node are preserved in emission_old.npz.
 cloudy_table: ../inputs/tables/cloudy/emission.npz
 dust_opacity_table: ../vendor/draine/kext_albedo_WD_MW_3.1_60_D03.all

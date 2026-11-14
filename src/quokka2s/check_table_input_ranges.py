@@ -41,6 +41,8 @@ def print_range_report(*, report: dict) -> None:
 def main(argv=None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
+    parser.add_argument("--dataset", type=Path, help="Absolute path to one snapshot containing Header")
+    parser.add_argument("--jobname", help="Override the output group in the shared YAML")
     parser.add_argument("--output-dir", type=Path, help="Override the default selected-run/table_input_check directory")
     parser.add_argument(
         "--max-columns",
@@ -50,7 +52,11 @@ def main(argv=None) -> None:
     args = parser.parse_args(argv)
     if args.max_columns is not None and args.max_columns < 1:
         parser.error("--max-columns must be positive")
-    config = load_process_config(path=args.config)
+    config = load_process_config(
+        path=args.config,
+        dataset=args.dataset,
+        jobname=args.jobname,
+    )
     output_directory = config.output_dir.parent / "table_input_check"
     if args.output_dir is not None:
         output_directory = resolve_path(args.output_dir)

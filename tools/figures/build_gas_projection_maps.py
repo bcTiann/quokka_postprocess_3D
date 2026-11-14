@@ -118,7 +118,7 @@ def process_gas_projection_maps(snapshot, despotic_reader, settings):
     selected_slabs = list(slab_windows(
         x_start=0,
         x_stop=snapshot.shape[0],
-        slab_nx=settings.slab_nx,
+        slab_nx=8,
     ))
     began = time.monotonic()
     for number, (x_start, x_stop) in enumerate(selected_slabs, start=1):
@@ -230,6 +230,8 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument('--config', type=Path, default=ROOT / DEFAULT_CONFIG)
+    parser.add_argument('--dataset', type=Path, help='Absolute path to one snapshot containing Header')
+    parser.add_argument('--jobname', help='Override the output group in the shared YAML')
     parser.add_argument('--output-dir', type=Path, required=True)
     parser.add_argument('--figure-stem', type=Path)
     parser.add_argument('--plot-only', action='store_true', help='Render saved multiview_maps.npz only')
@@ -247,10 +249,12 @@ def main():
         from quokka2s.physics.settings import X_H
         from quokka2s.processing_inputs import load_processing_inputs
 
-        settings = load_process_config(args.config)
+        settings = load_process_config(
+            path=args.config,
+            dataset=args.dataset,
+            jobname=args.jobname,
+        )
         settings = replace(settings, output_dir=output_dir)
-        if settings.max_slabs is not None:
-            parser.error('Gas projections require the full snapshot; remove max_slabs from the config')
         snapshot, emission_calculator = load_processing_inputs(settings)
         accumulator, counts, masses = process_gas_projection_maps(
             snapshot=snapshot,

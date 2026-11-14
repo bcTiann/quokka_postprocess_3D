@@ -1,1 +1,1 @@
-"""Pure two-dimensional Gaussian luminosity accumulation and A templates."""
+"""Stored Gaussian templates, four-corner luminosity accumulation and convolution."""

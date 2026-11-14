@@ -38,18 +38,14 @@ def _check_process_memory(stage):
 
 
 def _validate_plan(config, snapshot, reader):
-    """Check every original query batch is covered once, in any tile order."""
+    """Check selected native cells are covered once, allowing shorter batches."""
     nx, ny, nz = snapshot.shape
-    if config.spectral_method != "direct-template" or config.max_slabs is not None:
-        raise ValueError("native-columns requires direct-template and max_slabs: null")
-    if config.prepared_z_fields is not None:
-        raise ValueError("native-columns cannot use prepared_z_fields")
-    if snapshot.xy_region != {"x": (0, nx), "y": (0, ny)}:
-        raise ValueError("native-columns currently requires the complete original box")
     if reader.native_shape != tuple(snapshot.shape):
         raise ValueError("Native column geometry differs from the original snapshot")
-    if config.query_chunk % nz or (ny * nz) % config.query_chunk:
-        raise ValueError("native-columns query_chunk must contain full z columns and divide Ny*Nz")
+    if not isinstance(config.query_chunk, (int, np.integer)) or config.query_chunk < 1:
+        raise ValueError("query_chunk must be a positive integer cell count")
+    selected_x_start, selected_x_stop = snapshot.xy_region["x"]
+    selected_y_start, selected_y_stop = snapshot.xy_region["y"]
     bounds = tuple(tuple(tile) for tile in reader.iter_tile_bounds())
     if not bounds:
         raise ValueError("Native column plan contains no tiles")
@@ -57,26 +53,27 @@ def _validate_plan(config, snapshot, reader):
         if len(tile) != 4 or any(not isinstance(value, (int, np.integer)) for value in tile):
             raise ValueError("Native XY tile bounds must contain four integer indices")
         x_start, x_stop, y_start, y_stop = tile
-        if not (0 <= x_start < x_stop <= nx and 0 <= y_start < y_stop <= ny):
-            raise ValueError("Native XY tile lies outside the complete snapshot")
-        if ((y_stop - y_start) * nz) % config.query_chunk:
-            raise ValueError("Native XY tile width cuts an original query_chunk boundary")
-        if (y_start * nz) % config.query_chunk:
-            raise ValueError("Native XY tile origin cuts an original query_chunk boundary")
+        if not (
+            selected_x_start <= x_start < x_stop <= selected_x_stop
+            and selected_y_start <= y_start < y_stop <= selected_y_stop
+        ):
+            raise ValueError("Native XY tile lies outside the selected region")
     bounds = tuple(sorted(bounds))
-    query_batch_first_cell_ids = set()
-    for x_start, x_stop, y_start, y_stop in bounds:
-        for x_index in range(x_start, x_stop):
-            for y_offset in range(y_start * nz, y_stop * nz, config.query_chunk):
-                first_cell = x_index * ny * nz + y_offset
-                if first_cell in query_batch_first_cell_ids:
-                    raise ValueError("Native column plan repeats an original query batch")
-                query_batch_first_cell_ids.add(first_cell)
-    expected_batches = snapshot.cell_count // config.query_chunk
-    # Bounds and alignment place each ID inside the finite valid batch set.
-    # Its expected size plus uniqueness therefore establish complete coverage.
-    if len(query_batch_first_cell_ids) != expected_batches:
-        raise ValueError("Native columns do not cover every original query batch exactly once")
+    selected_cells = 0
+    expected_batches = 0
+    for index, (x_start, x_stop, y_start, y_stop) in enumerate(bounds):
+        for other in bounds[:index]:
+            if (
+                max(x_start, other[0]) < min(x_stop, other[1])
+                and max(y_start, other[2]) < min(y_stop, other[3])
+            ):
+                raise ValueError("Native column tiles overlap within the selected region")
+        tile_cells = (x_stop - x_start) * (y_stop - y_start) * nz
+        selected_cells += tile_cells
+        expected_batches += (tile_cells + config.query_chunk - 1) // config.query_chunk
+    # Non-overlap and equal total volume establish exact selected-cell coverage.
+    if selected_cells != snapshot.processing_cell_count:
+        raise ValueError("Native columns do not cover every selected cell exactly once")
     return bounds, expected_batches
 
 
@@ -92,7 +89,8 @@ def _memory_plan(config, snapshot, bounds):
     maximum_faces = max(4 * ((x_stop - x_start) + (y_stop - y_start)) * nz * 8 for x_start, x_stop, y_start, y_stop in bounds)
     x_planes = {position % nx for x_start, x_stop, _, _ in bounds for position in (x_start - 1, x_stop)}
     y_planes = {position % ny for _, _, y_start, y_stop in bounds for position in (y_start - 1, y_stop)}
-    face_cache = 2 * nz * 8 * (len(x_planes) * ny + len(y_planes) * nx)
+    selected_nx, selected_ny, _ = snapshot.processing_shape
+    face_cache = 2 * nz * 8 * (len(x_planes) * selected_ny + len(y_planes) * selected_nx)
     largest_native_field = max(block.field_bytes for block in native.blocks)
     read_working = config.z_read_workers * largest_native_field
     derived_working = estimated_working_bytes(
@@ -100,7 +98,9 @@ def _memory_plan(config, snapshot, bounds):
         column_depth=nz,
         threads=config.z_reader_threads,
     )
-    worker_reserve = config.chunk_workers * config.query_chunk * (192 * 8 + 32)
+    largest_batch = min(config.query_chunk, maximum_cells)
+    active_workers = min(config.chunk_workers, (maximum_cells + config.query_chunk - 1) // config.query_chunk)
+    worker_reserve = active_workers * largest_batch * (192 * 8 + 32)
     baseline = _check_process_memory("native column preflight")
     raw_peak = 5 * maximum_cells * 8 + read_working
     derive_peak = 6 * maximum_cells * 8 + derived_working
@@ -166,7 +166,7 @@ def _process_one_tile(*, config, snapshot, reader, bounds, executor, emission_ca
     cell_count = slab.cell_count
     if products.counts["all"] - merged_before != cell_count:
         raise AssertionError("Native tile did not merge every original cell exactly once")
-    batch_count = cell_count // config.query_chunk
+    batch_count = (cell_count + config.query_chunk - 1) // config.query_chunk
     expected_waves = (batch_count + config.chunk_workers - 1) // config.chunk_workers
     if wave_count != expected_waves:
         raise AssertionError("Native tile memory guard did not run after every worker wave")
@@ -210,7 +210,7 @@ def process_native_columns(*, config, snapshot, reader, emission_calculator, pro
                 accumulate_batch=accumulate_batch,
             )
             records.append(record)
-            processed_fraction = products.counts["all"] / snapshot.cell_count
+            processed_fraction = products.counts["all"] / snapshot.processing_cell_count
             elapsed = monotonic() - began
             write_status(
                 output_dir=config.output_dir,
@@ -223,8 +223,8 @@ def process_native_columns(*, config, snapshot, reader, emission_calculator, pro
                 eta_seconds=round(elapsed * (1.0 - processed_fraction) / processed_fraction),
             )
     merged_batches = sum(record["merged_batches"] for record in records)
-    if products.counts["all"] != snapshot.cell_count or merged_batches != expected_batches:
-        raise AssertionError("Native column processing did not merge the complete snapshot")
+    if products.counts["all"] != snapshot.processing_cell_count or merged_batches != expected_batches:
+        raise AssertionError("Native column processing did not merge the selected snapshot cells")
     read_seconds = sum(record["read_seconds"] for record in records)
     derive_seconds = sum(record["derivation"]["fused_derivation_seconds"] for record in records)
     gradient_seconds = sum(record["derivation"]["gradient_seconds"] for record in records)

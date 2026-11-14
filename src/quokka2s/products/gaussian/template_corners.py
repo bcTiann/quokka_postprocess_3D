@@ -12,7 +12,7 @@ from .corner_scatter import CornerTerms, CornerIncrement
 
 
 def locate_corners(table, centers, sigmas):
-    """Locate covered rows already checked by TemplateEngine.integrate."""
+    """Locate covered rows already validated by worker group preparation."""
     coordinate = centers / table.delta_v
     integer = np.floor(coordinate)
     phases = coordinate - integer

@@ -112,7 +112,7 @@ class CornerPreparationEngine(TemplateEngine):
         self._increment = None
         self._metrics = None
         try:
-            result = super().integrate(
+            result = self._prepare_group_result(
                 centers=centers,
                 sigmas=sigmas,
                 luminosity=luminosity,
@@ -126,7 +126,7 @@ class CornerPreparationEngine(TemplateEngine):
             self._increment = None
             self._metrics = None
 
-    def _accumulate_probabilities(self, centers, sigmas, luminosity, outside):
+    def _prepare_contributions(self, centers, sigmas, luminosity, outside):
         """Prepare covered terms and directly integrate only outside-table widths."""
         if self._profile_ids is None:
             raise RuntimeError("Use prepare_group with explicit original profile IDs")
@@ -180,12 +180,10 @@ class CornerPreparationEngine(TemplateEngine):
         metrics["raw_term_preparation_seconds"] = perf_counter() - began
         probability_seconds = 0.0
         if np.any(outside):
-            direct, direct_counts, probability_seconds = TemplateEngine._accumulate_probabilities(
-                self,
+            direct, direct_counts, probability_seconds = self._integrate_outside_widths(
                 centers=centers[outside],
                 sigmas=sigmas[outside],
                 luminosity=luminosity[outside],
-                outside=np.ones(np.count_nonzero(outside), dtype=np.bool_),
             )
             output += direct
             for name in counts:
