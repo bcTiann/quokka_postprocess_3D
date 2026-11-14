@@ -1,9 +1,10 @@
-"""Integrate original-cell Gaussians using immutable preintegrated templates.
+"""Share Gaussian validation, original-cell accounts and prepared templates.
 
-NumPy locates four phase/log-sigma corners, reads their stored channel masses
-in bounded subbatches and reduces luminosity-weighted spectra. Valid
-outside widths use stable direct bin integrals with the same five-sigma cutoff.
-Each call owns its output; concurrent workers share only the immutable table.
+The default corner-preparation engine overrides the accumulation hook: it
+prepares covered-cell contributions for the snapshot luminosity store and
+integrates only valid outside-table widths directly. This base engine also
+retains standalone original-cell table integration as a reference. Both routes
+use the same coordinates, five-sigma rules and independent analytic accounts.
 """
 from __future__ import annotations
 
@@ -20,7 +21,12 @@ from .template_table import FractionalGaussianTable
 
 @dataclass(frozen=True)
 class TemplateGroupResult:
-    """Channel densities[K,P], original-cell window totals[P] and query timing."""
+    """Route profiles[K,P], original-cell window totals[P] and activity timing.
+
+    Profiles use erg/s/(km/s), and window totals use erg/s. The standalone base
+    engine returns complete profiles; corner preparation returns outside-width
+    profiles only, with covered contributions carried by its separate increment.
+    """
 
     profiles: np.ndarray
     full_window: np.ndarray
@@ -31,11 +37,13 @@ class TemplateGroupResult:
 
 
 class TemplateEngine:
-    """Read four templates for each original cell, without accumulating nodes.
+    """Validate Gaussian groups, dispatch accumulation and calculate accounts.
 
-    Gaussian means and widths use km/s. Luminosities have shape[N,P] in erg/s;
-    P is the existing width group's one to twelve luminosity accounts. Results
-    have shape[K,P] in erg/s/(km/s), with K at most 400 velocity channels.
+    N is the current width group's original-cell count. Means[N] and widths[N]
+    use km/s; luminosity[N,P] uses erg/s, with one to twelve local accounts P.
+    Output profiles[K,P] use erg/s/(km/s), with at most 400 velocity channels K.
+    The default CornerPreparationEngine overrides _accumulate_probabilities;
+    the base implementation directly queries cells for reference comparisons.
     """
 
     coordinate_rule = "original-cell"
@@ -63,8 +71,12 @@ class TemplateEngine:
         if probe.tobytes() != np.ones(probe.shape, dtype=np.float64).tobytes():
             raise RuntimeError("Original-cell interval reference does not saturate at +/-12")
 
-    def prepare_corner_store(self, profile_count=40):
-        """Share immutable corner/shift indexing; allocate no snapshot luminosity."""
+    def prepare_corner_layout(self, profile_count=40):
+        """Share immutable template-row/shift indexing without allocating H.
+
+        Each row's K+B-1 valid integer shifts map into a flat slot range.
+        The main RaggedCornerStore later owns H[global profile, flat slot].
+        """
         if type(profile_count) is not int or profile_count < 1:
             raise ValueError("Corner-store profile_count must be a positive integer")
         if profile_count not in self._corner_specs:
@@ -72,20 +84,20 @@ class TemplateEngine:
                 if profile_count not in self._corner_specs:
                     from .corner_store import RaggedCornerSpec
                     self._corner_specs[profile_count] = RaggedCornerSpec(
-                        self.lookup_tables,
+                        table=self.lookup_tables,
                         profile_count=profile_count,
                     )
         return self._corner_specs[profile_count]
 
-    def corner_deposit_engine(self, profile_count=40):
-        """Reuse call-local deposit engines per worker and profile layout."""
+    def corner_preparation_engine(self, profile_count=40):
+        """Reuse one mutable preparation engine per worker and account layout."""
         if not hasattr(self._corner_worker_context, "engines"):
             self._corner_worker_context.engines = {}
         engines = self._corner_worker_context.engines
         if profile_count not in engines:
-            from .corner_store import CornerDepositEngine
-            engines[profile_count] = CornerDepositEngine(
-                spec=self.prepare_corner_store(profile_count=profile_count),
+            from .corner_store import CornerPreparationEngine
+            engines[profile_count] = CornerPreparationEngine(
+                spec=self.prepare_corner_layout(profile_count=profile_count),
             )
         return engines[profile_count]
 
@@ -221,12 +233,13 @@ class TemplateEngine:
         return full, clipped
 
     def integrate(self, centers, sigmas, luminosity):
-        """Query original cells, multiply luminosities and accumulate profiles.
+        """Validate one group, run its accumulation route and keep cell accounts.
 
-        query_interval_ns covers validation, coordinate location, template reads,
-        interpolation, multiplication, reduction and channel-density conversion.
-        Independent analytic original-cell window accounts are evaluated after
-        that interval; both timings are retained separately.
+        The default preparation route returns raw covered-corner terms through
+        prepare_group(), plus directly integrated outside-width profiles here.
+        The standalone base route instead returns complete queried profiles.
+        query_interval_ns covers validation and the selected accumulation hook;
+        independent original-cell endpoint accounts are timed separately after it.
         """
         query_started_ns = perf_counter_ns()
         owned_account_inputs = all(
@@ -340,5 +353,5 @@ def prepare_template_engine(grid_parameters=None):
     parameters = {} if grid_parameters is None else dict(grid_parameters)
     table = FractionalGaussianTable(**parameters)
     engine = TemplateEngine(table=table)
-    engine.prepare_corner_store()
+    engine.prepare_corner_layout()
     return engine, perf_counter() - began

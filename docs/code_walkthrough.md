@@ -1,5 +1,52 @@
 # Reading `process` → saved data → `plot`
 
+Start with one full snapshot and the shipped defaults. The public selector
+`direct-template` means stored Gaussian templates; the current implementation
+first accumulates cell luminosities at their four template corners and only
+later forms channel spectra. It does not expand every covered cell into 400
+probabilities. The core sequence is:
+
+```text
+main: arguments + YAML -> one ProcessSettings per snapshot
+  run_one_snapshot: prepare Gaussian templates, input metadata and physical tables
+    process_native_columns: read one full-z XY tile into RAM
+      derive_native_column_tile: raw fields -> six physical cell arrays
+      process_template_batches: repeat bounded physical / Gaussian worker waves
+        accumulate_batch: emission + images + Gaussian inputs + gas phases
+        prepare_corner_increments: Gaussian inputs -> four-corner contributions
+        scatter_corner_wave: weighted luminosities -> shared node arrays
+        merge: small batch products -> snapshot totals, in input order
+    build_outputs: convolve completed node arrays -> spectra; prepare all products
+    check_outputs -> write_emission_results
+  plot_one_snapshot: saved numerical arrays -> figures
+```
+
+Read one function's inputs and returned objects before following its helpers.
+`config` contains paths and settings, `snapshot` contains grid/units/reader
+metadata, and `emission_calculator` contains the loaded physical lookup tables.
+None of those names means a whole snapshot's cell arrays. `EmissionProducts`
+owns accumulated results. Raw/derived tile arrays belong to the tile driver;
+worker inputs and four-corner contributions survive only their bounded wave.
+
+The Gaussian names describe these separate actions:
+
+- `prepare_corner_layout()` prepares immutable destination indexing, not brightness.
+- `CornerPreparationEngine.prepare_group()` validates one original Gaussian
+  group and prepares contributions plus independent analytic window accounts.
+- `scatter_corner_wave()` adds the prepared contributions to node luminosities.
+- `finalize_corner_spectra()` convolves the completed node arrays into channels.
+- `TemplateEngine.integrate()` performs shared validation and original-cell
+  window accounting. The default accumulator overrides its
+  `_accumulate_probabilities()` hook to prepare corners; the base hook retains
+  direct per-cell template queries for reference calculations. Valid widths
+  outside the template range use stable direct integration in either path.
+
+For array notation below, `N` counts selected Gaussian rows, `P` the one-to-twelve
+luminosity columns sharing their width, and `K=400` the observed channels.
+`CornerTerms.source_cells` indexes those local `N` rows, while
+`CornerTerms.destination_slots` indexes the snapshot node array. Neither is a
+global simulation-cell ID. Velocity means/widths use km/s; luminosity uses erg/s.
+
 Start at `main()` near the bottom of [process_snapshot.py](../src/quokka2s/process_snapshot.py).
 Read what each call receives and returns before opening the function itself.
 Process calculates, saves and then plots each selected snapshot by default.
@@ -151,13 +198,13 @@ The package has five purpose-specific folders:
 | Reuse completed results | `process_reuse.reuse_completed_results()` | Complete, intact products with exact matching configuration and input/source identity, or a clear preserved-output error |
 | Prepare Gaussian tables | `products.gaussian.template_engine.prepare_template_engine()` | Integrated fractional-mean/log-sigma templates and prepared-state validation; before process |
 | Open inputs | `processing_inputs.load_processing_inputs(config)` | Fresh/restored `snapshot` metadata and `emission_calculator`, inside process time |
-| Create output arrays | `EmissionProducts(...)` | Initially empty image, spectrum, and gas-phase accumulators |
+| Create output arrays | `EmissionProducts(gaussian_engine=...)` | Initially empty image, node-luminosity, and gas-phase accumulators |
 | Prepare field source | `processing_inputs.prepare_processing_snapshot()` | Original-file native-column reader by default; an explicit z source owns or validates its cache |
 | Process cells | `process_snapshot()` | The accumulated numerical results |
 | Build outputs | `products.build_outputs()` | Image, spectrum and gas-phase arrays and summaries |
 | Add interpretation | `ResultMetadata.from_processing_inputs()` then `outputs.add_metadata()` | Selected pixel coordinates, region and ordered dust metadata |
 | Check outputs | `products.check_outputs(outputs)` | Conservation/accounting checks; image-conservation diagnostics |
-| Build report | `processing_report.build_processing_report()` | Readable settings, counts, luminosities and check results |
+| Build report | `build_processing_report()` and `build_field_preprocessing_report()` | Settings, counts, luminosities, checks and the selected reader's report |
 | Save | `result_files.write_emission_results()` then `write_status()` | Three NPZ files, the JSON report, then completion status |
 | Draw | `plot_emission_results.plot_one_snapshot()` unless `--no-plot` | Figures read from the saved numerical products |
 

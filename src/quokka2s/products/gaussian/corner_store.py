@@ -67,13 +67,14 @@ class RaggedCornerSpec:
         object.__setattr__(self, "account_bytes", int(offsets[-1]) * self.profile_count * 8)
 
 
-class CornerDepositEngine(TemplateEngine):
+class CornerPreparationEngine(TemplateEngine):
     """Worker-local original-cell checks/accounts/fallback and raw corner terms.
 
-    Each call returns (TemplateGroupResult, CornerIncrement). The result holds
-    fallback-only profiles and unchanged analytic original-cell accounts. Raw
-    increments borrow read-only luminosity only until this wave's profile
-    writers have joined. This mutable engine belongs to one worker thread.
+    prepare_group() returns (TemplateGroupResult, CornerIncrement). It does not
+    write H or convolve templates. The result holds outside-width profiles and
+    unchanged analytic original-cell accounts. The increment owns term indices
+    and weights, and borrows read-only luminosity[N,P] until all wave writers
+    join. This mutable engine belongs to one worker thread.
     """
 
     def __init__(self, *, spec):
@@ -84,10 +85,17 @@ class CornerDepositEngine(TemplateEngine):
         self._increment = None
         self._metrics = None
 
-    def deposit(self, centers, sigmas, luminosity, profile_ids):
+    def prepare_group(
+        self,
+        centers,
+        sigmas,
+        luminosity,
+        profile_ids,
+    ):
+        """Prepare one original-cell group's terms, fallback and endpoint accounts."""
         check_corner_memory("corner deposit")
         if self._profile_ids is not None:
-            raise RuntimeError("CornerDepositEngine calls must not overlap")
+            raise RuntimeError("CornerPreparationEngine calls must not overlap")
         profile_ids = np.asarray(profile_ids)
         if profile_ids.ndim != 1 or profile_ids.dtype.kind not in "iu":
             raise ValueError("Profile IDs must be an integer vector")
@@ -104,7 +112,11 @@ class CornerDepositEngine(TemplateEngine):
         self._increment = None
         self._metrics = None
         try:
-            result = super().integrate(centers, sigmas, luminosity)
+            result = super().integrate(
+                centers=centers,
+                sigmas=sigmas,
+                luminosity=luminosity,
+            )
             check_corner_memory("finished corner deposit")
             metrics = dict(self._metrics)
             result = replace(result, statistics={**result.statistics, **metrics})
@@ -115,8 +127,9 @@ class CornerDepositEngine(TemplateEngine):
             self._metrics = None
 
     def _accumulate_probabilities(self, centers, sigmas, luminosity, outside):
+        """Prepare covered terms and directly integrate only outside-table widths."""
         if self._profile_ids is None:
-            raise RuntimeError("Use deposit with explicit original profile IDs")
+            raise RuntimeError("Use prepare_group with explicit original profile IDs")
         table = self.lookup_tables
         began = perf_counter()
         active = np.any(luminosity > 0.0, axis=1)
@@ -236,7 +249,7 @@ class RaggedCornerStore:
         self.scatter_waves += 1
         self.raw_corner_terms += metrics["raw_corner_terms"]
         self.weighted_profile_updates += sum(
-            increment.terms.rows.size * increment.profiles.size
+            increment.terms.destination_slots.size * increment.profiles.size
             for increment in increments
         )
         return metrics

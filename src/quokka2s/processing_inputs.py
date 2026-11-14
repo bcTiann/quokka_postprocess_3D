@@ -28,8 +28,11 @@ def load_processing_inputs(config):
     """Open configured inputs, then create the new output directory.
 
     config contains the snapshot, table, dust-opacity, and output Paths from
-    load_process_config(). Return Snapshot and the shared CellEmissionCalculator;
-    cell arrays are loaded later by read_slab()."""
+    load_process_config(). Return Snapshot and the shared CellEmissionCalculator.
+    This step reads metadata and emission tables, not snapshot cell fields.
+    Native columns later load full-z tiles; the explicit z-contiguous source
+    later loads its slabs through read_slab().
+    """
     print('Inputs: checking snapshot and table paths...', flush=True)
     check_input_paths(config)
     region = {"x": config.x_index_range, "y": config.y_index_range}

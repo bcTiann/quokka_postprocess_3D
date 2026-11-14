@@ -111,7 +111,7 @@ installed implementations and CPU dispatch. Plot reads only prepared arrays.
    stable NumPy two-pass full moments reuse their final luminosity rows.
    It retains original-cell mu/sigma/luminosity arrays only for one bounded
    worker wave. [template_batches.py](../src/quokka2s/products/gaussian/template_batches.py)
-   finishes physical preparation and Gaussian queries in bounded waves. The
+   finishes physical preparation, corner preparation and node accumulation in bounded waves. The
    native driver immediately merges each finished wave; no partials wait
    across tiles. [template_table.py](../src/quokka2s/products/gaussian/template_table.py)
    prepares fractional-mean/log-sigma integrated-bin templates outside process
@@ -157,7 +157,7 @@ current scientific rules.
 | `despotic/` | `solver_settings.py`: adopted solver defaults/source identities; `table_data.py`: table records/field names; `snapshot_domain.py`: physical settings/bounds checks and recorded build-snapshot metadata |
 | `despotic/` | `table_files.py`: NPZ serialization; `cell_solver.py`: equilibrium at one state; `fixed_temperature_chemistry.py`: fixed-temperature GOW callable; `abundance_workspace.py`, `two_body_rates.py`, `reaction_terms.py`: its composition and reaction helpers; `table_builder.py`: grid calculation |
 | `despotic/` | `runtime_table.py`: seven-field process loader; `lookup.py` and `cell_fields.py`: queries; `build_table.py`, `extend_table.py`, `interpolate_failed.py`, `list_failures.py`: table commands; `table_extension.py`: exact axis extension and raw-source validation; `prepare_table_plots.py`/`table_figure_data.py`: numerical figure preparation; `plot_table.py`/`table_plots.py`: draw saved panels |
-| `products/gaussian/` | Default original-cell template table/query engine and bounded batch waves; retained sparse/bounded node references and their accounting |
+| `products/gaussian/` | Default template-corner preparation, node-luminosity accumulation and final convolution; retained direct/sparse/bounded references and their accounting |
 | `products/` | Image, spectrum, gas-phase and auxiliary numerical accumulation; `profile_preparation.py` prepares saved normalized/per-area curves; auxiliary preparation modules save masks, logarithmic panels, limits and radiation/dust samples |
 | `figures/` | `line_luminosity_images.py`, `line_spectra.py`, `gas_phase_spectra.py`, `all_line_spectra.py`: saved-product renderers; `line_labels.py`: titles; `figure_files.py`: PNG/PDF paths and saving; other modules: additional figures |
 

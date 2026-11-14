@@ -73,17 +73,21 @@ def _require_vector(name, values, dtype, *, writable=False):
 class CornerTerms:
     """Validated immutable term vectors, safe for repeated disjoint profiles.
 
-    rows/cells have E signed int32 or int64 entries of the same dtype;
-    weights[E] is native float64. Each term adds weights[e] * X[cells[e]] to
-    Y[rows[e]]. Existing Y is preserved. Explicit zeros are not removed.
+    E is the number of retained original-corner terms. destination_slots[E]
+    and source_cells[E] use matching signed int32/int64 buffers; weights[E]
+    uses native float64. A destination is a flat (template row, integer shift)
+    slot in one H profile plane, not a template row number. A source is a local
+    row in the selected luminosity[N,P], not a global snapshot cell ID.
+    Each term adds weights[e] * X[source_cells[e]] to Y[destination_slots[e]].
+    Existing Y is preserved, and explicit zeros are not removed.
     This is trusted wave-local ownership: owners must never reopen or mutate
     term buffers after construction, even between calls. Cheap metadata checks
     reject reopened/nonmatching buffers; they do not repeat bounds scans after
     arbitrary hostile mutation. Concurrent calls must have disjoint outputs.
     """
 
-    rows: np.ndarray
-    cells: np.ndarray
+    destination_slots: np.ndarray
+    source_cells: np.ndarray
     weights: np.ndarray
     input_length: int
     output_length: int
@@ -97,41 +101,63 @@ class CornerTerms:
         if type(self.output_length) is not int or self.output_length < 0:
             raise ValueError("COO output length must be a nonnegative integer")
         if (
-            not isinstance(self.rows, np.ndarray)
-            or self.rows.dtype not in (np.dtype("int32"), np.dtype("int64"))
+            not isinstance(self.destination_slots, np.ndarray)
+            or self.destination_slots.dtype not in (np.dtype("int32"), np.dtype("int64"))
         ):
             raise ValueError("COO row indices require signed int32 or int64")
-        _require_vector("rows", self.rows, self.rows.dtype)
-        _require_vector("cells", self.cells, self.rows.dtype)
+        _require_vector(
+            name="destination_slots",
+            values=self.destination_slots,
+            dtype=self.destination_slots.dtype,
+        )
+        _require_vector(
+            name="source_cells",
+            values=self.source_cells,
+            dtype=self.destination_slots.dtype,
+        )
         _require_vector("weights", self.weights, np.dtype("float64"))
         if any(
             not values.flags.owndata
-            for values in (self.rows, self.cells, self.weights)
+            for values in (self.destination_slots, self.source_cells, self.weights)
         ):
             raise ValueError("COO terms require independent owned buffers")
-        if self.rows.size != self.cells.size or self.rows.size != self.weights.size:
+        if (
+            self.destination_slots.size != self.source_cells.size
+            or self.destination_slots.size != self.weights.size
+        ):
             raise ValueError("COO term arrays must have equal lengths")
-        if self.rows.size > np.iinfo(np.int64).max:
+        if self.destination_slots.size > np.iinfo(np.int64).max:
             raise ValueError("COO term count exceeds the kernel's signed int64")
-        if self.rows.size:
-            if self.rows.min() < 0 or self.rows.max() >= self.output_length:
+        if self.destination_slots.size:
+            if (
+                self.destination_slots.min() < 0
+                or self.destination_slots.max() >= self.output_length
+            ):
                 raise ValueError("COO row index is outside the output")
-            if self.cells.min() < 0 or self.cells.max() >= self.input_length:
+            if self.source_cells.min() < 0 or self.source_cells.max() >= self.input_length:
                 raise ValueError("COO cell index is outside the input")
-        object.__setattr__(self, "_term_count", int(self.rows.size))
-        object.__setattr__(self, "_index_dtype", self.rows.dtype)
-        for values in (self.rows, self.cells, self.weights):
+        object.__setattr__(self, "_term_count", int(self.destination_slots.size))
+        object.__setattr__(self, "_index_dtype", self.destination_slots.dtype)
+        for values in (self.destination_slots, self.source_cells, self.weights):
             values.flags.writeable = False
 
     def accumulate(self, values, output):
         """Add one contiguous profile into existing writable output in place."""
-        _require_vector("rows", self.rows, self._index_dtype)
-        _require_vector("cells", self.cells, self._index_dtype)
+        _require_vector(
+            name="destination_slots",
+            values=self.destination_slots,
+            dtype=self._index_dtype,
+        )
+        _require_vector(
+            name="source_cells",
+            values=self.source_cells,
+            dtype=self._index_dtype,
+        )
         _require_vector("weights", self.weights, np.dtype("float64"))
         if any(
             values.flags.writeable or not values.flags.owndata
             or values.size != self._term_count
-            for values in (self.rows, self.cells, self.weights)
+            for values in (self.destination_slots, self.source_cells, self.weights)
         ):
             raise ValueError("Trusted COO term buffers must remain owned, read-only and unchanged")
         _require_vector("values", values, np.dtype("float64"))
@@ -140,13 +166,13 @@ class CornerTerms:
             raise ValueError("COO input/output lengths differ from validated bounds")
         if any(
             np.may_share_memory(output, source)
-            for source in (values, self.rows, self.cells, self.weights)
+            for source in (values, self.destination_slots, self.source_cells, self.weights)
         ):
             raise ValueError("COO output cannot overlap a kernel input")
         _COO_MATVEC(
-            int(self.rows.size),
-            self.rows,
-            self.cells,
+            int(self.destination_slots.size),
+            self.destination_slots,
+            self.source_cells,
             self.weights,
             values,
             output,
@@ -157,6 +183,8 @@ class CornerTerms:
 class CornerIncrement:
     """One spec-tagged checked operator and read-only borrowed L[N,P] for a wave.
 
+    profiles[P] maps local luminosity columns to global spectrum accounts.
+    Terms own their index/weight arrays; luminosity[N,P] is a borrowed view.
     Neither the view nor its source owner may be mutated until all profile
     writers have joined. The source is newly packed product data, never H.
     """
@@ -203,7 +231,7 @@ def scatter_corner_profiles(store, increments, executor):
         if any(
             np.may_share_memory(buffer, light)
             for buffer in (
-                increment.terms.rows, increment.terms.cells,
+                increment.terms.destination_slots, increment.terms.source_cells,
                 increment.terms.weights,
             )
         ):
@@ -229,7 +257,7 @@ def scatter_corner_profiles(store, increments, executor):
         ):
             raise ValueError("Raw touched-row metadata differs from this table")
         store.touched_rows |= increment.touched_rows
-        if not increment.terms.rows.size:
+        if not increment.terms.destination_slots.size:
             continue
         for local, profile in enumerate(increment.profiles):
             plan[int(profile)].append((increment, local))
@@ -276,5 +304,5 @@ def scatter_corner_profiles(store, increments, executor):
         "profile_tasks": len(active_profiles),
         "contiguous_X_logical_bytes": sum(row[0] for row in results),
         "kernel_calls": sum(row[1] for row in results),
-        "raw_corner_terms": sum(increment.terms.rows.size for increment in increments),
+        "raw_corner_terms": sum(increment.terms.destination_slots.size for increment in increments),
     }

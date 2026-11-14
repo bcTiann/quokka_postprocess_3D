@@ -2,7 +2,7 @@
 jobname: reference_job
 dataset: ../inputs/snapshots/plt0655228
 results_dir: ../output
-# Results: ../output/sigma13.v2/plt0655228/{processed,figures,figures_titled}/
+# Results: ../output/reference_job/plt0655228/{processed,figures,figures_titled}/
 
 # jobname only names the output group; choose it manually for each simulation run.
 # Every CLI --dataset requires explicit --jobname, even if YAML has that group.
@@ -42,7 +42,9 @@ slab_nx: 8
 # Slab/cache settings apply to the explicit z-contiguous source and utilities.
 field_cache_slabs: 16
 field_cache_gib: 12
-# Original-cell queries of preintegrated fractional-mean/log-sigma templates.
+# Locate four fractional-mean/log-sigma template corners for each cell.
+# Accumulate their weighted luminosities, then convolve once after all batches.
+# The public selector retains its existing name, direct-template.
 spectral_method: direct-template
 # Null uses sigma=[1e-5,1024] km/s and delta_ln_sigma=1/32.
 # Nonflat phase transition spacing is at most 0.1; flat interior knots are omitted.

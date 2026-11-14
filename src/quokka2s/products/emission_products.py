@@ -80,9 +80,17 @@ class EmissionOutputs:
 class EmissionProducts:
     """Keep product sums and bounded worker Gaussian inputs until wave completion."""
 
-    def __init__(self, snapshot, line_keys, spectral_workers, *,
-                 spectral_method="direct-template", histogram_engine=None,
-                 histogram_partial=False, histogram_merge_threads=None):
+    def __init__(
+        self,
+        snapshot,
+        line_keys,
+        spectral_workers,
+        *,
+        spectral_method="direct-template",
+        gaussian_engine=None,
+        histogram_partial=False,
+        histogram_merge_threads=None,
+    ):
         """Create image, spectrum and gas-phase accumulators for one run.
 
         Parameters
@@ -95,21 +103,24 @@ class EmissionProducts:
         spectral_workers : int
             Thread count for Gaussian channel integration within each batch.
         spectral_method : {"direct-template", "histogram-layered", "histogram-2d", "exact", "linear-lut"}, optional
-            Original cells directly query preintegrated Gaussian templates by default.
-            Retained node and exact methods are explicit comparisons, not fallbacks.
-        histogram_engine : GaussianHistogramEngine, optional
-            The prepared coordinate rule and shared standard-Gaussian prefix
-            table. Required for both node methods.
+            The default accumulates cell luminosity at four stored-template
+            corners and convolves the completed node arrays into channel spectra.
+            Other methods are explicit comparisons, not automatic fallbacks.
+        gaussian_engine : object, optional
+            Shared immutable template/coordinate preparation for the selected
+            Gaussian method. Required for direct-template and both node references.
         histogram_partial : bool, optional
             True for worker-owned increments. Direct-template workers retain one
-            bounded batch of original Gaussians until its query wave finishes.
+            bounded batch of original Gaussians until corner preparation; its
+            luminosities survive until that wave's node writers finish.
 
         Notes
         -----
         Spectra and phase histograms use 400 channels over [-200, 200] km/s.
         Cell luminosity totals have shape (L, 2), ordered cold then hot.
-        The main accumulator retains only sums and statistics. Direct-template
-        worker partials also own bounded Gaussian vectors until their query wave.
+        The main default spectrum accumulator owns node luminosity arrays plus
+        small sums and statistics. Worker partials own bounded inputs/contributions
+        only for the current physical-preparation and Gaussian-accumulation wave.
 
         Examples
         --------
@@ -117,7 +128,7 @@ class EmissionProducts:
             snapshot=snapshot,
             line_keys=emission_calculator.line_keys,
             spectral_workers=1,
-            histogram_engine=prepared_engine,
+            gaussian_engine=prepared_engine,
         )
         """
         self.line_keys = tuple(line_keys)
@@ -144,12 +155,12 @@ class EmissionProducts:
                 from .gaussian.layered_spectra import LayeredIntegratedSpectra as histogram_class
             else:
                 from .gaussian.spectra import HistogramIntegratedSpectra as histogram_class
-            if histogram_engine is None:
+            if gaussian_engine is None:
                 raise ValueError("Prepare the shared Gaussian engine before constructing spectra")
             self.spectra = histogram_class(
                 line_keys=self.line_keys,
                 velocity_edges_kms=velocity_edges_kms,
-                engine=histogram_engine,
+                engine=gaussian_engine,
                 batch_partial=histogram_partial,
                 merge_threads=histogram_merge_threads,
                 workers=spectral_workers,

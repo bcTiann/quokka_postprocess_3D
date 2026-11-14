@@ -114,13 +114,15 @@ directories are reported without being overwritten. Legacy results remain
 drawable with plot. Choose a fresh results root for a separate calculation;
 see the [reuse rules](usage.md#completed-result-reuse).
 
-The default is `direct-template`: each original cell directly interpolates four
-preintegrated fractional-mean/log-sigma templates, then multiplies and accumulates
-its luminosities. Integer-bin shifts reuse fractional-mean templates. Bounded
-NumPy float64 probability blocks are reduced without a luminosity-node histogram.
-Up to 16 physical batches prepare emission/products first; the same workers query
-those original Gaussians next, and one main thread merges in original order.
-Each batch owns inputs only until that bounded wave finishes.
+The default `direct-template` implementation locates four preintegrated
+fractional-mean/log-sigma template corners for each original Gaussian. Bounded
+physical batches prepare emission/products first; the same pool then prepares
+unsorted corner contributions and adds weighted luminosities to disjoint node
+profile planes. All writers finish before the wave releases its luminosities.
+Small products merge in original batch order. After all cells, NumPy convolution
+forms the final 400-channel profiles from the accumulated node arrays.
+The shipped local setting is 32 concurrent batches; the large Setonix validation
+used 16 batches of 131072 cells to fit the same process memory budget.
 
 Default template sigma coverage is [1e-5,1024] km/s, with natural-log spacing 1/32.
 Large simulations can exceed 1024 km/s; those valid widths are integrated directly.

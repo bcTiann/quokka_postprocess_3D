@@ -377,8 +377,11 @@ multi-slab groups. Plot needs only saved products, never this cache.
 
 ### Spectral integration
 
-The default `direct-template` method directly queries each original cell's
-preintegrated Gaussian templates. It saves 400 bins from -200 to +200 km/s.
+The public name `direct-template` selects preintegrated Gaussian templates.
+The default implementation locates each cell's four template corners, accumulates
+their weighted luminosities, and convolves the completed node arrays into the
+400 bins from -200 to +200 km/s. It does not expand each covered cell into a
+cell-by-channel probability array.
 The same cells, temperatures, thermal widths, luminosities, per-line masks and
 complete Gaussian moments are used by all products. Default settings are:
 

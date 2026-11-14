@@ -64,23 +64,23 @@ def _validate_plan(config, snapshot, reader):
         if (y_start * nz) % config.query_chunk:
             raise ValueError("Native XY tile origin cuts an original query_chunk boundary")
     bounds = tuple(sorted(bounds))
-    batches = set()
+    query_batch_first_cell_ids = set()
     for x_start, x_stop, y_start, y_stop in bounds:
         for x_index in range(x_start, x_stop):
             for y_offset in range(y_start * nz, y_stop * nz, config.query_chunk):
                 first_cell = x_index * ny * nz + y_offset
-                if first_cell in batches:
+                if first_cell in query_batch_first_cell_ids:
                     raise ValueError("Native column plan repeats an original query batch")
-                batches.add(first_cell)
+                query_batch_first_cell_ids.add(first_cell)
     expected_batches = snapshot.cell_count // config.query_chunk
     # Bounds and alignment place each ID inside the finite valid batch set.
     # Its expected size plus uniqueness therefore establish complete coverage.
-    if len(batches) != expected_batches:
+    if len(query_batch_first_cell_ids) != expected_batches:
         raise ValueError("Native columns do not cover every original query batch exactly once")
     return bounds, expected_batches
 
 
-def _memory_plan(config, snapshot, reader, bounds):
+def _memory_plan(config, snapshot, bounds):
     """Reserve arrays, worker space and headroom; this is not measured RSS.
 
     Finished partials survive only within the existing bounded worker wave.
@@ -188,7 +188,11 @@ def _process_one_tile(*, config, snapshot, reader, bounds, executor, emission_ca
 def process_native_columns(*, config, snapshot, reader, emission_calculator, products, accumulate_batch, began, status_began=None):
     """Read one native tile at a time; immediately merge its finished batches."""
     bounds, expected_batches = _validate_plan(config, snapshot, reader)
-    memory = _memory_plan(config, snapshot, reader, bounds)
+    memory = _memory_plan(
+        config=config,
+        snapshot=snapshot,
+        bounds=bounds,
+    )
     if products.counts["all"] != 0:
         raise ValueError("Native column processing requires fresh product accumulators")
     records = []

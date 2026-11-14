@@ -1,4 +1,4 @@
-"""Process bounded physical batches before their original-cell template queries."""
+"""Prepare physical batches, accumulate original corners, then merge products."""
 from __future__ import annotations
 
 from itertools import islice
@@ -12,8 +12,10 @@ def process_template_batches(
     """Keep at most chunk_workers Gaussian input queues within the current slab.
 
     The ordinary accumulate_batch function computes the same physical products,
-    available-line grouping and complete moments. Each worker then queries its
-    owned Gaussians. Results merge in the current slab's batch order. Native
+    available-line grouping and complete moments. Workers then prepare their
+    original-corner increments, endpoint accounts and outside-width profiles.
+    The wave accumulates into disjoint H profile planes before small products
+    merge in the current slab's batch order. Native
     tiles are visited in their deterministic XY order; sums across tiles may
     therefore differ in floating-point rounding from a full-grid batch walk.
     A one-worker configuration follows this same path. after_wave optionally
@@ -41,7 +43,7 @@ def process_template_batches(
                 progress.start_batch(batch_number)
                 stage_progress = lambda stage: progress.set_stage(batch_number, stage)
             partial = EmissionProducts(
-                histogram_engine=products.spectra.engine,
+                gaussian_engine=products.spectra.engine,
                 histogram_partial=True,
                 histogram_merge_threads=config.histogram_merge_threads,
                 snapshot=snapshot,
@@ -63,10 +65,10 @@ def process_template_batches(
                 progress.set_stage(batch_number, "prepared original-cell Gaussians")
             return partial
 
-        def finish_one(batch_number, partial):
+        def prepare_corners_one(batch_number, partial):
             if progress is not None:
-                progress.set_stage(batch_number, "querying Gaussian templates")
-            partial.spectra.finish_gaussians()
+                progress.set_stage(batch_number, "preparing Gaussian corners and accounts")
+            partial.spectra.prepare_corner_increments()
             if progress is not None:
                 progress.batch_ready(batch_number)
             return partial
@@ -85,7 +87,7 @@ def process_template_batches(
             prepared_groups = sum(partial.spectra._groups_prepared for partial in partials)
             gaussian_started = perf_counter_ns()
             for batch_number, partial in zip(batch_numbers, partials):
-                gaussian_futures.append(executor.submit(finish_one, batch_number, partial))
+                gaussian_futures.append(executor.submit(prepare_corners_one, batch_number, partial))
             for cells, future in zip(wave_cells, gaussian_futures):
                 products.failure_context = {
                     "first_cell_id": cells.first_cell_id,

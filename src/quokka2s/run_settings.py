@@ -54,7 +54,8 @@ class ProcessSettings:
     Each concurrent batch can use spectral_workers integration threads.
     Defaults use 32 concurrent batches and one integration thread per batch.
     Index ranges are [start, stop), or None for the full native axis.
-    spectral_method defaults to direct original-cell integrated-bin templates.
+    spectral_method="direct-template" uses the original cells' four stored
+    template corners: sum their weighted luminosities first, then convolve.
     Fractional mean position is interpolated separately on each natural-log
     sigma layer; integer-bin mean shifts reuse those templates. Default width
     coverage is 1e-5 to 1024 km/s; valid uncovered widths use direct integrals.

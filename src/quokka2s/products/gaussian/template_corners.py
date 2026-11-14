@@ -41,7 +41,12 @@ def locate_corners(table, centers, sigmas):
 def prepare_corner_increment(
     spec, shifts, rows, fractions, luminosity, profiles,
 ):
-    """Construct unsorted original-corner terms with their exact window filter."""
+    """Construct unsorted terms from four template rows per selected cell.
+
+    rows and fractions contain four vectors[N]; shifts[N] are integer channels.
+    Each term maps a local luminosity row to the flat destination slot for its
+    template row plus shift. Only the existing corner/window filter is applied.
+    """
     table = spec.table
     output_first = int(table.output_bin_indices[0])
     output_stop = output_first + table.K
@@ -72,8 +77,8 @@ def prepare_corner_increment(
         selected_weights.append(fraction[retained])
         touched[retained_rows] = True
     terms = CornerTerms(
-        rows=np.concatenate(selected_slots),
-        cells=np.concatenate(selected_cells),
+        destination_slots=np.concatenate(selected_slots),
+        source_cells=np.concatenate(selected_cells),
         weights=np.concatenate(selected_weights),
         input_length=int(luminosity.shape[0]),
         output_length=spec.slot_count,
@@ -94,11 +99,11 @@ def prepare_corner_increment(
     )
     metrics = {
         "positive_corner_entries": positive_corners,
-        "window_corner_entries": int(terms.rows.size),
-        "raw_corner_int32_groups": int(terms.rows.itemsize == 4),
-        "raw_corner_int64_groups": int(terms.rows.itemsize == 8),
+        "window_corner_entries": int(terms.destination_slots.size),
+        "raw_corner_int32_groups": int(terms.destination_slots.itemsize == 4),
+        "raw_corner_int64_groups": int(terms.destination_slots.itemsize == 8),
         "raw_corner_owned_array_bytes": int(
-            terms.rows.nbytes + terms.cells.nbytes + terms.weights.nbytes
+            terms.destination_slots.nbytes + terms.source_cells.nbytes + terms.weights.nbytes
             + touched.nbytes + profile_ids.nbytes
         ),
         "borrowed_luminosity_logical_bytes": int(luminosity.nbytes),

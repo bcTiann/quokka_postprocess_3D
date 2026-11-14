@@ -28,7 +28,10 @@ from quokka2s.processing_inputs import (
 )
 from quokka2s.result_files import write_emission_results, write_status
 from quokka2s.result_metadata import ResultMetadata
-from quokka2s.processing_report import build_processing_report
+from quokka2s.processing_report import (
+    build_field_preprocessing_report,
+    build_processing_report,
+)
 from quokka2s.process_progress import READ_STAGE_LABELS, SlabProgress
 from quokka2s.process_reuse import processing_input_identity, reuse_completed_results
 from quokka2s.products.emission_products import EmissionProducts
@@ -89,7 +92,7 @@ def process_parallel_batches(
             progress.start_batch(batch_number)
             stage_progress = lambda stage: progress.set_stage(batch_number, stage)
         partial = EmissionProducts(
-            histogram_engine=getattr(products.spectra, 'engine', None),
+            gaussian_engine=getattr(products.spectra, 'engine', None),
             histogram_partial=True,
             histogram_merge_threads=config.histogram_merge_threads,
             snapshot=snapshot,
@@ -266,9 +269,11 @@ def report_snapshot_progress(config, products, began, completed_slabs,
     """Print progress and write status.json after a finished slab.
 
     total_slabs and total_cells cover the selected run, including max_slabs.
-    products.counts['all'] counts visited cells, including excluded cells.
-    began starts cell calculation for the ETA. status_began optionally includes
-    input loading and conversion in the persistent total elapsed time."""
+    products.counts['all'] counts every visited cell, including cells missing
+    particular line emissivities or a usable gas temperature. began starts cell
+    calculation for the ETA. status_began optionally includes input loading in
+    the persistent total, excluding separately measured z-cache conversion.
+    """
     completed_cells = products.counts['all']  # 4,194,304 after the first slab.
     elapsed_seconds = time.monotonic() - began
     progress_fraction = completed_cells / total_cells  # 1/32 in this example.
@@ -300,13 +305,15 @@ def process_snapshot(config, snapshot, emission_calculator, products, began, *, 
     The explicit z-contiguous source retains the bounded x-slab implementation.
 
     config supplies slab/batch sizes, workers, and max_slabs. snapshot supplies
-    grid geometry and read_slab(); emission_calculator holds the shared readers.
-    Returns per-slab and total wall timings; the five read stages partition
-    read/derive time, and columns_total_seconds is their two-column subtotal.
+    geometry and the explicit z source's read_slab(); emission_calculator holds
+    the shared emission-table readers. Native columns use native_column_reader.
+    Returns source-specific read/derive totals and per-tile or per-slab timings.
+    Native units/column times share one pass; the explicit z source separates
+    foreground and shielding times under columns_total_seconds.
     products accumulates sums in place; began starts cell calculation for ETA.
     status_began, when supplied, starts the complete process clock, excluding
     separately measured z conversion and prebuilt Gaussian templates.
-    Final product checks and saving happen in main()."""
+    Final product checks and saving happen in run_one_snapshot()."""
     if config.field_source == "native-columns":
         from .native_column_process import process_native_columns
         if native_column_reader is None:
@@ -429,20 +436,22 @@ def run_one_snapshot(config: ProcessSettings, config_path: Path) -> None:
     """Calculate, check and save one snapshot's numerical products without drawing.
 
     config owns resolved paths and one native x/y selection. All accumulators,
-    snapshot fields and lookup readers stay local to this call. The temporary
-    z-contiguous copy is removed before the next snapshot or plotting step.
+    snapshot fields and lookup readers stay local to this call. Native fields
+    are held in RAM without a disk copy. Only the explicit z-contiguous source
+    creates or reuses a cache; an owned temporary cache is removed before the
+    next snapshot or plotting step.
     """
-    histogram_engine = None
+    gaussian_engine = None
     gaussian_table_seconds = 0.0
     if config.spectral_method == "direct-template":
         from quokka2s.products.gaussian.template_engine import prepare_template_engine
-        histogram_engine, gaussian_table_seconds = prepare_template_engine(config.gaussian_grid)
+        gaussian_engine, gaussian_table_seconds = prepare_template_engine(config.gaussian_grid)
     elif config.spectral_method == "histogram-2d":
         from quokka2s.products.gaussian.preparation import prepare_gaussian_engine
-        histogram_engine, gaussian_table_seconds = prepare_gaussian_engine(config.gaussian_grid)
+        gaussian_engine, gaussian_table_seconds = prepare_gaussian_engine(config.gaussian_grid)
     elif config.spectral_method == "histogram-layered":
         from quokka2s.products.gaussian.layered_engine import prepare_layered_engine
-        histogram_engine, gaussian_table_seconds = prepare_layered_engine(config.gaussian_grid)
+        gaussian_engine, gaussian_table_seconds = prepare_layered_engine(config.gaussian_grid)
     print_run_settings(config=config, config_path=config_path)
     began = time.monotonic()
     input_identity = processing_input_identity(config=config)
@@ -450,7 +459,7 @@ def run_one_snapshot(config: ProcessSettings, config_path: Path) -> None:
     input_loading_seconds = time.monotonic() - began
     print('Outputs: allocating image, spectrum and gas-phase accumulators...', flush=True)
     products = EmissionProducts(
-        histogram_engine=histogram_engine,
+        gaussian_engine=gaussian_engine,
         histogram_merge_threads=config.histogram_merge_threads,
         snapshot=snapshot,
         line_keys=emission_calculator.line_keys,
@@ -527,51 +536,12 @@ def run_one_snapshot(config: ProcessSettings, config_path: Path) -> None:
                 began=began,
                 processing_timings=processing_timings,
             )
-            if config.field_source == "native-columns":
-                native = processing_timings['native_columns']
-                report['field_preprocessing'] = {
-                    'method': 'original-native-columns-inplace-ram',
-                    'field_source': config.field_source,
-                    'disk_copy_created': False,
-                    'conversion_excluded_from_process': False,
-                    'seconds': 0.0,
-                    'shape': list(prepared_snapshot.shape),
-                    'fields': ['gasDensity', 'temperature', 'x-GasMomentum', 'y-GasMomentum', 'z-GasMomentum'],
-                    'source_stored_dtype': native['read_statistics']['native_dtype'],
-                    'source_layout': native['source_layout'],
-                    'ram_dtype': 'float64',
-                    'ram_layout': native['ram_layout'],
-                    'cache_file_bytes': 0,
-                    'reader_threads': config.z_reader_threads,
-                    'read_workers': config.z_read_workers,
-                    'native_reading': native['read_statistics'],
-                    'memory_plan': native['memory_plan'],
-                    'finished_products': native['finished_products'],
-                    'retention': 'one RAM tile; released before reading the next tile',
-                }
-            else:
-                cache_identity = preprocessing['identity']
-                report['field_preprocessing'] = {
-                    'method': 'disk-z-contiguous-bounded-eager-fused',
-                    'snapshot_metadata': preprocessing['identity']['snapshot_metadata'],
-                    'metadata_sidecar_write': preprocessing['metadata_sidecar_write'],
-                    'prepared_cache_reused': preprocessing['cache_reused'],
-                    'reader_threads': config.z_reader_threads,
-                    'read_workers': config.z_read_workers,
-                    'bounded_eager_reading': dict(preprocessing['reader_statistics']),
-                    'fused_derivation': dict(preprocessing['derivation_statistics']),
-                    'conversion_excluded_from_process': True,
-                    'seconds': preprocessing['preprocessing_seconds'],
-                    'shape': cache_identity['shape'],
-                    'fields': list(cache_identity['fields']),
-                    'stored_dtype': cache_identity['stored_dtype'],
-                    'layout': cache_identity['layout'],
-                    'cache_file_bytes': sum(
-                        record['size_bytes']
-                        for record in cache_identity['fields'].values()
-                    ),
-                    'retention': 'retained explicit cache' if preprocessing['cache_reused'] else 'temporary; removed when snapshot processing exits',
-                }
+            report['field_preprocessing'] = build_field_preprocessing_report(
+                config=config,
+                snapshot=prepared_snapshot,
+                preprocessing=preprocessing,
+                processing_timings=processing_timings,
+            )
             if processing_input_identity(config=config) != input_identity:
                 raise ValueError('Processing inputs or source files changed during calculation')
             report['input_identity'] = input_identity
@@ -582,8 +552,8 @@ def run_one_snapshot(config: ProcessSettings, config_path: Path) -> None:
                 outputs=outputs,
                 report=report,
             )
-        # All field maps and the owned working copy are gone before completion
-        # or plotting. Persistent result reuse needs only the original inputs.
+        # Field readers have closed and any owned temporary z cache is removed
+        # before completion or plotting. Reuse needs only the original inputs.
         write_status(
             output_dir=config.output_dir,
             counts=products.counts,
