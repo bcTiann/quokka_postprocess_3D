@@ -1,7 +1,7 @@
 """Load run inputs: a native snapshot, two emission tables, and dust opacity."""
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 import time
 
@@ -19,28 +19,43 @@ from quokka2s.snapshot_reader import Snapshot
 from quokka2s.despotic.table_files import load_table
 from quokka2s.despotic.lookup import DespoticLookup
 from quokka2s.despotic.snapshot_domain import validate_table_domain
+from quokka2s.process_logging import quiet_yt_metadata
 
 
-def load_processing_inputs(config):
+def load_processing_inputs(config, *, compact_log=False):
     """Open configured inputs, then create the new output directory.
 
     config contains the snapshot, table, dust-opacity, and output Paths from
     load_process_config(). Return Snapshot and the shared CellEmissionCalculator.
     This step reads metadata and emission tables, not snapshot cell fields.
     Native columns later load the selected full-z tiles directly from the snapshot.
+    compact_log is used by process after its path header has been printed;
+    independent figure tools retain their existing path and yt messages.
     """
-    print('Inputs: checking snapshot and table paths...', flush=True)
+    if compact_log:
+        print('\nInputs', flush=True)
+    prefix = '  ' if compact_log else 'Inputs: '
+    print(f'{prefix}checking snapshot and table paths...', flush=True)
     check_input_paths(config)
     region = {"x": config.x_index_range, "y": config.y_index_range}
-    print('Inputs: opening snapshot metadata with yt...', flush=True)
-    snapshot = open_snapshot(dataset_path=config.dataset, xy_region=region)
-    print_snapshot_summary(snapshot=snapshot)
-    emission_calculator = load_emission_calculator(config=config)
+    metadata_message = 'opening snapshot metadata...' if compact_log else 'opening snapshot metadata with yt...'
+    print(f'{prefix}{metadata_message}', flush=True)
+    metadata_logs = quiet_yt_metadata() if compact_log else nullcontext()
+    with metadata_logs:
+        snapshot = open_snapshot(dataset_path=config.dataset, xy_region=region)
+    print_snapshot_summary(snapshot=snapshot, compact_log=compact_log)
+    emission_calculator = load_emission_calculator(config=config, compact_log=compact_log)
 
     # Create the output directory only after every input has loaded successfully.
-    print(f'Inputs: creating numerical output directory: {config.output_dir}', flush=True)
+    if compact_log:
+        print('  creating numerical output directory...', flush=True)
+    else:
+        print(f'Inputs: creating numerical output directory: {config.output_dir}', flush=True)
     config.output_dir.mkdir(parents=True, exist_ok=False)
-    print('Inputs ready.', flush=True)
+    if compact_log:
+        print('  ready', flush=True)
+    else:
+        print('Inputs ready.', flush=True)
     return snapshot, emission_calculator
 
 
@@ -64,7 +79,7 @@ def prepare_processing_snapshot(*, snapshot: Snapshot, read_workers: int = 5):
         yield reader, initialization_seconds
 
 
-def print_snapshot_summary(snapshot: Snapshot) -> None:
+def print_snapshot_summary(snapshot: Snapshot, *, compact_log=False) -> None:
     """Print native geometry and selected indices using snapshot metadata only.
 
     snapshot comes from open_snapshot(). Grid counts and x/y bounds are native
@@ -76,16 +91,17 @@ def print_snapshot_summary(snapshot: Snapshot) -> None:
     dx_pc, dy_pc, dz_pc = snapshot.cell_widths.to('pc').value
     x_start, x_stop = snapshot.xy_region['x']
     y_start, y_stop = snapshot.xy_region['y']
+    prefix = '  ' if compact_log else ''
     print(
-        f'Native grid: {nx} x {ny} x {nz} ({snapshot.cell_count:,} cells)',
+        f'{prefix}Native grid: {nx} x {ny} x {nz} ({snapshot.cell_count:,} cells)',
         flush=True,
     )
     print(
-        f'Cell widths [pc]: dx={dx_pc:.6g}, dy={dy_pc:.6g}, dz={dz_pc:.6g}',
+        f'{prefix}Cell widths [pc]: dx={dx_pc:.6g}, dy={dy_pc:.6g}, dz={dz_pc:.6g}',
         flush=True,
     )
     print(
-        f'Selected region: x=[{x_start}, {x_stop}), y=[{y_start}, {y_stop}), '
+        f'{prefix}Selected region: x=[{x_start}, {x_stop}), y=[{y_start}, {y_stop}), '
         f'z=[0, {nz}); {snapshot.processing_cell_count:,} cells',
         flush=True,
     )
@@ -129,25 +145,35 @@ def open_snapshot(dataset_path, xy_region=None) -> Snapshot:
     )
 
 
-def load_emission_calculator(config) -> CellEmissionCalculator:
+def load_emission_calculator(config, *, compact_log=False) -> CellEmissionCalculator:
     """Load shared readers, choose line order, and prepare dust cross-sections.
 
     config supplies the table Paths. Grid geometry belongs to Snapshot and
     the product accumulators, so loading the emission tables does not need it.
     Return a calculator holding two readers, line names, and named cross-sections
-    [cm^2/H]. No cell queries run here."""
+    [cm^2/H]. No cell queries run here. compact_log omits paths already shown
+    in process's header; standalone callers retain full path messages."""
     from .despotic.runtime_table import load_runtime_despotic_lookup
 
-    print(f'Tables: loading DESPOTIC: {config.despotic_table}', flush=True)
+    if compact_log:
+        print('  loading DESPOTIC...', flush=True)
+    else:
+        print(f'Tables: loading DESPOTIC: {config.despotic_table}', flush=True)
     despotic = load_runtime_despotic_lookup(
         table_path=config.despotic_table,
     )
-    print(f'Tables: loading Cloudy: {config.cloudy_table}', flush=True)
+    if compact_log:
+        print('  loading Cloudy...', flush=True)
+    else:
+        print(f'Tables: loading Cloudy: {config.cloudy_table}', flush=True)
     cloudy = CloudyLookup(
         path=config.cloudy_table,
     )
     line_keys = tuple(cloudy.line_keys) + CO_LINE_KEYS
-    print(f'Tables: loading Draine dust opacity: {config.dust_opacity_table}', flush=True)
+    if compact_log:
+        print('  loading Draine dust opacity...', flush=True)
+    else:
+        print(f'Tables: loading Draine dust opacity: {config.dust_opacity_table}', flush=True)
     dust_cross_section_cm2_H = prepare_line_dust_cross_sections(
         table_path=config.dust_opacity_table,
         line_keys=line_keys,
@@ -158,7 +184,10 @@ def load_emission_calculator(config) -> CellEmissionCalculator:
     cloudy_reader = CloudyCellReader(
         lookup=cloudy,
     )
-    print(f'Emission setup ready: {len(line_keys)} lines.', flush=True)
+    if compact_log:
+        print(f'  emission setup ready: {len(line_keys)} lines', flush=True)
+    else:
+        print(f'Emission setup ready: {len(line_keys)} lines.', flush=True)
     return CellEmissionCalculator(
         despotic_reader=despotic_reader,
         cloudy_reader=cloudy_reader,

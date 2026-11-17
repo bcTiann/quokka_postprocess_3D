@@ -15,6 +15,7 @@ import numpy as np
 from .native_column_fields import derive_native_column_tile
 from .physics.slab_derive import estimated_working_bytes
 from .products.gaussian.template_batches import process_template_batches
+from .process_logging import format_elapsed
 from .result_files import write_status
 
 
@@ -133,33 +134,33 @@ def _memory_plan(config, snapshot, bounds):
 
 def _process_one_tile(
     *, config, snapshot, reader, bounds, executor, emission_calculator, products,
-    accumulate_batch, tile_number, tile_count, batches_before, total_batches,
-    process_began,
+    accumulate_batch, tile_number, tile_count, process_began,
 ):
     """Own all tile arrays until its batches finish and merge, then drop them."""
-    prefix = f"Tile {tile_number}/{tile_count}"
     tile_cells = (bounds[1] - bounds[0]) * (bounds[3] - bounds[2]) * snapshot.shape[2]
     tile_batches = (tile_cells + config.query_chunk - 1) // config.query_chunk
     print(
-        f"{prefix}: reading original fields and global neighbour faces "
-        f"for {tile_cells:,} cells (up to {config.z_read_workers} readers)...",
+        f"\nTile {tile_number}/{tile_count} | "
+        f"x=[{bounds[0]},{bounds[1]}), y=[{bounds[2]},{bounds[3]}), full z | "
+        f"{tile_cells:,} cells",
         flush=True,
     )
+    print("  Reading original fields and neighbour faces...", flush=True)
     started = monotonic()
     raw = reader.read_tile(bounds)
     read_finished = monotonic()
     peak = _check_process_memory("native tile reading")
     print(
-        f"{prefix}: field reading and RAM copies finished in {read_finished - started:.2f} s; "
-        f"peak process RSS {peak / 1e9:.2f} GB",
+        f"  Reading complete: {format_elapsed(read_finished - started)} | "
+        f"peak RSS {peak / 1e9:.2f} GB",
         flush=True,
     )
 
     def report_derivation(stage):
         if stage == "gradient_from_raw_fields":
-            print(f"{prefix}: calculating velocity gradients (up to {config.z_reader_threads} threads)...", flush=True)
+            print("  Calculating velocity gradients...", flush=True)
         elif stage == "inplace_units_and_columns":
-            print(f"{prefix}: gradients finished; converting units and calculating foreground/shielding columns...", flush=True)
+            print("  Gradients ready; converting units and calculating columns...", flush=True)
 
     slab, derivation = derive_native_column_tile(
         snapshot=snapshot,
@@ -169,9 +170,9 @@ def _process_one_tile(
         on_stage=report_derivation,
     )
     print(
-        f"{prefix}: physical fields ready; gradients {derivation['gradient_seconds']:.2f} s, "
-        f"units/columns {derivation['units_and_columns_seconds']:.2f} s, "
-        f"derivation total {derivation['fused_derivation_seconds']:.2f} s",
+        f"  Fields ready: {format_elapsed(derivation['fused_derivation_seconds'])} | "
+        f"gradients {format_elapsed(derivation['gradient_seconds'])} | "
+        f"units/columns {format_elapsed(derivation['units_and_columns_seconds'])}",
         flush=True,
     )
     del raw
@@ -184,27 +185,28 @@ def _process_one_tile(
         _check_process_memory("native worker wave")
         wave_count += 1
 
-    def report_wave(*, stage, first_batch, last_batch, cell_count, seconds):
-        batch_label = f"{prefix}, batches {first_batch}-{last_batch}/{tile_batches}"
-        if stage == "physical":
-            print(f"{batch_label}: calculating emission, dust, images, full moments and gas phases for {cell_count:,} cells...", flush=True)
-        elif stage == "corners":
-            print(f"{batch_label}: physical products ready in {seconds:.2f} s; preparing Gaussian corners and accounts...", flush=True)
-        elif stage == "scatter":
-            print(f"{batch_label}: Gaussian preparation finished in {seconds:.2f} s; accumulating weighted luminosity at nodes...", flush=True)
-        elif stage == "complete":
-            merged = products.counts["all"]
-            fraction = merged / snapshot.processing_cell_count
-            elapsed = monotonic() - process_began
-            eta = elapsed * (1.0 - fraction) / fraction
-            print(
-                f"{batch_label}: wave finished in {seconds:.2f} s; "
-                f"snapshot {merged:,}/{snapshot.processing_cell_count:,} cells ({100 * fraction:.2f}%), "
-                f"batches {batches_before + last_batch}/{total_batches}; "
-                f"cell-processing elapsed {elapsed:.1f} s, ETA {eta:.1f} s",
-                flush=True,
-            )
+    last_progress_at = None
 
+    def report_wave(*, stage, first_batch, last_batch, cell_count, seconds):
+        nonlocal last_progress_at
+        if stage != "complete":
+            return
+        now = monotonic()
+        final_batch = last_batch == tile_batches
+        if last_progress_at is not None and now - last_progress_at < 10.0 and not final_batch:
+            return
+        merged = products.counts["all"]
+        fraction = merged / snapshot.processing_cell_count
+        elapsed = now - process_began
+        eta = elapsed * (1.0 - fraction) / fraction
+        print(
+            f"  Batch {last_batch:,}/{tile_batches:,} | Overall {100 * fraction:.1f}% | "
+            f"Cells elapsed {format_elapsed(elapsed)} | Cells ETA {format_elapsed(eta)}",
+            flush=True,
+        )
+        last_progress_at = now
+
+    print("  Processing batches: emission + Gaussian nodes", flush=True)
     computation_started = monotonic()
     process_template_batches(
         config=config,
@@ -258,10 +260,8 @@ def process_native_columns(*, config, snapshot, reader, emission_calculator, pro
         flush=True,
     )
     records = []
-    completed_batches = 0
     with ThreadPoolExecutor(max_workers=config.chunk_workers) as executor:
         for number, tile_bounds in enumerate(bounds, start=1):
-            print(f"Native column tile {number}/{len(bounds)}: XY={tile_bounds}; full z; original plt -> RAM", flush=True)
             record = _process_one_tile(
                 config=config,
                 snapshot=snapshot,
@@ -273,19 +273,10 @@ def process_native_columns(*, config, snapshot, reader, emission_calculator, pro
                 accumulate_batch=accumulate_batch,
                 tile_number=number,
                 tile_count=len(bounds),
-                batches_before=completed_batches,
-                total_batches=expected_batches,
                 process_began=began,
             )
             records.append(record)
-            completed_batches += record["merged_batches"]
-            print(
-                f"Tile {number}/{len(bounds)} finished in {record['total_seconds']:.2f} s: "
-                f"read {record['read_seconds']:.2f} s, "
-                f"derive {record['derivation']['fused_derivation_seconds']:.2f} s, "
-                f"compute/merge {record['compute_and_merge_seconds']:.2f} s",
-                flush=True,
-            )
+            print(f"  Tile complete: {format_elapsed(record['total_seconds'])}", flush=True)
             processed_fraction = products.counts["all"] / snapshot.processing_cell_count
             elapsed = monotonic() - began
             write_status(
@@ -307,14 +298,6 @@ def process_native_columns(*, config, snapshot, reader, emission_calculator, pro
     columns_units_seconds = sum(record["derivation"]["units_and_columns_seconds"] for record in records)
     other_derivation_seconds = max(0.0, derive_seconds - gradient_seconds - columns_units_seconds)
     gaussian_timings = products.spectra.timing_summary()
-    print(
-        f"Processing stages finished: original reads {read_seconds:.2f} s; "
-        f"gradients {gradient_seconds:.2f} s; units/columns {columns_units_seconds:.2f} s; "
-        f"physical products {gaussian_timings['physical_preparation_wave_seconds']:.2f} s; "
-        f"Gaussian preparation/accumulation {gaussian_timings['gaussian_wave_seconds_including_analytic_accounts_and_scheduling']:.2f} s; "
-        f"ordered merges {gaussian_timings['ordered_product_merge_wave_seconds']:.2f} s",
-        flush=True,
-    )
     return {
         "field_source": "native-columns",
         "read_stage_labels": {

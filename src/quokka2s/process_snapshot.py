@@ -27,6 +27,7 @@ from quokka2s.processing_report import (
 )
 from quokka2s.process_reuse import processing_input_identity, reuse_completed_results
 from quokka2s.products.emission_products import EmissionProducts
+from quokka2s.process_logging import format_elapsed, print_process_summary
 
 
 def accumulate_batch(cells, emission_calculator: CellEmissionCalculator, products,
@@ -101,12 +102,15 @@ def print_run_settings(config, config_path: Path) -> None:
     supplied YAML filename. This startup summary does not open any input data.
     Example: sigma13.v2/plt0916720 saves under that job/snapshot's processed/.
     """
-    print(f'Configuration: {config_path}', flush=True)
-    print(f'Processing run: {config.jobname}/{config.snapshot_name}', flush=True)
-    print(f'Simulation: {config.dataset}', flush=True)
-    print(f'Numerical output: {config.output_dir}', flush=True)
+    print(f'Process {config.jobname}/{config.snapshot_name}', flush=True)
+    print(f'  Snapshot: {config.dataset}', flush=True)
+    print(f'  Output:   {config.output_dir}', flush=True)
+    print(f'  Config:   {config_path}', flush=True)
+    print(f'  DESPOTIC: {config.despotic_table}', flush=True)
+    print(f'  Cloudy:   {config.cloudy_table}', flush=True)
+    print(f'  Dust:     {config.dust_opacity_table}', flush=True)
     print(
-        f'Execution: query_chunk={config.query_chunk:,}; '
+        f'  Execution: query_chunk={config.query_chunk:,}; '
         f'chunk_workers={config.chunk_workers}; '
         f'read_workers={config.z_read_workers}; derive_threads={config.z_reader_threads}',
         flush=True,
@@ -123,14 +127,18 @@ def run_one_snapshot(config: ProcessSettings, config_path: Path) -> None:
     from quokka2s.products.gaussian.template_engine import prepare_template_engine
 
     print_run_settings(config=config, config_path=config_path)
-    print("Gaussian templates: preparing stored bin integrals before process timing...", flush=True)
+    print("\nGaussian templates: preparing stored bin integrals...", flush=True)
     gaussian_engine, gaussian_table_seconds = prepare_template_engine(config.gaussian_grid)
-    print(f"Gaussian templates ready in {gaussian_table_seconds:.2f} s (excluded from process time).", flush=True)
+    print(
+        f"  ready in {format_elapsed(gaussian_table_seconds)} "
+        f"({gaussian_table_seconds:.3f} s; excluded from process time)",
+        flush=True,
+    )
     began = time.monotonic()
     input_identity = processing_input_identity(config=config)
-    snapshot, emission_calculator = load_processing_inputs(config)
+    snapshot, emission_calculator = load_processing_inputs(config, compact_log=True)
     input_loading_seconds = time.monotonic() - began
-    print('Outputs: allocating image, spectrum and gas-phase accumulators...', flush=True)
+    print('  allocating image, spectrum and gas-phase accumulators...', flush=True)
     products = EmissionProducts(
         gaussian_engine=gaussian_engine,
         snapshot=snapshot,
@@ -144,6 +152,7 @@ def run_one_snapshot(config: ProcessSettings, config_path: Path) -> None:
     )
     try:
         stage = 'preparing original snapshot reader'
+        print('  preparing original snapshot reader...', flush=True)
         with prepare_processing_snapshot(
             snapshot=snapshot,
             read_workers=config.z_read_workers,
@@ -164,29 +173,24 @@ def run_one_snapshot(config: ProcessSettings, config_path: Path) -> None:
             processing_timings['field_source'] = 'native-columns'
             processing_timings['gaussian_table_build_seconds_excluded'] = gaussian_table_seconds
             stage = 'building results'
-            print('Outputs: expanding completed Gaussian nodes into 400-bin spectra and preparing image/gas-phase results...', flush=True)
+            print('\nAll cells finished', flush=True)
+            print('  Expanding Gaussian nodes into 400-bin spectra...', flush=True)
             output_build_began = time.monotonic()
             outputs = products.build_outputs()
             processing_timings['output_construction_seconds'] = time.monotonic() - output_build_began
             # Include final convolution in the Gaussian process timing summary.
             processing_timings['gaussian'] = products.spectra.timing_summary()
-            print(
-                f"Outputs prepared in {processing_timings['output_construction_seconds']:.2f} s; "
-                f"final 400-bin expansion {processing_timings['gaussian']['snapshot_corner_finalization_seconds']:.2f} s.",
-                flush=True,
-            )
             metadata = ResultMetadata.from_processing_inputs(
                 snapshot=snapshot,
                 emission_calculator=emission_calculator,
             )
             outputs.add_metadata(metadata=metadata)
             stage = 'checking results'
-            print('Outputs: checking luminosity conservation and cell accounting...', flush=True)
+            print('  Checking luminosity conservation and cell counts...', flush=True)
             checking_began = time.monotonic()
             image_conservation = products.check_outputs(outputs)
-            print(f"Output checks passed in {time.monotonic() - checking_began:.2f} s.", flush=True)
+            checking_seconds = time.monotonic() - checking_began
             stage = 'building report'
-            print('Outputs: preparing the processing report...', flush=True)
             report = build_processing_report(
                 config=config,
                 snapshot=snapshot,
@@ -207,14 +211,14 @@ def run_one_snapshot(config: ProcessSettings, config_path: Path) -> None:
                 raise ValueError('Processing inputs or source files changed during calculation')
             report['input_identity'] = input_identity
             stage = 'saving results'
-            print(f'Outputs: saving numerical products and report to: {config.output_dir}', flush=True)
+            print('  Saving numerical products...', flush=True)
             saving_began = time.monotonic()
             write_emission_results(
                 directory=config.output_dir,
                 outputs=outputs,
                 report=report,
             )
-            print(f"Numerical products saved in {time.monotonic() - saving_began:.2f} s.", flush=True)
+            saving_seconds = time.monotonic() - saving_began
         # Original-field readers have closed before completion is recorded.
         write_status(
             output_dir=config.output_dir,
@@ -224,8 +228,17 @@ def run_one_snapshot(config: ProcessSettings, config_path: Path) -> None:
             processing_complete=outputs.processing_complete,
             full_snapshot=outputs.full_snapshot,
         )
-        print(f'Run finished: {report["status"]}; complete process {time.monotonic() - began:.2f} s, Gaussian template preparation excluded.', flush=True)
-        print(f'Saved numerical results: {config.output_dir}', flush=True)
+        from quokka2s.native_column_process import peak_process_rss_bytes
+
+        print_process_summary(
+            timings=processing_timings,
+            process_seconds=time.monotonic() - began,
+            checking_seconds=checking_seconds,
+            saving_seconds=saving_seconds,
+            peak_rss_bytes=peak_process_rss_bytes(),
+            gaussian_table_seconds=gaussian_table_seconds,
+            status=report['status'],
+        )
     except BaseException as exc:
         print(f'Failed while {stage}: {type(exc).__name__}: {exc}', flush=True)
         write_status(

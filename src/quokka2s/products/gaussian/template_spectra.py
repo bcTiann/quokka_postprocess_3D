@@ -534,5 +534,5 @@ class TemplateIntegratedSpectra(IntegratedSpectra):
                 "floating_sum_tree_changed": True,
                 "new_interpolation_grid": False,
             }
-        print_template_coverage(coverage, self.direct_statistics)
+        print_template_coverage(coverage)
         return payload, report

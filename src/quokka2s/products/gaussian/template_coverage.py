@@ -133,35 +133,32 @@ class TemplateCoverageTotals:
         }
 
 
-def print_template_coverage(summary, statistics):
-    """Write one final summary and only the accounts with fallback emission."""
+def print_template_coverage(summary):
+    """Print width coverage; full per-line luminosity accounts stay in the report.
+
+    Counts describe Gaussian width-group rows, not unique physical cells.
+    A cell can occur in multiple width groups. Direct integration retains all
+    valid out-of-table emission with the same cutoff as the template path.
+    """
+    minimum, maximum = summary["table_sigma_range_kms"]
+    outside = summary["outside_emitting_rows"]
     print(
-        "Gaussian template coverage: "
-        f"table_sigma_kms={summary['table_sigma_range_kms']}; "
-        f"Gaussian_rows={summary['rows']}; emitting_rows={summary['emitting_rows']}; "
-        f"outside_rows={summary['outside_rows']}; "
-        f"outside_emitting_rows={summary['outside_emitting_rows']}; "
-        f"outside_emitting_fraction={summary['outside_emitting_fraction']:.8g}; "
-        f"below={summary['below_range_rows']}; above={summary['above_range_rows']}; "
-        f"emitting_sigma_kms={summary['emitting_sigma_range_kms']}; "
-        f"outside_sigma_kms={summary['outside_sigma_range_kms']}; "
-        "fallback_probability_worker_seconds="
-        f"{statistics['fallback_probability_seconds']:.8g}; "
-        "integration_worker_seconds="
-        f"{statistics['integration_seconds']:.8g}",
+        f"  Gaussian coverage: sigma=[{minimum:.6g}, {maximum:.6g}] km/s | "
+        f"direct integration: {outside:,} emitting Gaussian rows",
         flush=True,
     )
-    for profile in summary["profiles"]:
-        if profile["fallback_emitting_rows"] == 0:
-            continue
-        print(
-            "Gaussian fallback account: "
-            f"line={profile['line_key']}; dust={profile['dust_state']}; "
-            f"regime={profile['regime']}; rows={profile['fallback_emitting_rows']}; "
-            f"input_erg_s={profile['fallback_input_luminosity_erg_s']:.12g}; "
-            "window_reference_erg_s="
-            f"{profile['fallback_window_luminosity_reference_erg_s']:.12g}; "
-            "fraction_of_window_reference="
-            f"{profile['fallback_fraction_of_window_luminosity_reference']:.8g}",
-            flush=True,
-        )
+    if outside == 0:
+        return
+    outside_minimum, outside_maximum = summary["outside_sigma_range_kms"]
+    print(
+        f"  Outside-width emission: {outside:,}/{summary['emitting_rows']:,} Gaussian rows "
+        f"({100 * summary['outside_emitting_fraction']:.6g}%)",
+        flush=True,
+    )
+    print(
+        f"  All outside rows: sigma=[{outside_minimum:.6g}, {outside_maximum:.6g}] km/s | "
+        f"below={summary['below_range_rows']:,}, "
+        f"above={summary['above_range_rows']:,}; "
+        "emitting rows integrated directly. Per-line luminosity accounts are in emission_report.json.",
+        flush=True,
+    )
