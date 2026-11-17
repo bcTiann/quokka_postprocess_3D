@@ -1,6 +1,6 @@
 """Prepare available line Gaussians, complete moments and saved spectrum arrays.
 
-The template accumulator supplies four-corner accumulation and convolution.
+The template accumulator supplies nearest-node accumulation and convolution.
 This shared preparation preserves per-line missingness, temperature branches,
 original-cell luminosities and complete Gaussian moments.
 """
@@ -169,7 +169,7 @@ class IntegratedSpectra:
     ):
         """Prepare one group of lines sharing exactly the same available cells.
 
-        Normal processing builds final C-order queues directly. A custom NumPy
+        Normal processing builds profile-contiguous queues directly. A custom NumPy
         error policy retains the original Fortran-order moment preparation.
         """
         default_numpy_errors = {

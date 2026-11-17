@@ -117,10 +117,14 @@ There are no process/plot console aliases registered in `pyproject.toml`.
 Each selected RAM tile supplies density, temperature, velocity, shielding and
 foreground columns, and velocity gradient. Physical lookups calculate each
 line's emissivity and foreground dust attenuation. Each original Gaussian
-splits luminosity across four existing fractional-mean/sigma template corners.
-After all selected cells, NumPy convolution turns those accumulated luminosities
-into 400 spectral bins on [-200,200] km/s. Sigma nodes remain logarithmically
-spaced; interpolation weights use linear sigma distances.
+assigns its full luminosity to one existing fractional-mean/sigma template node.
+These node/shift luminosities remain in H across all batches and tiles. After
+all selected cells, NumPy convolution turns H into 400 spectral bins on
+[-200,200] km/s. Sigma nodes remain logarithmically spaced. Select the closest
+sigma by linear distance, then the closest actual phase knot on that layer;
+exact ties choose the lower node. No sigma/phase interpolation weights are
+used: the selected node receives L with weight 1. Phase one is represented
+as phase zero with the integer shift increased by one.
 
 This is the sole production Gaussian method. Valid sigma values outside table
 coverage use stable direct integration with the same 5-sigma cutoff and are
@@ -128,7 +132,11 @@ reported in the log. No project Cython extension is required. Only Gaussian
 template preparation is outside process timing; metadata, field reads, physical
 calculations, all accumulation, checks and saving remain timed. The reader uses
 a conservative memory preflight and a 30 GB process RSS guard; tune query and
-worker sizes for the available memory. This cleanup does not claim a speedup.
+worker sizes for the available memory. NumPy derives complete z columns in
+bounded blocks targeting 131,072 cells; this is separate from physical
+lookup batch size. Read-worker and derivation-thread counts are configurable.
+See the usage guide for a 16-thread derivation example. A concurrency setting
+alone does not establish a speedup.
 
 [Detailed usage](docs/usage.md) · [Methods](docs/emission_method.md) ·
 [Code guide](docs/code_walkthrough.md) · [Repository layout](docs/repository_layout.md)

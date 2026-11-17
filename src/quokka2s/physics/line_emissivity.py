@@ -21,8 +21,12 @@ def check_field_values(name, values, *, positive=False):
     Zero emissivity or abundance is physical. Temperature must be positive.
     NaN/inf or negative required values raise instead of becoming zero light.
     """
-    invalid_sign = values <= 0 if positive else values < 0
-    if not np.isfinite(values).all() or np.any(invalid_sign):
+    if np.size(values) == 0:
+        return
+    minimum = np.min(values)
+    maximum = np.max(values)
+    invalid_sign = minimum <= 0 if positive else minimum < 0
+    if invalid_sign or not np.isfinite(minimum) or not np.isfinite(maximum):
         qualifier = 'positive' if positive else 'nonnegative'
         raise ValueError(f'{name} must be finite and {qualifier}')
 

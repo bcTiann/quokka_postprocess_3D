@@ -78,7 +78,7 @@ def audit_accounting(payload, *, cutoff_sigma=5.0):
         raise AssertionError("Discarded inside-window light exceeds the analytic tail bound")
     return {
         "gaussian_cutoff_sigma": float(cutoff_sigma),
-        "cutoff_applies_to": "histogram-node Gaussians",
+        "cutoff_applies_to": "Selected nearest stored-node Gaussians; original cells for direct fallback and references",
         "renormalized": False,
         "accounting_relative_tolerance": ACCOUNTING_RTOL,
         "two_sided_gaussian_tail_fraction_bound": tail_fraction,
@@ -115,12 +115,12 @@ def add_cutoff_accounts(payload, *, engine, cutoff_sigma=5.0):
     payload[TAIL_ARRAY] = np.maximum(0.0, full_window - clipped_window)
     payload[RESIDUAL_ARRAY] = payload["captured_luminosity_erg_s"] - clipped_window
     audit = audit_accounting(payload, cutoff_sigma=cutoff_sigma)
-    audit["cutoff_applies_to"] = getattr(engine, "cutoff_applies_to", "histogram-node Gaussians")
+    audit["cutoff_applies_to"] = getattr(engine, "cutoff_applies_to", "Selected nearest stored-node Gaussians; original cells for direct fallback and references")
     return audit
 
 
 def update_cutoff_report(report, payload, *, engine, audit):
-    """Describe template interpolation and independent original-cell accounts."""
+    """Describe nearest-node spectra and independent original-cell accounts."""
     input_light = payload["input_luminosity_erg_s"]
     captured = payload["captured_luminosity_erg_s"]
     outside = payload["outside_velocity_luminosity_erg_s"]
@@ -133,17 +133,19 @@ def update_cutoff_report(report, payload, *, engine, audit):
         dust_report.pop("phi_expansion_statistics", None)
         dust_report["gaussian_cutoff_sigma"] = audit["gaussian_cutoff_sigma"]
         dust_report["cutoff_renormalized"] = False
-        dust_report["cutoff_applies_to"] = "Stored template-corner Gaussians"
+        dust_report["cutoff_applies_to"] = "Selected nearest stored-node Gaussians"
         dust_report["profile"] = (
-            "Original-cell luminosities multiplied by interpolated integrated-bin templates; "
-            "fractional mean plus integer-bin shift; linear sigma interpolation on log-spaced sigma nodes"
+            "Within coverage, each original cell adds all luminosity with unit weight to its "
+            "nearest sigma layer by linear distance, then nearest actual phase knot; "
+            "equal distances choose the lower knot and phase1 carries into the next integer shift. "
+            "Sigma nodes remain log-spaced; outside coverage uses original-cell direct integration."
         )
         dust_report["cutoff_reference_applies_to"] = "Original-cell Gaussians"
         dust_report["cutoff_accounting"] = (
             "Input = exact original-cell clipped window + original-cell physical outside "
             "window + original-cell truncated inside window. Actual captured = exact "
             "original-cell clipped window + signed template residual. The residual includes "
-            "template interpolation, shifted corner supports and floating reduction. "
+            "nearest-parameter approximation, shifted selected-node supports and floating reduction. "
             "Complete moments retain original-cell Gaussians."
         )
         dust_report["cutoff_accounting_audit"] = audit

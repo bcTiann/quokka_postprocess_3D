@@ -265,10 +265,18 @@ class DespoticCellReader:
             self.lookup.table.dVdr_values,
         )
         for name, values, axis in zip(('nH', 'NH', 'dVdr'), coordinates, axes):
-            invalid = ~np.isfinite(values) | (values <= 0)
-            below = values < axis[0] * (1 - boundary_rtol)
-            above = values > axis[-1] * (1 + boundary_rtol)
-            if np.any(invalid | below | above):
+            if np.size(values) == 0:
+                continue
+            # Extrema enforce the same per-cell bounds without three full masks.
+            minimum = np.min(values)
+            maximum = np.max(values)
+            if (
+                not np.isfinite(minimum)
+                or not np.isfinite(maximum)
+                or minimum <= 0
+                or minimum < axis[0] * (1 - boundary_rtol)
+                or maximum > axis[-1] * (1 + boundary_rtol)
+            ):
                 raise ValueError(f'DESPOTIC {name} outside the table domain')
 
     def read_cii_and_hydrogen_densities(

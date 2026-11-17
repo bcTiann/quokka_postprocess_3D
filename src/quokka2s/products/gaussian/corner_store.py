@@ -15,7 +15,7 @@ from time import perf_counter
 
 import numpy as np
 
-from .template_corners import locate_corners, prepare_corner_increment
+from .template_corners import locate_nearest_node, prepare_nearest_increment
 from .corner_scatter import scatter_corner_profiles
 from .template_engine import TemplateEngine
 
@@ -162,18 +162,17 @@ class CornerPreparationEngine(TemplateEngine):
             additional_bytes=selected_centers.size * 512,
         )
         began = perf_counter()
-        shifts, rows, fractions = locate_corners(
+        shifts, rows = locate_nearest_node(
             table=table,
             centers=selected_centers,
             sigmas=selected_sigmas,
         )
         metrics["coordinate_location_seconds"] = perf_counter() - began
         began = perf_counter()
-        increment, preparation = prepare_corner_increment(
+        increment, preparation = prepare_nearest_increment(
             spec=self.spec,
             shifts=shifts,
             rows=rows,
-            fractions=fractions,
             luminosity=selected_light,
             profiles=self._profile_ids,
         )

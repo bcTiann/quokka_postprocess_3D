@@ -1,8 +1,9 @@
 """Derive six physical fields directly from one owned full-z native tile.
 
-The gradient pass uses original raw density and momenta plus global XY neighbour
-faces. After it finishes, x/y momenta are released. Density and z momentum are
-then converted in place, temperature is reused unchanged, and only the two
+Raw x/y momentum storage first becomes cgs velocity, once per cell. The gradient
+uses those velocities, original density/z momentum and true global neighbour
+faces. After it finishes, the reused x/y arrays are released. Density and z
+momentum are then converted in place, temperature is reused unchanged, and only the two
 column-density fields are newly allocated. No converted field copy is written.
 """
 from __future__ import annotations
@@ -20,6 +21,7 @@ from .physics import settings
 from .physics.slab_derive import (
     MAX_BLOCK_CELLS,
     convert_tile_columns_inplace,
+    convert_tile_xy_velocities_inplace,
     derive_tile_velocity_gradient,
     estimated_working_bytes,
 )
@@ -96,7 +98,8 @@ def derive_native_column_tile(
     Raw values use native snapshot units. Returned read-only fields use the same
     cgs, K and km/s units as the standard slab reader. Cell order is XYZ with z
     contiguous. The density/Mz allocations become physical density/velocity;
-    x/y momenta are removed from raw_tile.fields before column arrays allocate.
+    x/y momentum storage first holds cgs velocities, then is removed from
+    raw_tile.fields before column arrays allocate.
     A failed tile must be reread rather than reused after partial conversion.
     """
     began = time.perf_counter()
@@ -123,11 +126,21 @@ def derive_native_column_tile(
     dz_foreground = float(snapshot.cell_widths[2].to("cm").value)
     dz_shielding = float(native_reader._cell_widths[2].in_cgs().value)
 
-    def calculate_gradient(task):
-        derive_tile_velocity_gradient(
+    def convert_xy_velocity(task):
+        convert_tile_xy_velocities_inplace(
             density_raw=density,
             momentum_x=momentum_x,
             momentum_y=momentum_y,
+            velocity_factors=velocity_factors,
+            first_column=task * column_count // task_count,
+            stop_column=(task + 1) * column_count // task_count,
+        )
+
+    def calculate_gradient(task):
+        derive_tile_velocity_gradient(
+            density_raw=density,
+            velocity_x_cgs=momentum_x,
+            velocity_y_cgs=momentum_y,
             momentum_z=momentum_z,
             x_density_faces=raw_tile.x_density_faces,
             x_momentum_faces=raw_tile.x_momentum_faces,
@@ -147,6 +160,8 @@ def derive_native_column_tile(
         if on_stage is not None:
             on_stage("gradient_from_raw_fields")
         gradient_began = time.perf_counter()
+        # All converted velocities must be ready before neighbour gathers begin.
+        list(pool.map(convert_xy_velocity, range(task_count)))
         list(pool.map(calculate_gradient, range(task_count)))
         gradient_seconds = time.perf_counter() - gradient_began
 

@@ -1,1 +1,1 @@
-"""Stored Gaussian templates, four-corner luminosity accumulation and convolution."""
+"""Stored Gaussian templates, nearest-node luminosity accumulation and convolution."""

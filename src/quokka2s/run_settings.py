@@ -51,8 +51,9 @@ class ProcessSettings:
     dataset is an absolute path to a directory containing Header. Index ranges
     are native [start, stop) cell indices; omitted axes select their full extent.
     query_chunk bounds cells per batch and chunk_workers bounds concurrent batches.
-    Gaussian templates use logarithmically placed sigma nodes with linear phase
-    and sigma weights. Valid uncovered widths use direct stable integrals.
+    Gaussian templates use logarithmically placed sigma nodes. Select the nearest
+    sigma by linear distance, then the nearest phase knot on that layer.
+    Valid uncovered widths use direct stable integrals.
     The process selects its work exclusively through the x/y region.
     """
 
@@ -63,8 +64,8 @@ class ProcessSettings:
     despotic_table: Path = DEFAULT_DESPOTIC_TABLE
     cloudy_table: Path = DEFAULT_CLOUDY_TABLE
     dust_opacity_table: Path = DEFAULT_DRAINE_TABLE
-    query_chunk: int = 262_144
-    chunk_workers: int = 32
+    query_chunk: int = 524_288
+    chunk_workers: int = 16
     x_index_range: tuple[int, int] | None = None
     y_index_range: tuple[int, int] | None = None
     gaussian_grid: dict | None = None
@@ -406,8 +407,6 @@ def load_process_config(
         values[name] = _path_value(name, values[name], config_path.parent)
     for name in _PROCESS_INTEGERS:
         values[name] = _positive_int(name, values[name])
-    if values["z_read_workers"] > 5:
-        raise ValueError("z_read_workers cannot exceed the five native fields")
     grid = values["gaussian_grid"]
     if grid is not None:
         if not isinstance(grid, dict):

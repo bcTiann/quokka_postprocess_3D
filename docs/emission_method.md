@@ -59,8 +59,10 @@ DESPOTIC interpolates stored field values directly on logarithmic coordinates,
 with the adopted SciPy `RegularGridInterpolator` semantics. The process loader
 reads its seven required fields while full table tools retain their complete
 loader. Standard SciPy sparse multiplication applies the same eight linear
-corner weights to the fields together. Explicit zero weights retain original
-per-field NaN propagation. Singleton axes and special interpolation/error
+corner weights to the fields together. NumPy prepares those eight weights as
+one tensor product of the three adjacent-node weight pairs. This is physical
+table interpolation, distinct from Gaussian nearest-node assignment. Explicit
+zero weights retain original per-field NaN propagation. Singleton axes and special interpolation/error
 settings retain the existing regular-grid path. The shared implementation
 is `table_interpolation.py`; no project compilation is required.
 Cloudy coefficients are interpolated in logarithm
@@ -141,35 +143,42 @@ profiles. Coverage counts, observed ranges and luminosity-weighted fallback
 fractions are saved per line, dust state and temperature branch. They describe
 whether extending the finite table would reduce direct integration work.
 
-For one cell, let `beta=(sigma-sigma_low)/(sigma_high-sigma_low)` and let
-`alpha_low`, `alpha_high` be its two layer-specific phase fractions. The four
-template weights are `(1-beta)*(1-alpha_low)`, `(1-beta)*alpha_low`,
-`beta*(1-alpha_high)` and `beta*alpha_high`. They are nonnegative and sum to one.
-The sigma nodes retain their logarithmic spacing; interpolation weights use
-linear sigma distances. Coincident sigma brackets select that layer directly.
-For corner q and account p, accumulate H[q,p] = sum_i weight[i,q] * L[i,p],
-where q identifies an existing template row and integer-bin shift. The final
-channel luminosity is sum_q probability[q,j] * H[q,p]. This is the same linear
-four-corner interpolation with a different floating-point summation order.
-Intrinsic/attenuated, line and cold/hot accounts remain separate. There is no
-cell-brightness cut or additional grid approximation.
+For each cell, select the closest actual sigma node by linear distance, then
+select the closest actual fractional-phase knot on that sigma layer. Exact ties
+choose the lower sigma or phase. A selected phase-one node is represented as
+phase zero plus one integer shift. Each covered active cell contributes its
+full luminosity to this one node with weight 1. The grid has logarithmic sigma
+spacing, but there are no sigma or phase interpolation weights in this step.
+This is a two-stage nearest rule, not a global two-dimensional Euclidean
+distance and not four-node interpolation.
+
+For node q and account p, accumulate H[q,p] = sum_i L[i,p] over cells selecting
+that node and shift. H persists across all batches and tiles of the snapshot;
+original-cell arrays do not. The final channel luminosity is
+sum_q probability[q,j] * H[q,p]. Intrinsic/attenuated, line and cold/hot accounts remain separate. There
+is no cell-brightness cut. Replacing an original Gaussian by its nearest node
+introduces a parameter approximation, which was compared against the previous
+four-node scheme before adoption. It is distinct from floating-point summation
+error; luminosity accounting alone does not measure spectral shape error.
 
 The immutable table is prepared outside process time. Worker batches use NumPy
-coordinates to prepare original corner contributions. Separate workers then own
-separate profile planes, accumulating weight times cell luminosity directly into
+coordinates to prepare original nearest-node contributions. Separate workers then own
+separate profile planes, accumulating original cell luminosity directly into
 NumPy arrays. The prebuilt private SciPy 1.16.3 `coo_matvec` kernel performs that
 arithmetic; no project code is compiled. Types, lengths, bounds and ownership are
 checked before the call. Writers join before their wave-local inputs are freed.
-These are identical sums at identical original nodes, with floating reduction
-differences, and do not change Gaussian parameter coverage. Every stored
+The accumulation preserves each selected node
+and its luminosity; rounding can differ with batch reduction order. Template
+coverage and original-cell reference integrals are unchanged. Every stored
 template row with B bins has K+B-1 possible integer shifts overlapping K observed
 bins; each account stores just that row-specific interval. Direct NumPy
 convolution in valid mode maps its accumulated shift luminosities to K channels.
 All raw-term preparation, in-place accumulation, convolution and
 luminosity multiplication remain inside process timing. Original-cell arrays
 survive only one bounded wave. Stored probabilities are zero outside each
-corner's own support; no original-cell support mask replaces that union.
-Each stored corner Gaussian truncates at its own `mu_node +/-5sigma_node`
+selected node's own support; no original-cell support mask replaces that
+selected template. Each stored node Gaussian truncates at its own
+`mu_node +/-5sigma_node`
 without renormalization. Original batch contents and width groups are unchanged.
 Finished products merge in deterministic native-tile order, with ascending
 batches within each tile; floating-point reductions can round differently from
@@ -181,8 +190,9 @@ library reductions can change the last floating-point bits.
 The existing complete moments retain original-cell Gaussians and full support.
 Independent original-cell analytic endpoint references separately provide the
 untruncated and five-sigma-clipped window light. Captured spectrum light can
-differ from the clipped reference because of template interpolation, shifted
-corner supports and floating reduction. Four accounts therefore distinguish:
+differ from the clipped reference because of nearest-node parameter
+approximation, shifted selected-node supports and floating reduction. Four
+accounts therefore distinguish:
 
 ```text
 input = captured + outside + truncated_inside - signed_lookup_residual
@@ -191,17 +201,24 @@ signed_lookup_residual = captured - exact_original_cell_clipped_window
 
 These identities close strict independent luminosity budgets without treating
 approximation as missing light. The tail bound applies to the original-cell
-analytic references; actual queried spectra use the template-corner supports.
+analytic references; actual queried spectra use the selected-node supports.
 Images, gas phases, physical temperatures/widths, per-line missingness and full
 moments retain their definitions. Compare spectra and finite-window moments
 against a named reference when assessing grid accuracy.
 
-The original-file reader uses five read workers followed by up to 32 complete-column
-derivation tasks in the same pool. Up to 32 batch workers prepare unchanged
-emission/products for one bounded wave. Those workers then prepare the original
-four template corners and directly integrate uncovered widths. The same pool
-adds corner luminosities into disjoint NumPy profile planes, preserving original
-batch/group order within each profile. All writers join before wave-local
+The original-file reader uses a configurable pool of FAB-field read tasks.
+Any positive `z_read_workers` is valid; independent fields from different z FABs
+can keep more than five readers active. A separate derivation pool uses
+`z_reader_threads` tasks on disjoint complete z columns. Each task uses NumPy
+blocks targeting at most 131,072 cells, rounded down to whole columns, with
+at least one column per block. For example, 16 derivation threads can be selected
+in YAML; the useful count depends on the snapshot and machine.
+
+`chunk_workers` separately bounds physical/Gaussian batches in a wave. Those
+workers prepare unchanged emission/products, one nearest-node contribution per
+covered Gaussian and direct integration for uncovered widths. The same batch
+pool adds full cell luminosities into disjoint NumPy profile planes, preserving
+original batch/group order within each profile. All writers join before wave-local
 luminosity is released. One main thread merges the remaining small products.
 Final template convolution occurs after every original cell has been processed;
 it remains timed and is reported separately. There is no nested spectral pool.

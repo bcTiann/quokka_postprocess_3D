@@ -91,8 +91,10 @@ def trilinear_weight_matrix(*, grid_shape, corners, selected):
     index_dtype = (
         np.int64 if largest_index > np.iinfo(np.int32).max else np.int32
     )
-    indices = np.empty((query_count, 8), dtype=index_dtype)
-    weights = np.empty((query_count, 8))
+    # Fill corner columns contiguously. ravel() then packs each query's
+    # eight entries for CSR, retaining the original reduction order.
+    indices = np.empty((query_count, 8), dtype=index_dtype, order="F")
+    weights = np.empty((query_count, 8), order="F")
     all_selected = bool(np.all(selected))
     for corner, (node_indices, weight) in enumerate(corners):
         if all_selected:
@@ -108,6 +110,63 @@ def trilinear_weight_matrix(*, grid_shape, corners, selected):
         copy=False,
     )
 
+
+
+def trilinear_tensor_matrix(*, grid_shape, brackets, selected):
+    """Pack adjacent-node trilinear rows using one tensor product and offsets.
+
+    Actual-axis brackets and fractions are unchanged. The last axis follows
+    000,...,111, including all explicit zero weights. Inputs are batch-local;
+    the returned CSR owns only its original eight entries per selected query.
+    """
+    query_count = int(np.count_nonzero(selected))
+    node_count = prod(grid_shape)
+    entry_count = 8 * query_count
+    index_dtype = (
+        np.int64
+        if max(node_count, entry_count) > np.iinfo(np.int32).max
+        else np.int32
+    )
+    all_selected = bool(np.all(selected))
+    lower = []
+    axis_weights = []
+    for lower_indices, _, fraction in brackets:
+        if not all_selected:
+            lower_indices = lower_indices[selected]
+            fraction = fraction[selected]
+        lower.append(lower_indices)
+        axis_weights.append(np.column_stack((1.0 - fraction, fraction)))
+    weights = np.einsum(
+        'ni,nj,nk->nijk',
+        *axis_weights,
+        optimize=False,
+        order='C',
+        dtype=np.float64,
+        casting='safe',
+    ).reshape(query_count, 8)
+    base = (
+        (lower[0] * grid_shape[1] + lower[1]) * grid_shape[2] + lower[2]
+    ).astype(index_dtype, copy=False)
+    offsets = np.array(
+        (
+            0,
+            1,
+            grid_shape[2],
+            grid_shape[2] + 1,
+            grid_shape[1] * grid_shape[2],
+            grid_shape[1] * grid_shape[2] + 1,
+            (grid_shape[1] + 1) * grid_shape[2],
+            (grid_shape[1] + 1) * grid_shape[2] + 1,
+        ),
+        dtype=index_dtype,
+    )
+    indices = np.add(base[:, None], offsets, dtype=index_dtype)
+    pointers = np.arange(0, entry_count + 8, 8, dtype=index_dtype)
+    return csr_matrix(
+        (weights.ravel(), indices.ravel(), pointers),
+        shape=(query_count, node_count),
+        copy=False,
+    )
 
 def interpolate_regular_grid(*, interpolator, points):
     """Read current linear RGI values at flattened points[Q,3] by CSR.
@@ -139,9 +198,9 @@ def interpolate_regular_grid(*, interpolator, points):
         outside |= (coordinate < axis[0]) | (coordinate > axis[-1])
     grid_shape = tuple(axis.size for axis in axes)
     with np.errstate(invalid="ignore"):
-        matrix = trilinear_weight_matrix(
+        matrix = trilinear_tensor_matrix(
             grid_shape=grid_shape,
-            corners=trilinear_corners(brackets=brackets, grid_shape=grid_shape),
+            brackets=brackets,
             selected=np.ones(points.shape[0], dtype=bool),
         )
         output_shape = interpolator.values.shape[3:]

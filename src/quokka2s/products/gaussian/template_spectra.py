@@ -1,4 +1,4 @@
-"""Scatter original prepared-template corners into profile-major NumPy accounts.
+"""Scatter each original Gaussian into its nearest stored template node.
 
 Workers release means/widths after preparation; L survives only until all
 profile writers join in the same bounded wave.
@@ -53,7 +53,7 @@ class GaussianBatchGroup:
     luminosity: np.ndarray
 
 class TemplateIntegratedSpectra(IntegratedSpectra):
-    """Keep original Gaussian rules while summing identical template corners."""
+    """Keep original Gaussian rules while summing nearest stored-node luminosities."""
 
     def __init__(self, line_keys, velocity_edges_kms, *, engine, batch_partial=False):
         IntegratedSpectra.__init__(
@@ -160,7 +160,7 @@ class TemplateIntegratedSpectra(IntegratedSpectra):
         """Implement the shared width-group hook by retaining original cells.
 
         The shared preparation hook retains owned inputs only until the next
-        bounded worker wave deposits their existing four template corners.
+        bounded worker wave deposits each cell into one nearest stored node.
         """
         if not self.batch_partial or self._queue_finished or self._queue_failed:
             raise RuntimeError("Cannot append Gaussians after this worker queue finishes")
@@ -169,10 +169,10 @@ class TemplateIntegratedSpectra(IntegratedSpectra):
             if (
                 not isinstance(values, np.ndarray)
                 or values.dtype != np.float64
-                or not values.flags.c_contiguous
+                or not (values.flags.c_contiguous or values.flags.f_contiguous)
                 or not values.flags.owndata
             ):
-                raise ValueError("Template queues require owned C-order float64 inputs")
+                raise ValueError("Template queues require owned contiguous float64 inputs")
             values.flags.writeable = False
         group = GaussianBatchGroup(
             profile_ids=self._profile_ids(line_keys, branch_index),
@@ -485,7 +485,7 @@ class TemplateIntegratedSpectra(IntegratedSpectra):
             "probability_memory_scope": "Fallback probability-block bound only; raw term buffers, pending unique luminosity owners and dense H capacity are separate. None is process RSS.",
             "work_counter_scope": "Original raw corner terms and direct fallback; raw_corner_terms and weighted_profile_updates count contributions, not grouped unique keys. Final occupied nodes and convolution work are separate.",
             "snapshot_corner_expansion": self._corner_final_metrics,
-            "integration": "Original four template corners scatter into disjoint profile-major NumPy planes before stored-row convolution; outside widths use stable original-cell integrals",
+            "integration": "Each original cell adds unit-weight luminosity to its nearest stored node in disjoint profile-major NumPy planes before convolution; outside widths use stable original-cell integrals",
             "cutoff_sigma": 5.0,
             "cutoff_applies_to": self.engine.cutoff_applies_to,
             "renormalized": False,
@@ -516,7 +516,7 @@ class TemplateIntegratedSpectra(IntegratedSpectra):
                 "profiles": [entry for entry in coverage["profiles"] if entry["dust_state"] == dust_state],
             }
             dust_report["profile"] = (
-                "Original-cell four-corner linear phase/sigma interpolation on log-spaced sigma nodes inside coverage; "
+                "Original-cell nearest linear-sigma layer then nearest actual phase knot, lower ties, unit-weight deposition, phase1-to-phase0 integer carry; logarithmically placed sigma nodes inside coverage; "
                 "original mu/sigma stable bin integration outside sigma coverage"
             )
             dust_report["cutoff_applies_to"] = self.engine.cutoff_applies_to

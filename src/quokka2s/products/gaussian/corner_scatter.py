@@ -199,7 +199,7 @@ class CornerIncrement:
 def scatter_corner_profiles(store, increments, executor):
     """Write disjoint H[profile] planes in original increment order per profile.
 
-    Validation, touched-row updates, plan creation, every contiguous X copy and
+    Validation, touched-row updates, plan creation, every required X copy and
     all private-library calls are included in this function's measured interval.
     The shared executor is the existing Gaussian pool.
     """
@@ -223,9 +223,9 @@ def scatter_corner_profiles(store, increments, executor):
         if (
             not isinstance(matrix, np.ndarray) or matrix.ndim != 2
             or matrix.dtype != np.dtype("float64") or not matrix.dtype.isnative
-            or not matrix.flags.c_contiguous or not matrix.flags.aligned
+            or not (matrix.flags.c_contiguous or matrix.flags.f_contiguous) or not matrix.flags.aligned
         ):
-            raise ValueError("Raw luminosity requires native aligned C float64[N,P]")
+            raise ValueError("Raw luminosity requires native aligned contiguous float64[N,P]")
         if matrix.flags.writeable:
             raise ValueError("Borrowed raw luminosity must remain read-only for the wave")
         if any(
@@ -265,16 +265,17 @@ def scatter_corner_profiles(store, increments, executor):
 
     def one_profile(profile):
         plane = light[profile]
-        copied_bytes = 0
+        logical_bytes = 0
         kernel_calls = 0
         for increment, local in plan[profile]:
             values = np.ascontiguousarray(increment.luminosity[:, local])
-            copied_bytes += values.nbytes
+            # Column-contiguous queues reuse this view; selected C-order inputs copy.
+            logical_bytes += values.nbytes
             increment.terms.accumulate(values=values, output=plane)
             # Free this profile copy before allocating the next group's copy.
             del values
             kernel_calls += 1
-        return copied_bytes, kernel_calls
+        return logical_bytes, kernel_calls
 
     active_profiles = [profile for profile, tasks in enumerate(plan) if tasks]
     futures = []

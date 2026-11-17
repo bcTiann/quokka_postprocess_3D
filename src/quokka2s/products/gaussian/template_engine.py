@@ -46,7 +46,7 @@ class TemplateEngine:
     coordinate_rule = "original-cell"
     maximum_probability_rows = 1024
     maximum_direct_probability_rows = maximum_probability_rows
-    cutoff_applies_to = "Stored template corners in range; original-cell Gaussians for direct integration and references"
+    cutoff_applies_to = "Nearest stored-node Gaussians in range; original-cell Gaussians for direct integration and references"
 
     def __init__(self, *, table):
         if not isinstance(table, FractionalGaussianTable):
@@ -213,13 +213,14 @@ class TemplateEngine:
         query_started_ns = perf_counter_ns()
         owned_account_inputs = all(
             isinstance(values, np.ndarray) and values.dtype == np.float64
-            and values.flags.c_contiguous and values.flags.owndata
+            and (values.flags.c_contiguous or values.flags.f_contiguous) and values.flags.owndata
             for values in (centers, sigmas, luminosity)
         )
         centers, sigmas = self._prepare_coordinates(centers, sigmas)
-        luminosity = np.ascontiguousarray(luminosity, dtype=np.float64)
+        luminosity = np.asarray(luminosity, dtype=np.float64)
         if luminosity.ndim != 2 or luminosity.shape[0] != centers.size:
             raise ValueError("Luminosity must have shape(cell count, profile count)")
+        luminosity = np.asfortranarray(luminosity)
         if not 1 <= luminosity.shape[1] <= 12:
             raise ValueError("Require one to twelve luminosity accounts")
         if not (

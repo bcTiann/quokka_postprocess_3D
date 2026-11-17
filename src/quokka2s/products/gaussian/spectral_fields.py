@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from ..line_velocity_moments import LineVelocityMoments
+from ..line_velocity_moments import MINIMUM_GAUSSIAN_WIDTH_KMS
 
 
 def prepare_branch_rows(available_rows, cold_cells, velocity_kms, speed_of_light_kms):
@@ -77,8 +77,8 @@ def selected_temperatures_equal(rows, first_temperature_K, second_temperature_K)
 def prepare_direct_group_luminosity(
     rows, intrinsic_fields, attenuated_fields, shared_lines, cell_volume_cm3,
 ):
-    """Own C-order [cell, 2*shared-line] intrinsic then attenuated luminosity."""
-    output = np.empty((rows.size, 2 * shared_lines.size), dtype=np.float64)
+    """Own column-contiguous [cell, 2*shared-line] luminosities for profile reductions."""
+    output = np.empty((rows.size, 2 * shared_lines.size), dtype=np.float64, order="F")
     for dust_index, fields in enumerate((intrinsic_fields, attenuated_fields)):
         for column, line_index in enumerate(shared_lines):
             np.multiply(
@@ -90,10 +90,11 @@ def prepare_direct_group_luminosity(
 
 
 def calculate_centered_full_moments(velocity_kms, thermal_width_kms, luminosity, minimum_width_kms):
-    """Use the shared stable two-pass NumPy moments for each luminosity account.
+    """Reuse shared velocity offsets and widths in stable two-pass moments.
 
-    The positive-light anchor and mean offset remain separate in the second
-    pass, including for a narrow distribution with a large common velocity.
+    Every profile retains its own positive-light mask and first emitting-cell
+    anchor. Profiles emitting in all rows share only identical coordinate work;
+    masked profiles keep their original selected coordinates and sum order.
     """
     if (
         not 1 <= luminosity.shape[1] <= 12
@@ -101,19 +102,33 @@ def calculate_centered_full_moments(velocity_kms, thermal_width_kms, luminosity,
         or thermal_width_kms.shape != velocity_kms.shape
     ):
         raise ValueError("Require matching vectors and one to twelve profiles")
-    widths = np.maximum(thermal_width_kms, minimum_width_kms)
-    output = np.empty((luminosity.shape[1], 3), dtype=np.float64)
+    widths = np.maximum(thermal_width_kms, max(minimum_width_kms, MINIMUM_GAUSSIAN_WIDTH_KMS))
+    output = np.zeros((luminosity.shape[1], 3), dtype=np.float64)
+    all_row_context = None
     for profile in range(luminosity.shape[1]):
-        moment = LineVelocityMoments.from_cells(
-            velocity_kms=velocity_kms,
-            thermal_width_kms=widths,
-            luminosity_erg_s=luminosity[:, profile],
-        )
-        output[profile] = (
-            moment.luminosity_erg_s,
-            moment.centroid_kms,
-            moment.centered_second_moment,
-        )
+        light = luminosity[:, profile]
+        emitting = light > 0.0
+        if not np.any(emitting):
+            continue
+        if np.all(emitting):
+            if all_row_context is None:
+                anchor = velocity_kms[0]
+                offsets = velocity_kms - anchor
+                thermal_variance = widths ** 2
+                all_row_context = (anchor, offsets, thermal_variance)
+            anchor, offsets, thermal_variance = all_row_context
+        else:
+            light = light[emitting]
+            selected_velocity = velocity_kms[emitting]
+            anchor = selected_velocity[0]
+            offsets = selected_velocity - anchor
+            thermal_variance = widths[emitting] ** 2
+        total = float(np.sum(light, dtype=np.float64))
+        mean_offset = float(np.sum(light * offsets) / total)
+        centroid = float(anchor + mean_offset)
+        bulk_variance = (offsets - mean_offset) ** 2
+        centered_second = float(np.sum(light * (bulk_variance + thermal_variance)))
+        output[profile] = (total, centroid, centered_second)
     return output
 
 
@@ -159,7 +174,7 @@ def pack_width_group(intrinsic_luminosity, attenuated_luminosity, shared_lines):
         or np.any(shared_lines >= intrinsic_luminosity.shape[0])
     ):
         raise IndexError("A shared-width line index is outside the branch matrix")
-    output = np.empty((intrinsic_luminosity.shape[1], 2 * shared_lines.size), order="C")
+    output = np.empty((intrinsic_luminosity.shape[1], 2 * shared_lines.size), order="F")
     for dust_index, values in enumerate((intrinsic_luminosity, attenuated_luminosity)):
         for column, line_index in enumerate(shared_lines):
             output[:, dust_index * shared_lines.size + column] = values[line_index]

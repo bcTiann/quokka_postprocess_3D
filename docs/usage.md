@@ -126,10 +126,10 @@ when process refuses to reuse them. There is no partial snapshot checkpoint.
 
 | Setting | Meaning | Default |
 |---|---|---|
-| `query_chunk` | Maximum cells per physical/Gaussian batch | 262144 |
-| `chunk_workers` | Concurrent batches in one bounded wave | 32 |
+| `query_chunk` | Maximum cells per physical/Gaussian batch | 524288 |
+| `chunk_workers` | Concurrent batches in one bounded wave | 16 |
 | `z_read_workers` | Concurrent original FAB-field reads | 5 |
-| `z_reader_threads` | Complete-column derivation tasks | 32 |
+| `z_reader_threads` | Concurrent tasks deriving complete z columns | 32 |
 | `gaussian_grid` | Optional Gaussian template geometry overrides | null |
 
 ### Original native-column fields
@@ -139,6 +139,22 @@ The sole process reader reads selected original full-z XY tiles into RAM.
 selected values to z-contiguous RAM arrays. Required global x/y neighbour faces
 are read separately and reused. A very small region can still read a complete
 intersecting FAB field; it does not trigger conversion of a complete snapshot.
+Each read task covers one FAB and one field, so any positive `z_read_workers`
+is allowed. Counts greater than five can read independent fields from different
+z FABs concurrently; five is the default, not a maximum.
+
+A separate derivation pool uses `z_reader_threads`. Each task processes disjoint
+complete z columns in bounded NumPy blocks. The block target is 131,072 cells,
+rounded down to whole columns, retaining at least one column even for a deeper
+Nz. This internal block target is separate from `query_chunk`, which limits
+physical/Gaussian batches. For example, to try 16 derivation threads:
+
+```yaml
+z_reader_threads: 16
+```
+
+This changes concurrency only. Benchmark on the intended snapshot; it does not
+establish a particular runtime or change the configured physical/Gaussian wave.
 
 Only the current tile and bounded worker wave stay resident. Six derived
 physical arrays replace/reuse raw allocations, and each tile is released before
@@ -150,11 +166,16 @@ that every possible grid or FAB layout fits at every worker setting.
 
 ### Spectral integration
 
-The only production method accumulates original Gaussian luminosities at four
-stored fractional-mean/sigma template corners, then convolves completed rows.
+The only production method accumulates each original Gaussian's full luminosity
+at one nearest stored fractional-mean/sigma node, then convolves completed rows.
 There is no algorithm selector. Means use integer-channel shifts and fractional
-phase; sigma nodes are logarithmically placed with **linear sigma weights**.
-The observed grid remains 400 channels over [-200,200] km/s.
+phase. Sigma nodes are logarithmically placed; select the closest sigma by
+**linear distance**, then the closest actual phase knot on that layer. Exact
+ties choose the lower knot. Phase one becomes phase zero plus one integer shift.
+The selected node receives the entire L with weight 1; no sigma/phase
+interpolation is performed. H retains these luminosities across all batches
+and tiles, with final convolution only after the last tile. The observed grid
+remains 400 channels over [-200,200] km/s.
 
 Default template sigma coverage is [1e-5,1024] km/s, with natural-log node step
 1/32. A known wider range can be configured before table preparation:
@@ -172,21 +193,21 @@ and no truncated tail is renormalized. Logs/reports retain coverage counts,
 width ranges and fallback luminosity by line, dust state and temperature branch.
 
 Gaussian template preparation/validation is measured separately before process
-timing. Metadata, original reads, physical lookups, four-corner accumulation,
+timing. Metadata, original reads, physical lookups, nearest-node accumulation,
 convolution, checks and file saving are timed. Worker-call durations can overlap;
 do not add their sums to wall-clock stages. The final status includes saving.
 No custom Cython module or project compiler step is used.
 
 ### Memory, concurrency and progress
 
-Each tile finishes physical preparation, corner preparation and profile-plane
+Each tile finishes physical preparation, nearest-node preparation and profile-plane
 accumulation in bounded waves. One writer owns each spectrum profile plane;
 small products merge in input order. Original-cell luminosities are released
 only after all wave writers finish. Final convolution runs after the last tile.
 Completed temperatures are shared only within their existing gas-state group.
 Physical-table queries reuse flat corner indices and adjacent weight factors;
 predicted brackets are checked against the actual table nodes. Gaussian groups
-reuse positive-light masks, matching phase grids and equal window probabilities.
+reuse positive-light masks and equal full/clipped window probabilities.
 These batch-local arrays are released by the existing wave lifecycle. Raw fields
 still use the original NumPy reader, without a converted snapshot on disk.
 The console lists input/output paths once, then reports each tile's original-field
@@ -250,8 +271,8 @@ do not contain this section; plotting does not require it.
 Default processing reads one native full-z tile, derives physical fields in
 reused RAM allocations, then queries table batches and accumulates images,
 spectra and gas phases. Cell arrays are released before the next tile; only
-finished waves merge immediately in deterministic native-tile order. The explicit
-z source reads bounded slabs after cache validation/conversion.
+finished waves merge immediately in deterministic native-tile order. Selected
+node luminosities remain in H until the final spectrum expansion.
 No full-snapshot emissivity cube is saved.
 Before saving, it also prepares per-area spectra, peak-normalized line/gas
 profiles, gas-channel centres, image display masks and colour limits. Raw arrays and both

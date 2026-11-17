@@ -23,6 +23,52 @@ TOUCH_EPS = 1.0e-12
 COORDINATE_LOG_BOUNDARY_RTOL = 1.0e-12
 
 
+# Preserve power() in the first/last normal binary intervals and all subnormals.
+# These bounds come from float64 representation, not a physical light cutoff.
+_LOG10_TO_LN = np.log(10.0)
+_EXP_LOG10_LOWER = np.log10(np.finfo(np.float64).tiny * 2.0)
+_EXP_LOG10_UPPER = np.log10(np.finfo(np.float64).max / 2.0)
+_SMALL_LOG10_EXPONENT = np.finfo(np.float64).eps
+
+
+def _exp_log10_inplace(logarithmic_values):
+    """Convert owned float64 log10 coefficients in place, preserving edge rules.
+
+    Ordinary coefficients use exp(ln(10)*x). Values near float underflow or
+    overflow, nonfinite values and near-zero exponents use power(10,x).
+    The latter avoid intermediate tiny-argument underflow absent in power.
+    No light is clipped, discarded or retained beyond the input selection.
+    """
+    if logarithmic_values.size == 0:
+        return logarithmic_values
+    minimum = np.min(logarithmic_values)
+    maximum = np.max(logarithmic_values)
+    if (
+        np.isfinite(minimum)
+        and np.isfinite(maximum)
+        and minimum > _EXP_LOG10_LOWER
+        and maximum < _EXP_LOG10_UPPER
+        and (maximum < -_SMALL_LOG10_EXPONENT or minimum > _SMALL_LOG10_EXPONENT)
+    ):
+        np.multiply(logarithmic_values, _LOG10_TO_LN, out=logarithmic_values)
+        np.exp(logarithmic_values, out=logarithmic_values)
+    else:
+        edge = (
+            ~np.isfinite(logarithmic_values)
+            | (logarithmic_values <= _EXP_LOG10_LOWER)
+            | (logarithmic_values >= _EXP_LOG10_UPPER)
+            | (np.abs(logarithmic_values) < _SMALL_LOG10_EXPONENT)
+        )
+        original_edge_values = logarithmic_values[edge]
+        ordinary = ~edge
+        ordinary_values = logarithmic_values[ordinary]
+        np.multiply(ordinary_values, _LOG10_TO_LN, out=ordinary_values)
+        np.exp(ordinary_values, out=ordinary_values)
+        logarithmic_values[ordinary] = ordinary_values
+        logarithmic_values[edge] = np.power(10.0, original_edge_values)
+    return logarithmic_values
+
+
 class CloudyFailureTouchError(RuntimeError):
     """Raised when a query gives a failed Cloudy node positive weight."""
 
@@ -478,25 +524,27 @@ class CloudyLookup:
 
         if np.any(need_logarithmic):
             logarithmic = np.moveaxis(self._log_interpolator.values, -1, 0)
-            emissivity_per_nH2[:, need_logarithmic] = np.power(
-                10.0,
-                _sum_corner_fields(
-                    values=logarithmic,
-                    corners=corners,
-                    selected=need_logarithmic,
-                ),
+            logarithmic_values = _sum_corner_fields(
+                values=logarithmic,
+                corners=corners,
+                selected=need_logarithmic,
+            )
+            emissivity_per_nH2[:, need_logarithmic] = _exp_log10_inplace(
+                logarithmic_values,
             )
         if np.any(need_linear):
+            # Only lines with physical zero nodes can require this branch.
+            # Keep every query/corner weight; leave other lines' log values intact.
             linear = _sum_corner_fields(
-                values=self.emissivity_per_nH2,
+                values=self.emissivity_per_nH2[zero_lines],
                 corners=corners,
                 selected=need_linear,
             )
-            emissivity_per_nH2[:, need_linear] = np.where(
-                zero_support[:, need_linear],
-                linear,
-                emissivity_per_nH2[:, need_linear],
-            )
+            for local_index, line_index in enumerate(zero_lines):
+                selected = zero_support[line_index] & retained
+                emissivity_per_nH2[line_index, selected] = linear[
+                    local_index, selected[need_linear]
+                ]
         return CloudyQueryResult(
             emissivity_per_nH2=emissivity_per_nH2.reshape(
                 (len(self.line_keys), *coordinates.shape),

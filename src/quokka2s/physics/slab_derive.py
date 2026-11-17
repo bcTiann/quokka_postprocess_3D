@@ -102,61 +102,94 @@ def _fill_column_densities(
     return invalid_count
 
 
-def derive_tile_velocity_gradient(
-    *, density_raw, momentum_x, momentum_y, momentum_z,
-    x_density_faces, x_momentum_faces, y_density_faces, y_momentum_faces,
-    gradient_output, velocity_factors, dx_cm, dy_cm, dz_gradient_cm,
-    gradient_floor_s, first_column, stop_column,
+def convert_tile_xy_velocities_inplace(
+    *, density_raw, momentum_x, momentum_y, velocity_factors,
+    first_column, stop_column,
 ):
-    """Use global raw neighbour faces before any tile field is overwritten.
+    """Replace owned Mx/My[nx,ny,nz] with cgs velocities in disjoint columns.
 
-    Core arrays have shape(nx,ny,nz); X faces(2,ny,nz) and Y faces(nx,2,nz)
-    contain the original global neighbours, including periodic box boundaries.
-    A tile edge is never substituted for a global periodic box edge.
+    Density remains raw. Keep quotient and each unit factor as separate passes;
+    all tasks must finish before any gradient reads neighbouring velocities.
     """
-    nx, ny, nz = density_raw.shape
-    output_rows = gradient_output.reshape(-1, nz)
+    depth = density_raw.shape[2]
+    density_rows = density_raw.reshape(-1, depth)
+    velocity_rows = (
+        momentum_x.reshape(-1, depth),
+        momentum_y.reshape(-1, depth),
+    )
     with np.errstate(all="ignore"):
-        for selected in _column_slices(first_column, stop_column, nz):
+        for selected in _column_slices(first_column, stop_column, depth):
+            for axis, rows in enumerate(velocity_rows):
+                velocity = rows[selected]
+                np.divide(velocity, density_rows[selected], out=velocity)
+                velocity *= velocity_factors[axis, 0]
+                velocity *= velocity_factors[axis, 1]
+                velocity *= velocity_factors[axis, 2]
+
+
+def derive_tile_velocity_gradient(
+    *, density_raw, velocity_x_cgs, velocity_y_cgs, momentum_z,
+    x_density_faces, x_momentum_faces, y_density_faces, y_momentum_faces,
+    gradient_output, velocity_factors, dx_cm, dy_cm, dz_gradient_cm, gradient_floor_s,
+    first_column, stop_column,
+):
+    """Gather precomputed XY velocities and retain the original gradient rule.
+
+    Core Mx/My now hold cgs velocities. Density, Mz and global neighbour faces
+    retain their original raw units. A tile edge still reads its genuine
+    global face; no local periodic replacement or extra whole-tile copy occurs.
+    """
+    nx, ny, depth = density_raw.shape
+    density_rows = density_raw.reshape(-1, depth)
+    momentum_z_rows = momentum_z.reshape(-1, depth)
+    gradient_rows = gradient_output.reshape(-1, depth)
+    with np.errstate(all="ignore"):
+        for selected in _column_slices(first_column, stop_column, depth):
             columns = np.arange(selected.start, selected.stop, dtype=np.int64)
             x = columns // ny
             y = columns % ny
 
             def neighbour_velocity(axis, side):
+                face = 0 if side == -1 else 1
                 if axis == 0:
                     neighbour_x = x + side
                     outside = (neighbour_x < 0) | (neighbour_x >= nx)
                     np.clip(neighbour_x, 0, nx - 1, out=neighbour_x)
-                    momentum = momentum_x[neighbour_x, y]
-                    density = density_raw[neighbour_x, y]
-                    face = 0 if side == -1 else 1
-                    momentum[outside] = x_momentum_faces[face, y[outside]]
-                    density[outside] = x_density_faces[face, y[outside]]
+                    velocity = velocity_x_cgs[neighbour_x, y]
+                    if np.any(outside):
+                        face_velocity = _gas_velocity(
+                            x_momentum_faces[face, y[outside]],
+                            x_density_faces[face, y[outside]],
+                            velocity_factors[0],
+                        )
+                        face_velocity *= velocity_factors[0, 2]
+                        velocity[outside] = face_velocity
                 else:
                     neighbour_y = y + side
                     outside = (neighbour_y < 0) | (neighbour_y >= ny)
                     np.clip(neighbour_y, 0, ny - 1, out=neighbour_y)
-                    momentum = momentum_y[x, neighbour_y]
-                    density = density_raw[x, neighbour_y]
-                    face = 0 if side == -1 else 1
-                    momentum[outside] = y_momentum_faces[x[outside], face]
-                    density[outside] = y_density_faces[x[outside], face]
-                velocity = _gas_velocity(momentum, density, velocity_factors[axis])
-                velocity *= velocity_factors[axis, 2]
+                    velocity = velocity_y_cgs[x, neighbour_y]
+                    if np.any(outside):
+                        face_velocity = _gas_velocity(
+                            y_momentum_faces[x[outside], face],
+                            y_density_faces[x[outside], face],
+                            velocity_factors[1],
+                        )
+                        face_velocity *= velocity_factors[1, 2]
+                        velocity[outside] = face_velocity
                 return velocity
 
             velocity_z = _gas_velocity(
-                momentum_z[x, y], density_raw[x, y], velocity_factors[2]
+                momentum_z_rows[selected], density_rows[selected], velocity_factors[2],
             )
             velocity_z *= velocity_factors[2, 2]
-            gradient = _velocity_gradient(
+            gradient_rows[selected] = _velocity_gradient(
                 neighbour_velocity,
                 velocity_z,
                 (dx_cm, dy_cm, dz_gradient_cm),
                 gradient_floor_s,
             )
-            output_rows[selected] = gradient
-            del gradient, velocity_z
+            del velocity_z
 
 
 def convert_tile_columns_inplace(

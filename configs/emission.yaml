@@ -19,14 +19,14 @@ y_index_range: null
 
 # Bounded original-plt reads and NumPy calculation; no z-contiguous disk copy.
 # query_chunk is a maximum batch size; final batches may contain fewer cells.
-query_chunk: 262144
-chunk_workers: 32
+query_chunk: 524288
+chunk_workers: 16
 z_reader_threads: 32
 z_read_workers: 5
 
-# Precompute stored Gaussian bin integrals, accumulate four corner luminosities,
+# Precompute Gaussian bin integrals; each cell adds full luminosity to one nearest node,
 # then convolve completed luminosity arrays into 400 channels over [-200,200].
-# Sigma nodes are logarithmically spaced; weights use linear phase and sigma.
+# Sigma nodes are log-spaced; select the nearest linear sigma, then nearest phase.
 # null uses sigma=[1e-5,1024] km/s, ln(sigma) spacing=1/32, maximum phase step=0.1.
 # Valid widths outside the table use direct +/-5sigma integration and are logged.
 # Optional keys: sigma_min, sigma_max, log_sigma_step, mu_spacing_ratio,

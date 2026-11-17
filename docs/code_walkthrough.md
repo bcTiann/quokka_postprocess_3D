@@ -9,9 +9,10 @@ uv run python plot_emission_results.py --snapshot /absolute/path/plt0008703 --x 
 
 These are independent scripts. Process computes and saves; plot reads saved
 arrays. A parent run directory is rejected. There is one production Gaussian
-method: original cell luminosities split across four stored template corners,
-then completed corner rows convolve into the final 400-bin spectrum. Sigma
-nodes are logarithmically placed; weights interpolate linear phase and sigma.
+method: each original cell's full luminosity goes to one nearest stored node,
+then completed node rows convolve into the final 400-bin spectrum. Sigma nodes
+are logarithmically placed; select the closest sigma by linear distance, then
+the closest actual phase knot on that layer. Exact ties choose the lower knot.
 
 ```text
 process_snapshot.py
@@ -24,8 +25,8 @@ process_snapshot.py
       derive_native_column_tile -> six physical cell arrays
       process_template_batches -> bounded physical/Gaussian worker waves
         accumulate_batch -> emission + images + Gaussian inputs + gas phases
-        prepare_corner_increments -> four-corner contributions
-        scatter_corner_wave -> weighted luminosities in shared H arrays
+        prepare_corner_increments -> one nearest-node contribution per cell
+        scatter_corner_wave -> luminosities in shared H arrays
         merge -> small products in input order
     build_outputs -> convolve H rows, prepare all numerical display fields
     check_outputs -> write_emission_results -> completed status
@@ -39,14 +40,17 @@ plot_emission_results.py
 metadata; `emission_calculator` holds immutable physical lookup tables.
 None is a whole-snapshot field array. A tile owns its raw/derived arrays and
 releases them before the next tile. Original-cell Gaussian inputs live for
-one bounded worker wave. `EmissionProducts` owns snapshot result accumulators.
+one bounded worker wave. `EmissionProducts` owns snapshot result accumulators,
+including H, which retains selected-node luminosity across every batch and tile
+until final convolution. Sigma layers are log-spaced, but this Gaussian route
+does not interpolate in sigma or phase.
 
 Within a batch, lines using the same gas state share their completed read-only
 temperature array. Table queries prepare flat corner indices once for masks and
 values, and share adjacent corner-weight factors. Near-uniform axes use a
 predicted bracket only after checking the actual nodes; other coordinates use
 `searchsorted`. Gaussian preparation reuses the same positive-light mask and
-equal full/clipped window probabilities. Node positions, linear weights,
+equal full/clipped window probabilities. Node positions, nearest-node selection,
 missing-value support and original-cell conservation accounts are unchanged.
 
 Open one function at a time and identify its input, action and output before
@@ -65,7 +69,9 @@ when plotting; they do not persist. Process always leaves original files read-on
 For array notation below, N counts selected Gaussian rows, P counts luminosity
 columns sharing a width and K=400 counts channels. `CornerTerms.source_cells`
 indexes local N rows; `destination_slots` indexes the shared node store. Neither
-is a global simulation-cell ID. Velocities and sigma use km/s; L uses erg/s.
+is a global simulation-cell ID. Some internal names still use `corner`, but
+the current Gaussian route emits only one unit-weight node contribution per
+covered active cell. Velocities and sigma use km/s; L uses erg/s.
 
 ## 1. Follow the stages in `main()`
 
@@ -118,10 +124,19 @@ conflicting results remain untouched and drawable by the separate plot script.
    NumPy copies selected values into owned z-contiguous RAM arrays. It also
    obtains original global x/y neighbour faces for gradients. A narrow region
    can still read a whole intersecting FAB field, but no disk copy is created.
-5. `derive_native_column_tile()` finishes gradients before releasing x/y
-   momenta. It converts density/z momentum in place, reuses temperature and
+5. `derive_native_column_tile()` converts disposable x/y momenta into cgs
+   velocities once, waits for every conversion, then reuses these values for
+   both gradient neighbours. It releases the x/y storage after gradients,
+   converts density/z momentum in place, reuses temperature and
    allocates foreground/shielding columns. Scalar unit factors come from
    `snapshot_units.scalar_unit_stages()` in the original conversion order.
+   Each derivation task uses bounded NumPy blocks targeting at most 131,072
+   cells, rounded down to complete z columns. At least one complete column is
+   retained even when Nz exceeds that target. These blocks do not change the
+   physical/Gaussian batch size. `z_reader_threads` controls this derivation
+   pool; `z_read_workers` controls a separate pool of original FAB-field reads.
+   Any positive reader count is allowed, including more than the five field
+   names, because separate z FABs also provide independent read tasks.
 6. `slab.iter_batches(batch_size=config.query_chunk)` yields selected cell views,
    including a shorter final batch. `process_template_batches()` finishes each
    bounded wave, merges products in input order and releases worker inputs.
@@ -144,8 +159,9 @@ traffic.
 
 ## 3. Calculate one batch: `emission_calculator.calculate()`
 
-With the default `query_chunk: 262144`, this slab is processed in 16 equal
-batches of 262,144 cells. The serial caller uses:
+For example, a slab of 4,194,304 cells uses 8 equal batches with the default
+`query_chunk: 524288`. Other slab sizes can end with a shorter batch. The serial
+caller uses:
 
 ```python
 for cells in slab.iter_batches(batch_size=config.query_chunk):
@@ -243,6 +259,9 @@ Inside `DespoticCellReader.read_fields()`, follow five steps:
    together for all N cells at those coordinates. The shared
    `table_interpolation.py` applies their original linear corner weights with
    standard SciPy sparse multiplication, retaining explicit zero weights.
+   NumPy forms all eight adjacent-node weights together as a tensor product;
+   this changes their preparation, not the logarithmic query coordinates or
+   per-field missing-value rules.
 3. Mark unavailable/nonpositive T_D and select eligible cold cells using the
    caller's T_QUOKKA branch. These two masks stay local to `read_fields()`.
 4. `self.read_cii_and_hydrogen_densities()` queries CII lumPerH and e-/H+/H
@@ -340,9 +359,9 @@ columns are retained. Their unique pixel IDs allow ordinary NumPy indexed
 addition into the main image, without a custom compiled image kernel.
 Spectra group lines with identical selections and thermal widths. Default
 template preparation writes original-cell mu, sigma and luminosity directly
-into bounded batch queues. Workers then distribute these luminosities among
-the four existing template corners, rather than constructing 400 probabilities
-for every original cell. Explicit node references retain their temporary branch
+into bounded batch queues. Workers assign each luminosity to one nearest existing
+template node, rather than constructing 400 probabilities for every original
+cell. Explicit node references retain their temporary branch
 matrices only while adding a batch. Independent cell sums check image and spectrum
 luminosities using each line's own selection. Saved image/profile axes and
 line names are unchanged; `cell_counts_by_regime` has shape `(Nline, 2)`.
@@ -367,7 +386,7 @@ snapshot reads or emission-table queries are needed.
 | Product | File and function | Calculation |
 |---|---|---|
 | Image | [products/line_luminosity_images.py](../src/quokka2s/products/line_luminosity_images.py), `LineLuminosityImageAccumulator.add_batch()` | Find each cell's native `(x,y)` pixel and add `epsilon * volume`; all z cells on that sightline add to the same pixel |
-| Spectrum | [template_spectra.py](../src/quokka2s/products/gaussian/template_spectra.py), `TemplateIntegratedSpectra` with shared preparation | Accumulate luminosity at existing template corners, then expand occupied rows once into 400 channels |
+| Spectrum | [template_spectra.py](../src/quokka2s/products/gaussian/template_spectra.py), `TemplateIntegratedSpectra` with shared preparation | Assign full luminosity to one existing nearest template node, retain H across all tiles, then expand occupied rows once into 400 channels |
 | Gas phases | [products/gas_phase_velocity.py](../src/quokka2s/products/gas_phase_velocity.py), `GasPhaseVelocityAccumulator.add_batch()` | Assign the mixed-temperature phase, add cell mass to its velocity channel, and accumulate velocity moments |
 
 Image accumulation uses the selected native x/y sightlines: 256 × 256 for
@@ -387,21 +406,19 @@ go through a rebinned image. The sole Gaussian route is:
    vectors while shared preparation computes images, full moments and counts.
    `template_batches.py` then handles those groups in their original order.
 4. [template_corners.py](../src/quokka2s/products/gaussian/template_corners.py)
-   splits each mean into integer shift and fractional phase, locates two sigma
-   layers and two phase knots on each layer. Linear phase and sigma fractions
-   give the four corner weights; logarithmic spacing applies only to sigma
-   node placement. Arithmetic phase lookup first estimates an index, corrects it
-   against the actual stored knots, then computes the fraction from those knots.
-   There is no new mu/sigma grid. A corner's destination is its existing
-   template row plus integer channel shift. Workers retain the original
-   unsorted cell indices, destination slots and float64 weights; they neither
-   sort equal destinations nor build per-worker grouped luminosity sums.
+   splits each mean into integer shift and fractional phase. Select the closest
+   actual sigma by linear distance, then the closest phase knot on that layer.
+   Exact ties choose the lower knot. A selected phase-one knot becomes phase
+   zero with integer shift plus one. This is a two-stage rule, not a global
+   two-dimensional distance. Each covered active cell emits one unit-weight
+   contribution. Workers retain unsorted cell indices and slots, without
+   per-worker grouped luminosity sums.
    The final 40 accounts remain separate: two dust states, ten lines and two
    temperature branches. Each line keeps its own availability mask and light.
 5. [corner_scatter.py](../src/quokka2s/products/gaussian/corner_scatter.py) runs
    one task per active account in the same worker pool. Each task processes the
    wave's batch/group increments in their original order and adds
-   `weight * cell luminosity` directly to its own profile plane through the
+   the full cell luminosity (node weight 1) to its own profile plane through the
    installed `scipy.sparse._sparsetools.coo_matvec`. No two tasks write the same
    plane. [corner_store.py](../src/quokka2s/products/gaussian/corner_store.py)
    owns these float64 arrays: a B-bin stored template has K+B-1 integer shifts
@@ -411,13 +428,14 @@ go through a rebinned image. The sole Gaussian route is:
    join. Main input-light, count, full-moment, direct-fallback and analytic
    endpoint accounts then merge in batch order. After all cells,
    `np.convolve(..., mode="valid")` produces exactly K observed channels from
-   each occupied stored row. This distributes the same four template terms
-   before summing, with floating-point reduction differences.
+   each occupied stored row. This sums the selected nearest-node templates.
+   Nearest-node assignment introduces a measured parameter approximation;
+   it is distinct from floating-point reduction differences.
 6. Outside sigma coverage, `template_engine.py` calculates stable original-cell
    bin probabilities in bounded outside-only blocks and accumulates them
    directly. The original-cell full/window and five-sigma-clipped endpoint
    accounts are always calculated from the original mu/sigma/L, not from the
-   corner sums. Invalid coordinates still raise; valid uncovered sigmas use
+   selected-node sums. Invalid coordinates still raise; valid uncovered sigmas use
    direct +/-5sigma integrals without a luminosity omission threshold. To reduce
    direct integration for broader known widths,
    set `gaussian_grid: {sigma_max: 8192.0}` before preparation.
@@ -443,11 +461,12 @@ probabilities; `integration_seconds` includes all lookup/direct work and is also
 a worker sum. Actual Gaussian activity/wave elapsed times remain under
 `processing_timings.gaussian`; these counters are not substitutes for wall time.
 
-Each template corner has its own five-sigma support without renormalization.
-Independent original-cell analytic endpoint references describe full and clipped
-window light. The signed residual includes interpolation, shifted corner support
-and floating reduction. `input = captured + outside + truncated_inside -
-signed_lookup_residual` closes strict independent budgets. Complete cell moments
+Each selected template node has its own five-sigma support without
+renormalization. Independent original-cell analytic endpoint references describe
+full and clipped window light. The signed residual includes the nearest-node
+parameter approximation, shifted selected-node support and floating reduction. The identity
+`input = captured + outside + truncated_inside - signed_lookup_residual`
+closes strict independent budgets. Complete cell moments
 remain untruncated, and per-line missingness remains independent.
 
 The same luminosities, velocities and thermal widths also enter
@@ -473,7 +492,7 @@ width 3 km/s, give mean velocity 0 and full sigma sqrt(100 + 9) km/s.
 The full moments do not depend on the saved ±200 km/s channel window.
 `TemplateIntegratedSpectra` retains the common spectrum arrays below, small
 endpoint references and profile-major template-row/integer-shift accounts. Direct
-out-of-table contributions merge before the final corner expansion; output
+out-of-table contributions merge before the final node expansion; output
 construction completes the 400-channel spectrum:
 
 | Attribute | Shape | Stored value |
@@ -488,7 +507,7 @@ Dust index 0 is intrinsic; index 1 is attenuated. For example,
 Halpha spectrum. One `add_batch(cells=..., emission=...)` updates both dust
 states; the Gaussian channel probabilities are shared.
 
-When corner preparation finishes, the batch's coordinates and emissivity arrays
+When nearest-node preparation finishes, the batch's coordinates and emissivity arrays
 can be released. Its packed luminosity remains borrowed until every profile
 writer for that wave joins, then the raw terms and luminosity are released.
 When the slab finishes, the six slab arrays are released. The lookup tables and
@@ -500,18 +519,19 @@ Start with `process_snapshot()`: the default dispatches into
 `native_column_process.process_native_columns()`. Each tile finishes its worker
 deposits/direct fallbacks and merges finished products before releasing its
 fields. Tile visit order is deterministic; no delayed products or original-cell
-Gaussian inputs survive a tile. Accumulated template-corner luminosities
+Gaussian inputs survive a tile. Accumulated selected-node luminosities
 remain until the final expansion.
 
 `template_batches.process_template_batches()`. `chunk_workers` limits the wave
 size, including when it is 1. Workers first call the same `accumulate_batch()`
-used for every batch. The defaults are 32 batches of at most
-262144 cells, keeping at most 8388608 cells in a full wave. The direct-template
-branch fills its owned C-order luminosity queues from selected emissivity
-fields. Stable NumPy full moments reuse those queues in two passes, avoiding
-branch-wide luminosity/temperature matrices and repeated temporary vectors.
+used for every batch. The defaults are 16 batches of at most
+524288 cells, keeping at most 8388608 cells in a full wave. The direct-template
+branch fills its owned column-contiguous `[cell, profile]` luminosity queues
+from selected emissivity fields. Each profile therefore reads a contiguous
+cell-luminosity vector. Stable NumPy full moments reuse those queues in two
+passes, avoiding branch-wide luminosity/temperature matrices and repeated temporary vectors.
 Gaussian inputs survive only this bounded worker wave. The next phase prepares
-the original unsorted corner terms and calculates original-cell endpoint
+the original unsorted nearest-node terms and calculates original-cell endpoint
 accounts/direct fallbacks. After these batch tasks finish, the same pool
 scatters all wave contributions into disjoint profile planes, with one task per
 active account. Luminosity stays alive through that joined scattering phase.
@@ -523,7 +543,7 @@ convolution runs once after the last wave.
 whole Gaussian-wave wall time including independent analytic accounts and
 scheduling. The sum of overlapping worker call times is a diagnostic, not wall
 time. Timing lists are summarized and cleared after each completed wave.
-Corner-array initialization, in-place profile scattering, ordered small-product
+Node-store initialization, in-place profile scattering, ordered small-product
 merge and final convolution have separate clocks. In-place scattering already
 belongs to the Gaussian activity union and broader Gaussian-wave wall time;
 adding its separate counter again would double-count it.

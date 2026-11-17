@@ -20,7 +20,7 @@ from quokka2s.products.velocity_grid import velocity_channel_edges_kms
 
 @dataclass(frozen=True)
 class TemplateParameters:
-    """Set interpolation spacing, finite sigma coverage and fixed node cutoff."""
+    """Set stored-node spacing, finite sigma coverage and fixed node cutoff."""
 
     sigma_min: float = MINIMUM_GAUSSIAN_WIDTH_KMS
     sigma_max: float = 1024.0
@@ -53,7 +53,7 @@ def _readonly(array, dtype=None):
 
 
 class FractionalGaussianTable:
-    """Store bin masses on log-spaced sigma nodes with linear sigma weights.
+    """Store bin masses on log-spaced sigma nodes for nearest-node selection.
 
     A physical mean is split as mu/delta_v = integer + phase. Layer-specific
     phase nodes cover [0,1], with small spacings near narrow Gaussian bin edges.
@@ -292,7 +292,7 @@ class FractionalGaussianTable:
         return lower, upper, fractions
 
     def info(self):
-        """Describe actual storage, finite coverage and interpolation semantics."""
+        """Describe actual storage, finite coverage and nearest-node selection."""
         buffers = (
             self.edges,
             self.output_bin_indices,
@@ -340,15 +340,19 @@ class FractionalGaussianTable:
                 "minimum_extended_bin_count": int(self.layer_bin_counts.min()),
                 "maximum_extended_bin_count": int(self.layer_bin_counts.max()),
                 "mean_decomposition": "mu/delta_v=floor(mu/delta_v)+phase; negative shifts use floor",
-                "phase_interpolation": "linear dimensionless phase separately on each sigma layer",
+                "phase_interpolation": "none; select the nearest actual phase knot on the selected sigma layer",
                 "phase_bracketing": "piecewise-uniform arithmetic corrected against actual stored knots",
-                "sigma_interpolation": "linear in sigma; node placement remains logarithmic",
+                "sigma_interpolation": "none; select nearest sigma by linear distance; node placement remains logarithmic",
+                "node_weight": 1.0,
+                "node_selection_order": "nearest linear sigma layer, then nearest actual phase knot",
+                "equal_distance_rule": "choose the lower sigma or phase knot",
+                "phase_endpoint_rule": "phase1 becomes phase0 on the same layer with integer shift + 1",
                 "phase_spacing": "At most min(maximum_phase_step,mu_spacing_ratio*sigma/delta_v) in nonflat transition regions",
                 "flat_interior": "When 10*sigma < delta_v, only exact five-sigma-flat interior knots are omitted",
                 "velocity_storage": "Each layer spans the union of all phase five-sigma supports, with zero guard bins",
                 "outside_behavior": "Table-only queries require sigma coverage; TemplateEngine directly integrates valid outside widths; unsafe shifts raise and outside node support is known zero",
                 "cutoff_sigma": self.Z,
-                "cutoff_applies_to": "interpolated template-node Gaussians, not an exact original-cell support mask",
+                "cutoff_applies_to": "selected nearest-node Gaussians, not an exact original-cell support mask",
                 "renormalized": False,
                 "online_cdf_queries": False,
                 "prefix_used": False,

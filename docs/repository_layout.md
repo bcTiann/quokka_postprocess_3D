@@ -51,19 +51,24 @@ level-zero FABs can have shorter edge blocks. No converted field copy is used.
 4. [native_column_process.py](../src/quokka2s/native_column_process.py) validates
    exact selected-region coverage and memory planning. Each selected tile is
    derived by [native_column_fields.py](../src/quokka2s/native_column_fields.py),
-   then processed in bounded worker waves. Partial final batches are valid.
+   using bounded NumPy blocks of complete z columns, then processed in bounded
+   physical/Gaussian worker waves. The derivation block target is 131,072 cells
+   and is independent of `query_chunk`. Partial final batches are valid.
 5. [cell_emission.py](../src/quokka2s/physics/cell_emission.py) calculates named
    emissivities and thermal temperatures, keeping per-line missingness, then
    foreground dust attenuation. [emission_products.py](../src/quokka2s/products/emission_products.py)
    owns image, spectrum and gas-phase accumulators and independent accounting.
 6. [template_spectra.py](../src/quokka2s/products/gaussian/template_spectra.py)
-   prepares each Gaussian's four template-corner contributions.
+   prepares each Gaussian's single nearest-node contribution: closest sigma by
+   linear distance, then closest actual phase knot on that layer, lower ties.
+   Log-spaced sigma nodes do not imply interpolation; one node receives all L.
    [template_batches.py](../src/quokka2s/products/gaussian/template_batches.py)
-   finishes physical preparation, corner preparation and accumulation in bounded
+   finishes physical preparation, nearest-node preparation and accumulation in bounded
    waves. [corner_scatter.py](../src/quokka2s/products/gaussian/corner_scatter.py)
-   uses guarded prebuilt SciPy sparse arithmetic to add weighted luminosity into
+   uses guarded prebuilt SciPy sparse arithmetic to add original luminosity into
    disjoint profile planes. [corner_store.py](../src/quokka2s/products/gaussian/corner_store.py)
-   convolves completed rows into 400-bin spectra. No other Gaussian engine is
+   retains H across the whole snapshot and convolves completed rows into
+   400-bin spectra after the last tile. No other Gaussian engine is
    selected or maintained. Stable direct integrals for valid out-of-template
    sigma values remain an essential part of this route.
 7. `build_outputs()` prepares all numerical figure fields, `check_outputs()`
@@ -83,7 +88,7 @@ level-zero FABs can have shorter edge blocks. No converted field copy is used.
 | `physics/` | Derived gas fields, emission, thermal widths and dust attenuation |
 | `cloudy/`, `despotic/` | Table data, validated interpolation and independent table-building tools |
 | `products/` | Images, spectra, gas phases, moments and prepared display arrays |
-| `products/gaussian/` | Stored templates, four-corner preparation/accumulation, convolution, direct width fallback and accounting |
+| `products/gaussian/` | Stored templates, nearest-node preparation/accumulation, convolution, direct width fallback and accounting |
 | `figures/` | Render prepared numerical arrays; select stored fields and format axes/layout |
 
 `products/integrated_spectra.py` supplies shared line masks, full moments and
