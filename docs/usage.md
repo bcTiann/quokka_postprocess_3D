@@ -19,8 +19,11 @@ Build dependencies are isolated and pinned in `pyproject.toml`. Grid arrays,
 physical settings and configuration remain Python inputs; editing them needs
 no recompilation. Editing a `.pyx` file triggers rebuilding on the next sync/run.
 
-`.python-version` selects Python 3.11. On Setonix, load the Python module and
-add `--python "$(command -v python)"` to sync, as shown in the Setonix guide.
+`.python-version` selects Python 3.11. The compiled branch requires uv-managed
+Python, which includes the development headers. Ordinary `uv sync` downloads it
+when needed and replaces a headerless system-Python `.venv` automatically; no
+module loading or interpreter path is needed. See the Setonix guide for optional
+account storage locations.
 In later shells, return to the repository and use `uv run python process_snapshot.py`
 or `uv run python plot_emission_results.py`. uv checks and synchronizes the environment automatically,
 reusing the locked versions rather than reinstalling everything on each run.

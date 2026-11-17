@@ -42,6 +42,8 @@ tables = [
 ]
 
 [tool.uv]
+# Native extensions require a complete Python distribution with Python.h.
+python-preference = "only-managed"
 # Rebuild native loops when their source changes. Python edits stay editable.
 cache-keys = [
     { file = "pyproject.toml" },

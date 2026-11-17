@@ -37,7 +37,11 @@ uv sync
 
 uv creates `.venv` and installs this checkout in editable mode. No activation,
 `PYTHONPATH` or manual `pip install` is needed. The locked environment uses
-Python 3.11. Project calculations use NumPy/SciPy with small Cython numerical
+Python 3.11. This branch asks uv to install and manage a complete Python
+distribution, including the development headers needed for compilation.
+The first sync downloads Python if necessary; a headerless system-Python
+`.venv` is automatically replaced. No module loading or Python-path option is
+required. Project calculations use NumPy/SciPy with small Cython numerical
 loops. `uv sync` builds these automatically and installs their pinned build
 dependencies; a C compiler is required. The pinned yt source dependency can
 also require Git and C/C++ build tools when no cached build is available.

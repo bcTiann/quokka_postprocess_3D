@@ -30,12 +30,13 @@ For the default Setonix Bash login, save the cache locations in `~/.profile`:
 ```bash
 cat >> ~/.profile <<'EOF'
 export UV_CACHE_DIR="$MYSOFTWARE/uv/cache"
+export UV_PYTHON_INSTALL_DIR="$MYSOFTWARE/uv/python"
 export MPLCONFIGDIR="$MYSOFTWARE/uv/matplotlib"
 EOF
 source ~/.profile
 ```
 
-If your Bash login uses `~/.bash_profile` or `~/.bash_login`, add those two lines
+If your Bash login uses `~/.bash_profile` or `~/.bash_login`, add those storage settings
 there instead. Skip this step if these locations are already saved. These
 settings are loaded automatically on later logins; do not repeat them per run.
 
@@ -51,9 +52,14 @@ Open a new terminal, return to the repository, then create the environment:
 
 ```bash
 cd "$MYSOFTWARE/quokka_postprocess_3D"
-module load python/3.11.6
-uv sync --python "$(command -v python)"
+uv sync
 ```
+
+The project requests uv-managed Python 3.11 so its compiler headers are present.
+The first sync downloads Python when needed; no `module load` or `--python`
+argument is required. An existing `.venv` based on the headerless system Python
+is replaced automatically. `UV_PYTHON_INSTALL_DIR` above is an optional storage
+location for the interpreter; without it uv uses its standard user-data directory.
 
 uv creates `.venv` and installs the checkout in editable mode. No activation,
 `PYTHONPATH` or manual `pip install` is needed. Project calculations use
@@ -67,7 +73,7 @@ and the `uv run` commands below. They reuse the existing environment and check
 its dependencies automatically, without activation or repeated exports.
 
 Only the small shell-startup and installer-configuration files remain in home;
-home must still allow those small writes. The binaries, environment and caches
+home must still allow those small writes. With the storage settings above, Python, binaries, environment and caches
 are stored outside home.
 
 ## 3. Set the inputs
