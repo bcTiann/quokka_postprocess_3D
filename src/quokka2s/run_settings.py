@@ -128,11 +128,11 @@ _ALLOWED_SETTINGS = (
 def add_run_selection_arguments(parser: argparse.ArgumentParser) -> None:
     """Add one absolute snapshot path, an output group and native x/y overrides.
 
-    Example: --dataset /simulations/plt0008703 --x 64 66 --y 64 66.
+    Example: --snapshot /simulations/plt0008703 --x 64 66 --y 64 66.
     Omitted options retain YAML values. Stops are exclusive; z remains complete.
     """
     parser.add_argument(
-        "--dataset",
+        "--snapshot",
         type=Path,
         metavar="PATH",
         help=(
@@ -309,7 +309,7 @@ def _selected_dataset(supplied: dict, dataset: str | Path | None) -> str:
     value = supplied.get("dataset") if dataset is None else dataset
     if not isinstance(value, (str, Path)) or not str(value).strip():
         raise ValueError(
-            "Supply --dataset /absolute/path/to/pltNNNNNNN, or set an absolute "
+            "Supply --snapshot /absolute/path/to/pltNNNNNNN, or set an absolute "
             "dataset path in the YAML file"
         )
     expanded = Path(value).expanduser()

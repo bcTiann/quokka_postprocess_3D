@@ -48,8 +48,8 @@ Do not manually edit `uv.lock`.
 Run the two independent scripts from the repository root:
 
 ```bash
-uv run python process_snapshot.py --dataset /absolute/path/run1/plt0008703
-uv run python plot_emission_results.py --dataset /absolute/path/run1/plt0008703
+uv run python process_snapshot.py --snapshot /absolute/path/run1/plt0008703
+uv run python plot_emission_results.py --snapshot /absolute/path/run1/plt0008703
 ```
 
 Process accepts exactly one snapshot containing `Header`. A run directory is
@@ -67,7 +67,7 @@ x_index_range: null
 y_index_range: null
 ```
 
-With `dataset: null`, supply `--dataset` on the command line. A non-null YAML
+With `dataset: null`, supply `--snapshot` on the command line. A non-null YAML
 dataset must also be an absolute path to one snapshot. `~` expands to the home
 directory; shell variables are not expanded. `--jobname my-run` optionally
 replaces the output group. Keep a distinct group for each simulation run.
@@ -92,10 +92,10 @@ Explicit x/y selections place both under the same region directory, for example
 
 ```bash
 uv run python process_snapshot.py \
-  --dataset /absolute/path/run1/plt0008703 --jobname my-run \
+  --snapshot /absolute/path/run1/plt0008703 --jobname my-run \
   --x 64 66 --y 64 66
 uv run python plot_emission_results.py \
-  --dataset /absolute/path/run1/plt0008703 --jobname my-run \
+  --snapshot /absolute/path/run1/plt0008703 --jobname my-run \
   --x 64 66 --y 64 66
 ```
 
@@ -315,7 +315,7 @@ once from the matching original snapshot, then redraw only the titled style:
 uv run python -m quokka2s.prepare_plot_metadata \
   --products /absolute/path/to/output/sigma13.v2/plt0655228/processed \
   --dataset /absolute/path/to/simulations/plt0655228
-uv run python plot_emission_results.py --dataset /absolute/path/to/simulations/plt0655228 \
+uv run python plot_emission_results.py --snapshot /absolute/path/to/simulations/plt0655228 \
   --jobname sigma13.v2 --titled
 ```
 
@@ -338,7 +338,7 @@ each 2 × 2 group rather than averaging. It retains `images.npz` at native
 resolution and does not read the snapshot. Set `image_downsample_factor: 2`
 in the shared YAML to select it. For another product directory, use
 `--products PATH` when preparing it.
-This preparation tool does not accept `--dataset` or CLI x/y selections.
+This preparation tool does not accept `--snapshot` or CLI x/y selections.
 For results selected with process overrides, pass their complete
 `processed/` directory with `--products`; otherwise it uses the YAML selection.
 

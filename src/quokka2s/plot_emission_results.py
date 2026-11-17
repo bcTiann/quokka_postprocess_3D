@@ -187,7 +187,7 @@ def main(argv=None) -> None:
     try:
         config = load_plot_config(
             path=args.config,
-            dataset=args.dataset,
+            dataset=args.snapshot,
             jobname=args.jobname,
             x_index_range=args.x_index_range,
             y_index_range=args.y_index_range,

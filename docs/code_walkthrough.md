@@ -3,8 +3,8 @@
 Start with one explicitly selected snapshot and a small x/y region:
 
 ```bash
-uv run python process_snapshot.py --dataset /absolute/path/plt0008703 --x 64 66 --y 64 66
-uv run python plot_emission_results.py --dataset /absolute/path/plt0008703 --x 64 66 --y 64 66
+uv run python process_snapshot.py --snapshot /absolute/path/plt0008703 --x 64 66 --y 64 66
+uv run python plot_emission_results.py --snapshot /absolute/path/plt0008703 --x 64 66 --y 64 66
 ```
 
 These are independent scripts. Process computes and saves; plot reads saved

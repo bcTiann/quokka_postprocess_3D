@@ -1,4 +1,4 @@
-# One snapshot only. Supply its absolute path here or with --dataset.
+# One snapshot only. Supply its absolute path here or with --snapshot.
 # A containing run directory is rejected; sibling plt directories are never run.
 dataset: null
 jobname: reference_job
@@ -6,13 +6,13 @@ results_dir: ../output
 # Other relative paths are anchored to this YAML file.
 # Results: ../output/reference_job/pltNNNNNNN/{processed,figures,figures_titled}/
 # --jobname optionally selects a different output group for this invocation.
-# uv run python process_snapshot.py --dataset /absolute/path/plt0008703
-# uv run python plot_emission_results.py --dataset /absolute/path/plt0008703
+# uv run python process_snapshot.py --snapshot /absolute/path/plt0008703
+# uv run python plot_emission_results.py --snapshot /absolute/path/plt0008703
 # Process saves numbers only. Plot independently reads those saved products.
 
 # Native cell indices [start, stop); null selects the entire axis.
 # All selected columns retain their full z depth, regardless of grid dimensions.
-# uv run python process_snapshot.py --dataset /absolute/path/plt0008703 --x 64 66 --y 64 66
+# uv run python process_snapshot.py --snapshot /absolute/path/plt0008703 --x 64 66 --y 64 66
 # Use the same --x/--y selection with plot to select the matching saved region.
 x_index_range: null
 y_index_range: null

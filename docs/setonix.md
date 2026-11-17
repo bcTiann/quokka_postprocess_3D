@@ -97,7 +97,7 @@ From the repository root in your processing environment:
 
 ```bash
 uv run python process_snapshot.py \
-  --dataset /scratch/pawsey0807/chongchong/Projects-data/2026-quokka-outflow/hpc/run2.v2/job41101509-sigma13/run1/plt0008703 \
+  --snapshot /scratch/pawsey0807/chongchong/Projects-data/2026-quokka-outflow/hpc/run2.v2/job41101509-sigma13/run1/plt0008703 \
   --jobname job41101509-sigma13-run1 --x 64 66 --y 64 66
 ```
 
@@ -126,7 +126,7 @@ Run the independent script with the same snapshot and region selection:
 
 ```bash
 uv run python plot_emission_results.py \
-  --dataset /scratch/pawsey0807/chongchong/Projects-data/2026-quokka-outflow/hpc/run2.v2/job41101509-sigma13/run1/plt0008703 \
+  --snapshot /scratch/pawsey0807/chongchong/Projects-data/2026-quokka-outflow/hpc/run2.v2/job41101509-sigma13/run1/plt0008703 \
   --jobname job41101509-sigma13-run1 --x 64 66 --y 64 66
 ```
 

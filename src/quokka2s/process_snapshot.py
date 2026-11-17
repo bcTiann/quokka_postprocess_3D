@@ -244,7 +244,7 @@ def main(argv=None):
     """Process exactly one explicit snapshot and save its numerical products.
 
     argv supplies command arguments, or None uses sys.argv[1:]. Dataset selection
-    requires an absolute snapshot path, from --dataset or YAML. This script never
+    requires an absolute snapshot path, from --snapshot or YAML. This script never
     discovers sibling snapshots or calls plotting code. Matching complete products
     are reused; existing conflicting products are preserved and reported.
     """
@@ -257,7 +257,7 @@ def main(argv=None):
     try:
         config = load_process_config(
             path=args.config,
-            dataset=args.dataset,
+            dataset=args.snapshot,
             jobname=args.jobname,
             x_index_range=args.x_index_range,
             y_index_range=args.y_index_range,

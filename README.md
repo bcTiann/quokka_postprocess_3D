@@ -53,7 +53,7 @@ instead: keep the repository, environment, caches and generated results under
 Run the script from the repository root and supply one snapshot's absolute path:
 
 ```bash
-uv run python process_snapshot.py --dataset /absolute/path/to/run1/plt0008703
+uv run python process_snapshot.py --snapshot /absolute/path/to/run1/plt0008703
 ```
 
 The path must name the snapshot itself, containing `Header`. A parent run
@@ -68,7 +68,7 @@ For a small check, select native x/y indices; the stop is excluded:
 
 ```bash
 uv run python process_snapshot.py \
-  --dataset /absolute/path/to/run1/plt0008703 \
+  --snapshot /absolute/path/to/run1/plt0008703 \
   --jobname my-run --x 64 66 --y 64 66
 ```
 
@@ -94,7 +94,7 @@ Run the independent plotting script with the same selection:
 
 ```bash
 uv run python plot_emission_results.py \
-  --dataset /absolute/path/to/run1/plt0008703 \
+  --snapshot /absolute/path/to/run1/plt0008703 \
   --jobname my-run --x 64 66 --y 64 66
 ```
 
@@ -104,8 +104,8 @@ The default saves titled PNG figures in `figures_titled/png/`.
 Select formats and title styles independently:
 
 ```bash
-uv run python plot_emission_results.py --dataset /absolute/path/to/plt0008703 --pdf
-uv run python plot_emission_results.py --dataset /absolute/path/to/plt0008703 --png --pdf --titled --untitled
+uv run python plot_emission_results.py --snapshot /absolute/path/to/plt0008703 --pdf
+uv run python plot_emission_results.py --snapshot /absolute/path/to/plt0008703 --png --pdf --titled --untitled
 ```
 
 Both scripts accept `--config /path/to/emission.yaml`. Repeat command-line

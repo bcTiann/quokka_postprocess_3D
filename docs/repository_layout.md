@@ -2,9 +2,9 @@
 
 Two root scripts are independent entry points:
 
-- `uv run python process_snapshot.py --dataset /absolute/path/plt0008703`
+- `uv run python process_snapshot.py --snapshot /absolute/path/plt0008703`
   computes, checks and saves one explicitly selected snapshot.
-- `uv run python plot_emission_results.py --dataset /absolute/path/plt0008703`
+- `uv run python plot_emission_results.py --snapshot /absolute/path/plt0008703`
   draws that snapshot's saved products without reading the original plt.
 
 No process/plot aliases are registered in `pyproject.toml`. That file describes
