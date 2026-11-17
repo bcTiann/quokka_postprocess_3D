@@ -19,19 +19,21 @@ y_index_range: null
 
 # Bounded original-plt reads and NumPy calculation; no z-contiguous disk copy.
 # query_chunk is a maximum batch size; final batches may contain fewer cells.
-query_chunk: 262144
-chunk_workers: 32
+query_chunk: 131072
+chunk_workers: 16
 z_reader_threads: 32
 z_read_workers: 5
 
 # Precompute stored Gaussian bin integrals, accumulate four corner luminosities,
 # then convolve completed luminosity arrays into 400 channels over [-200,200].
 # Sigma nodes are logarithmically spaced; weights use linear phase and sigma.
-# null uses sigma=[1e-5,1024] km/s, ln(sigma) spacing=1/32, maximum phase step=0.1.
+# This configuration uses sigma=[1e-5,8192] km/s, matching the compiled benchmark.
+# null uses the engine range [1e-5,1024]; both use ln(sigma) spacing=1/32
+# and maximum phase step=0.1.
 # Valid widths outside the table use direct +/-5sigma integration and are logged.
 # Optional keys: sigma_min, sigma_max, log_sigma_step, mu_spacing_ratio,
 # maximum_phase_step. These settings do not change the observation bins.
-gaussian_grid: null
+gaussian_grid: {sigma_max: 8192.0}
 
 # Plot settings apply only to plot_emission_results.py.
 figure_formats: [png]

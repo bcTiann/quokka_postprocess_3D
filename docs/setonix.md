@@ -13,11 +13,12 @@ allocation. The processing commands below assume that allocation is active.
 
 ```bash
 cd "$MYSOFTWARE"
-git clone https://github.com/bcTiann/quokka_postprocess_3D.git
+git clone --branch codex/cython-optimized https://github.com/bcTiann/quokka_postprocess_3D.git
 cd quokka_postprocess_3D
 ```
 
-To update: `git switch main`, then `git pull --ff-only origin main`.
+To update this branch: `git switch codex/cython-optimized`, then
+`git pull --ff-only origin codex/cython-optimized`.
 
 ## 2. Configure the environment
 
@@ -56,7 +57,8 @@ uv sync --python "$(command -v python)"
 
 uv creates `.venv` and installs the checkout in editable mode. No activation,
 `PYTHONPATH` or manual `pip install` is needed. Project calculations use
-NumPy/SciPy without custom Cython extensions. The pinned yt source dependency
+NumPy/SciPy and small Cython numerical extensions. `uv sync` builds the project
+extensions automatically using a C compiler. The pinned yt source dependency
 can still need Git and C/C++ build tools when no cached build is available;
 uv installs its build dependencies automatically. Editing project Python files
 does not rebuild processing kernels.
@@ -118,7 +120,9 @@ corners and forms 400-bin spectra using NumPy convolution. Sigma nodes stay
 logarithmically spaced with linear sigma weights. Valid widths outside table
 coverage use stable direct integration and are logged. Only template preparation
 is excluded from process time; original reads, all numerical work, checks and
-saving remain included. Project code needs no Cython compilation.
+saving remain included. Numerical extensions are built during environment
+synchronization, before snapshot processing; Python grids and physical settings
+can change without recompilation.
 
 ## 5. Plot one saved result
 
@@ -151,7 +155,7 @@ git diff --stat
 # After staging the selected paths:
 git diff --cached --stat
 git commit -m "Update code and results"
-git push origin main
+git push origin codex/cython-optimized
 ```
 
 A local `git clone` includes the same output directory structure and saved files.

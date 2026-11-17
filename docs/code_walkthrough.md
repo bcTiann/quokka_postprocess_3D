@@ -19,7 +19,7 @@ process_snapshot.py
   run_one_snapshot: prepare Gaussian templates before process timing
     load_processing_inputs: metadata + physical tables
     prepare_processing_snapshot: own an original-FAB column reader
-    process_snapshot -> process_native_columns:
+    process_native_columns:
       read selected full-z XY tile into RAM
       derive_native_column_tile -> six physical cell arrays
       process_template_batches -> bounded physical/Gaussian worker waves
@@ -44,8 +44,10 @@ one bounded worker wave. `EmissionProducts` owns snapshot result accumulators.
 Open one function at a time and identify its input, action and output before
 following another call. The root scripts only launch package `main()`; all
 reusable calculations live under `src/quokka2s/`. `pyproject.toml` declares
-package/dependencies without process/plot command aliases. No custom Cython
-build is needed. `uv sync` installs the source checkout in editable mode.
+package/dependencies without process/plot command aliases. `uv sync` installs
+the source checkout in editable mode and builds three small Cython extensions.
+Grids, tables, physical parameters and configuration stay in Python; changing
+their values does not require recompiling. Native source edits rebuild on sync.
 
 Both scripts read `configs/emission.yaml` unless `--config` selects another.
 `dataset: null` requires an explicit absolute snapshot path. Alternatively set
@@ -69,7 +71,7 @@ is a global simulation-cell ID. Velocities and sigma use km/s; L uses erg/s.
 | Snapshot path + region + physical table paths | `load_processing_inputs()` | Snapshot metadata and emission calculator |
 | Geometry + line names + templates | `EmissionProducts(...)` | Empty image, H, spectrum and gas-phase sums |
 | Snapshot metadata | `prepare_processing_snapshot()` | Owned original-file reader |
-| Reader + calculator + products | `process_snapshot()` | Accumulated selected-region products and stage timings |
+| Reader + calculator + products | `process_native_columns()` | Accumulated selected-region products and stage timings |
 | Completed accumulators | `build_outputs()` | Three numerical payloads and summaries |
 | Geometry + ordered dust values | `outputs.add_metadata(...)` | Saved interpretation fields |
 | Products + independent cell totals | `check_outputs()` | Conservation checks |
@@ -97,7 +99,7 @@ conflicting results remain untouched and drawable by the separate plot script.
 
 ## 2. Read selected full-z tiles from the original plt
 
-`process_snapshot()` calls `native_column_process.process_native_columns()`.
+`run_one_snapshot()` calls `native_column_process.process_native_columns()` directly.
 
 1. `NativeColumnReader` checks level-zero FAB coverage and intersects XY tiles
    with `snapshot.xy_region`. Short edge FABs and non-divisible grid dimensions
@@ -136,8 +138,8 @@ traffic.
 
 ## 3. Calculate one batch: `emission_calculator.calculate()`
 
-With the default `query_chunk: 262144`, this slab is processed in 16 equal
-batches of 262,144 cells. The serial caller uses:
+For example, a 4,194,304-cell slab produces 32 batches with the default
+`query_chunk: 131072`. The serial caller uses:
 
 ```python
 for cells in slab.iter_batches(batch_size=config.query_chunk):
@@ -193,7 +195,9 @@ The query results, masks, and emissivity arrays remain local to `calculate()`.
    - `initialize_ciii_and_civ_lines()`: set cold CIII/CIV emission to zero.
    - `fill_hot_cloudy_lines()`: multiply compact Cloudy coefficients by their
      matching physical `nH**2`, then fill final atomic ε/T arrays at the saved
-     cell indices. It retains the exact temperature used for each query.
+     cell indices. The compiled loop checks every compact product before any
+     write, then writes directly into the final arrays. It retains the exact
+     temperature used for each query.
    - `calculate_co_lines()`: calculate both CO lines from DESPOTIC fields and
      temperature in every QUOKKA temperature branch.
 
@@ -202,6 +206,9 @@ The query results, masks, and emissivity arrays remain local to `calculate()`.
 6. `self.apply_foreground_dust()` returns named `LineEmission` records. It
    multiplies available intrinsic emissivities by `exp(-sigma * foreground_NH)`
    and retains the paired temperature unchanged for spectrum and phase products.
+   One compiled pass checks the corresponding columns and attenuates finite
+   entries; unavailable entries retain their original values. Special NumPy
+   error policies use the original NumPy calculation.
 7. `self.build_batch_emission()` combines these already constructed line records
    with DESPOTIC temperature, the QUOKKA cold branch and lookup clipping counts.
    `emission.lines['halpha']` selects Halpha. Images and spectra are added later.
@@ -233,8 +240,10 @@ Inside `DespoticCellReader.read_fields()`, follow five steps:
    coordinates once. Subsequent field queries reuse this batch-local record.
 2. `self.lookup.temperature_and_co(queries=queries)` queries T_D, CO10 and CO21
    together for all N cells at those coordinates. The shared
-   `table_interpolation.py` applies their original linear corner weights with
-   standard SciPy sparse multiplication, retaining explicit zero weights.
+   `table_interpolation.py` passes the runtime axes, query points and field
+   values to `_table_kernels.pyx`. One compiled loop locates the eight corners
+   and applies their original weights to all fields, including zero weights.
+   Other interpolation settings and custom error policies retain SciPy behavior.
 3. Mark unavailable/nonpositive T_D and select eligible cold cells using the
    caller's T_QUOKKA branch. These two masks stay local to `read_fields()`.
 4. `self.read_cii_and_hydrogen_densities()` queries CII lumPerH and e-/H+/H
@@ -252,9 +261,12 @@ Inside `CloudyCellReader.read_fields()`, follow this order:
 2. `self.lookup.interpolate_available()` queries the current 3D table. It
    prepares logarithmic coordinates and reuses the same eight corner weights
    for support checks and linear/log interpolation of successful cells.
-   [table_interpolation.py](../src/quokka2s/table_interpolation.py) forms a CSR
-   row with those eight weights and multiplies all needed field columns using
-   standard SciPy. Explicit zero weights remain to preserve missing-node NaN
+   [_table_kernels.pyx](../src/quokka2s/_table_kernels.pyx) fuses these support
+   checks and field sums. Lines whose current masks are identical share the
+   support scan, but keep separate coefficients. Each query writes its line
+   sums together; NumPy converts the fresh log-sum buffer in place and returns
+   contiguous per-line coefficients.
+   Explicit zero weights remain to preserve missing-node NaN
    propagation. The returned matrix is line-first. No separate model-depth coordinate is supplied.
 3. `self.count_column_clipping()` counts NH clipping among successful queries.
 4. Retain successful query rows and their original `cell_indices`. When every
@@ -325,8 +337,9 @@ products.record_batch(cells=cells, emission=emission)
 
 Images read each named line and use its intrinsic missing mask for both dust
 states. [`CompactImageAccumulator`](../src/quokka2s/products/compact_images.py)
-first multiplies each cell's emissivity by volume. Complete z columns reshape
-that luminosity into `[column,z]` and sum with the available-cell mask. Partial
+first multiplies each cell's emissivity by volume. Complete z columns reuse one
+`[column,z]` luminosity buffer across lines and dust states, then sum with the
+available-cell mask directly into their output slots. Partial
 first/last columns retain `np.bincount` with per-cell column IDs. Only touched
 columns are retained. Their unique pixel IDs allow ordinary NumPy indexed
 addition into the main image, without a custom compiled image kernel.
@@ -334,8 +347,9 @@ Spectra group lines with identical selections and thermal widths. Default
 template preparation writes original-cell mu, sigma and luminosity directly
 into bounded batch queues. Workers then distribute these luminosities among
 the four existing template corners, rather than constructing 400 probabilities
-for every original cell. Explicit node references retain their temporary branch
-matrices only while adding a batch. Independent cell sums check image and spectrum
+for every original cell. Queue preparation returns luminosity totals, counts and
+moments; channel values are filled during later integration and convolution.
+Independent cell sums check image and spectrum
 luminosities using each line's own selection. Saved image/profile axes and
 line names are unchanged; `cell_counts_by_regime` has shape `(Nline, 2)`.
 
@@ -369,7 +383,8 @@ go through a rebinned image. The sole Gaussian route is:
 
 1. Keep the existing cold/hot branches, availability masks, Doppler centers and
    physical thermal widths. Group only lines with identical widths.
-2. `template_table.py` constructs sigma layers from 1e-5 to 1024 km/s at natural-log
+2. `template_table.py` constructs sigma layers from 1e-5 to 8192 km/s for the supplied
+   configuration (1024 when settings are omitted), at natural-log
    spacing 1/32. Each layer samples the mean's fractional channel position from
    0 to 1. Transition spacing is at most `min(0.1,0.1*sigma/delta_v)`; redundant
    exactly flat interior knots may be omitted for narrow profiles. A template
@@ -390,6 +405,12 @@ go through a rebinned image. The sole Gaussian route is:
    sort equal destinations nor build per-worker grouped luminosity sums.
    The final 40 accounts remain separate: two dust states, ten lines and two
    temperature branches. Each line keeps its own availability mask and light.
+   Location and term generation run in one compiled pass: each cell writes up
+   to four terms into corner-major arrays, then an in-place compaction removes
+   corners outside the window without changing order. The old nine N-length
+   location arrays and NumPy concatenation are unnecessary. The combined timer
+   is `coordinate_and_raw_term_preparation_seconds`; it is nested inside the
+   Gaussian preparation stage, not an additional elapsed stage.
 5. [corner_scatter.py](../src/quokka2s/products/gaussian/corner_scatter.py) runs
    one task per active account in the same worker pool. Each task processes the
    wave's batch/group increments in their original order and adds
@@ -409,13 +430,16 @@ go through a rebinned image. The sole Gaussian route is:
    bin probabilities in bounded outside-only blocks and accumulates them
    directly. The original-cell full/window and five-sigma-clipped endpoint
    accounts are always calculated from the original mu/sigma/L, not from the
-   corner sums. Invalid coordinates still raise; valid uncovered sigmas use
-   direct +/-5sigma integrals without a luminosity omission threshold. To reduce
-   direct integration for broader known widths,
-   set `gaussian_grid: {sigma_max: 8192.0}` before preparation.
+   corner sums. The stable interval helper evaluates only nonempty selections:
+   narrow intervals use the existing quadrature, each tail uses log-CDF, and
+   intervals crossing zero use erf. Positive-tail reflection applies only to
+   selected endpoints. Invalid coordinates still raise; valid uncovered sigmas use
+   direct +/-5sigma integrals without a luminosity omission threshold. The supplied
+   `gaussian_grid: {sigma_max: 8192.0}` already covers the tested wider widths;
+   change this value before preparation for other datasets.
 
 The COO operation is a private API of the pinned SciPy 1.16.3 installation,
-not a project-compiled extension or a public compatibility promise. Gaussian
+separate from the project-compiled preparation loops and not a public compatibility promise. Gaussian
 preparation checks the exact version, availability and a probe with repeated
 indices and nonzero initial output. Before calling it, the wrapper validates
 signed native int32/int64 indices, equal lengths, bounds, aligned contiguous
@@ -442,16 +466,38 @@ and floating reduction. `input = captured + outside + truncated_inside -
 signed_lookup_residual` closes strict independent budgets. Complete cell moments
 remain untruncated, and per-line missingness remains independent.
 
+`add_cutoff_accounts()` receives the two original-cell endpoint-luminosity
+arrays directly and copies them into the saved dust/line/branch shape.
+`update_cutoff_report()` receives the template method, statistics and completed
+audit explicitly; report preparation does not construct another engine.
+
 The same luminosities, velocities and thermal widths also enter
 [products/line_velocity_moments.py](../src/quokka2s/products/line_velocity_moments.py).
-The 2D `shared_width_moments()` path preserves each line's positive mask,
-velocity anchor and NumPy reductions while reusing identical velocity/thermal
-arrays. Its `LineVelocityMoments` records contain total light, mean velocity
+The usual queue preparation calls `calculate_centered_full_moments()` for each
+shared-width group. Consecutive accounts with the same positive-luminosity mask
+reuse velocity offsets and squared thermal widths within that call. Each
+account still calculates its own total light, mean offset and centered second
+moment in the original reduction order. Nothing is cached between groups.
+`LineVelocityMoments` records contain total light, mean velocity
 and centered second moment, including every complete cell Gaussian.
 `merged()` combines these totals across batches, workers and cold/hot branches. It also includes the separation between batch mean velocities.
 No extra cell arrays remain in memory.
 The channel integrator and full moments use the same
 `MINIMUM_GAUSSIAN_WIDTH_KMS` from `line_velocity_moments.py`: 1e-5 km/s.
+
+Before packing a queue, validation checks finite nonnegative emissivities and
+positive finite cell volume. Multiplying the largest selected emissivity by
+that volume establishes whether any luminosity is nonzero and whether all are
+finite, including underflow to zero. This avoids a temporary full luminosity
+vector used only for validation; the actual per-cell products are still made
+directly in the final queue. Identical temperature arrays are validated once
+for the same selected rows within that call.
+
+Custom NumPy error settings also affect preparation: the matrix preparation
+path preserves warnings, exceptions and reduction order under `np.errstate()`.
+For example, strict underflow handling must raise when positive emissivity
+times cell volume underflows. Both preparation paths queue the same template
+corner calculation; the error settings do not select another Gaussian model.
 
 For one line, with cell luminosities L, velocities v and thermal widths s:
 
@@ -488,20 +534,28 @@ accumulated products remain for the next slab.
 
 ## 5. Then read concurrency and saving
 
-Start with `process_snapshot()`: the default dispatches into
-`native_column_process.process_native_columns()`. Each tile finishes its worker
+`run_one_snapshot()` calls `native_column_process.process_native_columns()`
+with its prepared reader. Each tile finishes its worker
 deposits/direct fallbacks and merges finished products before releasing its
 fields. Tile visit order is deterministic; no delayed products or original-cell
 Gaussian inputs survive a tile. Accumulated template-corner luminosities
 remain until the final expansion.
 
-`template_batches.process_template_batches()`. `chunk_workers` limits the wave
+In `template_batches.process_template_batches()`, `chunk_workers` limits the wave
 size, including when it is 1. Workers first call the same `accumulate_batch()`
-used for every batch. The defaults are 32 batches of at most
-262144 cells, keeping at most 8388608 cells in a full wave. The direct-template
-branch fills its owned C-order luminosity queues from selected emissivity
-fields. Stable NumPy full moments reuse those queues in two passes, avoiding
-branch-wide luminosity/temperature matrices and repeated temporary vectors.
+used for every batch. The defaults are 16 batches of at most
+131072 cells, keeping at most 2097152 cells in a full wave. Template preparation
+fills column-contiguous luminosity queues from selected emissivity
+fields: each account is one contiguous column in the same [cell, account]
+shape. Scatter reads these columns as views instead of copying them. Stable
+Full moments use those final queues in two anchored, centered passes. Normal
+Float64 inputs use `_spectral_kernels.pyx`; custom error policies and other
+dtypes retain NumPy. `_gaussian_kernels.pyx` locates corners and calculates
+independent original-cell window probabilities using the existing stable
+SciPy log-CDF/erf formulas. Both kernels receive their arrays, grid metadata,
+floors, observation edges and cutoff from Python. The usual preparation
+path avoids branch-wide luminosity/temperature matrices; each account keeps its
+own moment reductions.
 Gaussian inputs survive only this bounded worker wave. The next phase prepares
 the original unsorted corner terms and calculates original-cell endpoint
 accounts/direct fallbacks. After these batch tasks finish, the same pool
@@ -771,12 +825,13 @@ one-sided differences only at physical z boundaries. Only the current z
 layer's native fields, returned arrays and small column carries are retained.
 
 Each layer's `iter_batches()` yields views for `TableInputStatistics`; batches
-do not trigger disk reads. Emission processing still uses `read_slab()` and
-its six fields in x-slab order, preserving its existing accumulation order.
+do not trigger disk reads. Emission processing instead reads complete-z XY
+tiles into six physical arrays, then merges batches in their original order
+within each tile.
 For the single-snapshot command, `--max-columns 1` limits a diagnostic to one
 native XY column with complete z physics. Omitted selected columns make the
-scan partial. The emission YAML's `slab_nx` and `max_slabs` control emission
-processing, not this range scan.
+scan partial. Emission selects native x/y ranges in its own YAML or CLI;
+`query_chunk` and `chunk_workers` bound its independent calculation waves.
 
 For several jobs, `uv run python -m quokka2s.check_job_table_input_ranges` reads
 `configs/table_input_survey.yaml`. `source_root` contains the configured job

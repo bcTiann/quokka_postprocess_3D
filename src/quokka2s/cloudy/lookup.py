@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from itertools import product
 import json
 from pathlib import Path
 
@@ -12,7 +11,8 @@ from scipy.interpolate import RegularGridInterpolator
 
 from quokka2s.cloudy.table_definition import EXPECTED_AXIS_ORDER
 from quokka2s.physics.composition import reject_superseded_composition
-from quokka2s.table_interpolation import trilinear_weight_matrix
+from quokka2s.table_interpolation import trilinear_corners
+from quokka2s._table_kernels import cloudy_corner_fields, regular_grid_brackets
 
 
 TOUCH_EPS = 1.0e-12
@@ -134,34 +134,6 @@ def _brackets(
     lower = upper - 1
     fraction = (coordinate - axis[lower]) / (axis[upper] - axis[lower])
     return lower, upper, fraction
-
-
-def _weighted_corners(brackets):
-    """Yield eight table indices and (Q,) weights in NH/nH/T corner order."""
-    query_count = brackets[0][0].size
-    for corner in product((0, 1), repeat=3):
-        indices = []
-        weight = np.ones(query_count)
-        for side, (lower, upper, fraction) in zip(corner, brackets):
-            indices.append(upper if side else lower)
-            weight *= fraction if side else 1.0 - fraction
-        yield tuple(indices), weight
-
-
-def _sum_corner_fields(values, corners, selected):
-    """Apply selected query weights to current fields, returning shape (L, R).
-
-    values has shape (L, N_NH, N_nH, N_T); selected is a (Q,) query mask.
-    Standard SciPy CSR evaluates all fields together. Every original corner
-    remains, including zero weights that can propagate a missing value.
-    """
-    matrix = trilinear_weight_matrix(
-        grid_shape=values.shape[1:],
-        corners=corners,
-        selected=selected,
-    )
-    fields = values.reshape(values.shape[0], -1).T
-    return (matrix @ fields).T
 
 
 class CloudyLookup:
@@ -401,13 +373,18 @@ class CloudyLookup:
         # 5. Locate the eight-corner brackets used by support diagnostics.
         axes = [self.log_NH_attenuation, self.log_nH, self.log_T]
 
-        brackets = []
-        for axis_index, axis in enumerate(axes):
-            bracket = _brackets(
-                axis=axis,
-                coordinate=points[:, axis_index],
+        if all(axis.dtype == np.float64 for axis in axes):
+            brackets = regular_grid_brackets(
+                axis0=axes[0],
+                axis1=axes[1],
+                axis2=axes[2],
+                points=points,
             )
-            brackets.append(bracket)
+        else:
+            brackets = tuple(
+                _brackets(axis=axis, coordinate=points[:, axis_index])
+                for axis_index, axis in enumerate(axes)
+            )
         return InterpolationCoordinates(
             points=points,
             brackets=tuple(brackets),
@@ -441,64 +418,40 @@ class CloudyLookup:
             hydrogen_density_cm3=hydrogen_density_cm3,
             shielding_NH_cm2=shielding_NH_cm2,
         )
-        corners = tuple(_weighted_corners(coordinates.brackets))
-        query_count = coordinates.points.shape[0]
-
-        # Reinspect public masks on each query; they are not immutable caches.
-        zero_lines = np.flatnonzero(
-            np.any(self.zero_emission_table_nodes, axis=(1, 2, 3)),
+        node_count = int(np.prod(self.emissivity_per_nH2.shape[1:]))
+        # Borrow each current table/mask. Public mutations remain visible on
+        # every call; the numerical kernel owns no model-specific cache.
+        logarithmic_table = np.moveaxis(self._log_interpolator.values, -1, 0)
+        logarithmic, linear, zero_support, failed_queries = cloudy_corner_fields(
+            lower_indices=tuple(bracket[0] for bracket in coordinates.brackets),
+            fractions=tuple(bracket[2] for bracket in coordinates.brackets),
+            grid_shape=self.emissivity_per_nH2.shape[1:],
+            linear_fields=self.emissivity_per_nH2.reshape(len(self.line_keys), node_count),
+            logarithmic_fields=logarithmic_table.reshape(len(self.line_keys), node_count),
+            zero_nodes=self.zero_emission_table_nodes.reshape(len(self.line_keys), node_count).view(np.uint8),
+            failed_nodes=self.failed_table_nodes.reshape(len(self.line_keys), node_count).view(np.uint8),
+            touch_epsilon=TOUCH_EPS,
         )
-        zero_table = self.zero_emission_table_nodes[zero_lines]
-        shared_failures = all(
-            np.array_equal(mask, self.failed_table_nodes[0])
-            for mask in self.failed_table_nodes
-        )
-        failure_table = (
-            self.failed_table_nodes[:1]
-            if shared_failures else self.failed_table_nodes
-        )
-        has_failures = bool(np.any(failure_table))
-        zero_small = np.zeros((zero_lines.size, query_count), dtype=bool)
-        failure_weight = np.zeros((failure_table.shape[0], query_count))
-        for indices, weight in corners:
-            if zero_lines.size:
-                zero_small |= (
-                    zero_table[(slice(None), *indices)]
-                    & (weight[None, :] > TOUCH_EPS)
-                )
-            if has_failures:
-                failure_weight += (
-                    failure_table[(slice(None), *indices)] * weight[None, :]
-                )
-        failed_queries = np.any(failure_weight > TOUCH_EPS, axis=0)
-        zero_support = np.zeros((len(self.line_keys), query_count), dtype=bool)
-        zero_support[zero_lines] = zero_small
         retained = ~failed_queries
         need_linear = np.any(zero_support, axis=0) & retained
         need_logarithmic = np.any(~zero_support, axis=0) & retained
-        emissivity_per_nH2 = np.full(zero_support.shape, np.nan)
-
+        # Reuse the fresh sum buffer. These masks retain the original whole-
+        # query log/linear branches, including NumPy's error handling.
         if np.any(need_logarithmic):
-            logarithmic = np.moveaxis(self._log_interpolator.values, -1, 0)
-            emissivity_per_nH2[:, need_logarithmic] = np.power(
+            np.power(
                 10.0,
-                _sum_corner_fields(
-                    values=logarithmic,
-                    corners=corners,
-                    selected=need_logarithmic,
-                ),
+                logarithmic,
+                out=logarithmic,
+                where=need_logarithmic[None, :],
             )
         if np.any(need_linear):
-            linear = _sum_corner_fields(
-                values=self.emissivity_per_nH2,
-                corners=corners,
-                selected=need_linear,
-            )
-            emissivity_per_nH2[:, need_linear] = np.where(
-                zero_support[:, need_linear],
+            np.copyto(
+                logarithmic,
                 linear,
-                emissivity_per_nH2[:, need_linear],
+                where=zero_support & need_linear[None, :],
             )
+        # Hot-line conversion consumes contiguous per-line coefficient views.
+        emissivity_per_nH2 = np.ascontiguousarray(logarithmic)
         return CloudyQueryResult(
             emissivity_per_nH2=emissivity_per_nH2.reshape(
                 (len(self.line_keys), *coordinates.shape),
@@ -559,12 +512,16 @@ class CloudyLookup:
         shape = (len(self.line_keys), query_count)
         zero_support = np.zeros(shape, dtype=bool)
         failure_weight = np.zeros(shape)
-        # 0 selects the lower node; 1 selects the upper node on each axis.
-        for indices, weight in _weighted_corners(coordinates.brackets):
-            table_index = (slice(None), *indices)
+        # Mask and value lookups use the same flat table-node coordinates.
+        zero_table = self.zero_emission_table_nodes.reshape(shape[0], -1)
+        failure_table = self.failed_table_nodes.reshape(shape[0], -1)
+        for indices, weight in trilinear_corners(
+            brackets=coordinates.brackets,
+            grid_shape=self.emissivity_per_nH2.shape[1:],
+        ):
             line_weights = weight[None, :]
-            zero_support |= self.zero_emission_table_nodes[table_index] & (line_weights > TOUCH_EPS)
-            failure_weight += self.failed_table_nodes[table_index] * line_weights
+            zero_support |= zero_table[:, indices] & (line_weights > TOUCH_EPS)
+            failure_weight += failure_table[:, indices] * line_weights
 
         return InterpolationNodes(
             zero_support=zero_support,

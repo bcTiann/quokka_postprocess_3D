@@ -6,8 +6,17 @@ format, cell physics, image sums, spectral integration, and gas-phase statistics
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 import time
+
+# Independent batches already provide parallelism. Set native-library defaults
+# before importing NumPy; explicit user thread settings remain respected.
+for thread_setting in (
+    "OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS",
+    "VECLIB_MAXIMUM_THREADS", "BLIS_NUM_THREADS",
+):
+    os.environ.setdefault(thread_setting, "1")
 
 from quokka2s.physics.cell_emission import CellEmissionCalculator
 from quokka2s.run_settings import (
@@ -29,69 +38,24 @@ from quokka2s.process_reuse import processing_input_identity, reuse_completed_re
 from quokka2s.products.emission_products import EmissionProducts
 
 
-def accumulate_batch(cells, emission_calculator: CellEmissionCalculator, products,
-                     progress=None):
+def accumulate_batch(cells, emission_calculator: CellEmissionCalculator, products):
     """Calculate a batch once, then add its emission to every product.
 
     cells is a CellBatch of six (N,) arrays plus grid positions/volume.
     emission_calculator holds the shared table readers and dust cross-sections.
     products receives image, spectrum, phase, and diagnostic sums in place.
-    progress optionally records a stage label before each existing calculation.
     Direct-template workers may retain owned Gaussian input vectors until the
     next bounded query wave. No CellBatch or LineEmission object is retained."""
     products.failure_context = {
         "first_cell_id": cells.first_cell_id,
         "last_cell_id": cells.last_cell_id,
     }
-    if progress is not None:
-        progress('DESPOTIC/Cloudy lookup, line emissivity and dust attenuation')
     emission = emission_calculator.calculate(cells=cells)
-    if progress is not None:
-        progress('accumulating luminosity images')
     products.images.add_batch(cells=cells, emission=emission)
-    if progress is not None:
-        progress('preparing original-cell Gaussian inputs')
     products.spectra.add_batch(cells=cells, emission=emission)
-    if progress is not None:
-        progress('accumulating gas-phase velocity statistics')
     products.phases.add_batch(cells=cells, emission=emission)
-    if progress is not None:
-        progress('recording missingness, luminosity and cell accounting')
     products.record_batch(cells=cells, emission=emission)
     # A template partial also owns its bounded Gaussian queue; not cells/emission.
-
-
-def process_snapshot(
-    config,
-    snapshot,
-    emission_calculator,
-    products,
-    began,
-    *,
-    status_began=None,
-    native_column_reader=None,
-):
-    """Read selected original columns and accumulate one snapshot's products.
-
-    snapshot provides dynamic grid geometry and the selected x/y bounds; every
-    selected column retains its full z depth. The prepared reader reads original
-    FAB fields into bounded RAM tiles. Finished worker waves merge in input order.
-    Return read, derivation and calculation timings; products receives the sums.
-    """
-    from quokka2s.native_column_process import process_native_columns
-
-    if native_column_reader is None:
-        raise ValueError("Processing requires its prepared original-field reader")
-    return process_native_columns(
-        config=config,
-        snapshot=snapshot,
-        reader=native_column_reader,
-        emission_calculator=emission_calculator,
-        products=products,
-        accumulate_batch=accumulate_batch,
-        began=began,
-        status_began=status_began,
-    )
 
 
 def print_run_settings(config, config_path: Path) -> None:
@@ -148,14 +112,17 @@ def run_one_snapshot(config: ProcessSettings, config_path: Path) -> None:
         ) as (reader, reader_initialization_seconds):
             stage = 'processing cells'
             calculation_began = time.monotonic()
-            processing_timings = process_snapshot(
+            from quokka2s.native_column_process import process_native_columns
+
+            processing_timings = process_native_columns(
                 config=config,
                 snapshot=snapshot,
+                reader=reader,
                 emission_calculator=emission_calculator,
                 products=products,
-                began=calculation_began,
-                status_began=began,
-                native_column_reader=reader,
+                accumulate_batch=accumulate_batch,
+                calculation_began=calculation_began,
+                process_began=began,
             )
             processing_timings['input_loading_seconds'] = input_loading_seconds
             processing_timings['field_reader_initialization_seconds'] = reader_initialization_seconds

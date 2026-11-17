@@ -9,82 +9,45 @@ from __future__ import annotations
 import numpy as np
 
 from .corner_scatter import CornerTerms, CornerIncrement
+from ._gaussian_kernels import locate_and_prepare_corner_terms
 
 
-def locate_corners(table, centers, sigmas):
-    """Locate covered rows already validated by worker group preparation."""
-    coordinate = centers / table.delta_v
-    integer = np.floor(coordinate)
-    phases = coordinate - integer
-    shifts = integer.astype(np.int64)
-    upper = np.searchsorted(table.sigma_nodes, sigmas, side='left')
-    lower = np.maximum(upper - 1, 0)
-    lower_sigma = table.sigma_nodes[lower]
-    upper_sigma = table.sigma_nodes[upper]
-    fraction = np.divide(
-        sigmas - lower_sigma,
-        upper_sigma - lower_sigma,
-        out=np.zeros_like(sigmas),
-        where=upper != lower,
-    )
-    np.clip(fraction, 0.0, 1.0, out=fraction)
-    low_left, low_right, low_fraction = table._phase_brackets(lower, phases)
-    high_left, high_right, high_fraction = table._phase_brackets(upper, phases)
-    return shifts, (low_left, low_right, high_left, high_right), (
-        (1.0 - fraction) * (1.0 - low_fraction),
-        (1.0 - fraction) * low_fraction,
-        fraction * (1.0 - high_fraction),
-        fraction * high_fraction,
-    )
-
-
-def prepare_corner_increment(
-    spec, shifts, rows, fractions, luminosity, profiles,
-):
-    """Construct unsorted terms from four template rows per selected cell.
-
-    rows and fractions contain four vectors[N]; shifts[N] are integer channels.
-    Each term maps a local luminosity row to the flat destination slot for its
-    template row plus shift. Only the existing corner/window filter is applied.
-    """
+def prepare_cell_corner_increment(spec, centers, sigmas, luminosity, profiles):
+    """Locate and prepare covered cells without retaining N-length corner arrays."""
+    if luminosity.shape[0] != centers.size:
+        raise ValueError("Raw corner coordinates must match the luminosity rows")
     table = spec.table
-    output_first = int(table.output_bin_indices[0])
-    output_stop = output_first + table.K
-    largest_index = max(spec.slot_count, luminosity.shape[0])
-    index_dtype = np.int32 if largest_index <= np.iinfo(np.int32).max else np.int64
-    source = np.arange(shifts.size, dtype=index_dtype)
-    selected_slots = []
-    selected_cells = []
-    selected_weights = []
-    touched = np.zeros(table.row_min_bins.size, dtype=bool)
-    positive_corners = 0
-    for ids, fraction in zip(rows, fractions):
-        positive = fraction != 0.0
-        positive_corners += int(np.count_nonzero(positive))
-        minimum = shifts + table.row_min_bins[ids]
-        stop = minimum + table.row_bin_counts[ids]
-        retained = positive & (minimum < output_stop) & (stop > output_first)
-        retained_rows = ids[retained]
-        relative = shifts[retained] - spec.row_minimum_shifts[retained_rows]
-        if (
-            np.any(relative < 0)
-            or np.any(relative >= spec.row_shift_counts[retained_rows])
-        ):
-            raise ValueError("Raw corner shift is outside its exact support/window overlap")
-        slots = spec.row_offsets[retained_rows] + relative
-        selected_slots.append(slots.astype(index_dtype, copy=False))
-        selected_cells.append(source[retained])
-        selected_weights.append(fraction[retained])
-        touched[retained_rows] = True
+    prepared = locate_and_prepare_corner_terms(
+        centers=centers,
+        sigmas=sigmas,
+        delta_v=table.delta_v,
+        sigma_nodes=table.sigma_nodes,
+        phase_counts=table.phase_counts,
+        phase_starts=table.phase_starts,
+        phase_values=table.phase_axis_values,
+        narrow_layers=table.narrow_phase_layers.view(np.uint8),
+        transition_intervals=table.phase_transition_intervals,
+        transition_radii=table.phase_transition_radii,
+        right_starts=table.phase_right_starts,
+        inverse_steps=table.phase_inverse_steps,
+        minimum_shifts=spec.row_minimum_shifts,
+        shift_counts=spec.row_shift_counts,
+        row_offsets=spec.row_offsets,
+        output_length=spec.slot_count,
+    )
+    return _freeze_corner_increment(spec, luminosity, profiles, prepared)
+
+
+def _freeze_corner_increment(spec, luminosity, profiles, prepared):
+    """Validate/freeze owned terms and retain only the wave's borrowed luminosity."""
+    destination_slots, source_cells, weights, touched, positive_corners = prepared
     terms = CornerTerms(
-        destination_slots=np.concatenate(selected_slots),
-        source_cells=np.concatenate(selected_cells),
-        weights=np.concatenate(selected_weights),
+        destination_slots=destination_slots,
+        source_cells=source_cells,
+        weights=weights,
         input_length=int(luminosity.shape[0]),
         output_length=spec.slot_count,
     )
-    if not np.isfinite(terms.weights).all():
-        raise FloatingPointError("Raw corner weights must remain finite")
     profile_ids = profiles.copy()
     profile_ids.flags.writeable = False
     touched.flags.writeable = False

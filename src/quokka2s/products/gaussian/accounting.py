@@ -98,13 +98,23 @@ def audit_accounting(payload, *, cutoff_sigma=5.0):
     }
 
 
-def add_cutoff_accounts(payload, *, engine, cutoff_sigma=5.0):
-    """Attach the selected engine's independent exact endpoint references."""
+def add_cutoff_accounts(
+    payload, *, full_window_luminosity, clipped_window_luminosity,
+    cutoff_applies_to, cutoff_sigma=5.0,
+):
+    """Copy independent original-cell endpoint accounts into saved payload fields.
+
+    Endpoint inputs are flat float64-compatible luminosities [erg/s], one per
+    dust/line/cold-hot account. cutoff_applies_to describes the adopted cutoff.
+    """
     input_light = payload["input_luminosity_erg_s"]
     expected_size = input_light.size
     references = []
-    for attribute in ("untruncated_window_luminosity", "clipped_window_luminosity"):
-        values = np.asarray(getattr(engine, attribute), dtype=np.float64)
+    for attribute, endpoint_values in (
+        ("untruncated_window_luminosity", full_window_luminosity),
+        ("clipped_window_luminosity", clipped_window_luminosity),
+    ):
+        values = np.asarray(endpoint_values, dtype=np.float64)
         if values.shape != (expected_size,):
             raise ValueError(f"Engine {attribute} requires shape ({expected_size},)")
         references.append(values.reshape(input_light.shape).copy())
@@ -115,28 +125,26 @@ def add_cutoff_accounts(payload, *, engine, cutoff_sigma=5.0):
     payload[TAIL_ARRAY] = np.maximum(0.0, full_window - clipped_window)
     payload[RESIDUAL_ARRAY] = payload["captured_luminosity_erg_s"] - clipped_window
     audit = audit_accounting(payload, cutoff_sigma=cutoff_sigma)
-    audit["cutoff_applies_to"] = getattr(engine, "cutoff_applies_to", "histogram-node Gaussians")
+    audit["cutoff_applies_to"] = cutoff_applies_to
     return audit
 
 
-def update_cutoff_report(report, payload, *, engine, audit):
+def update_cutoff_report(report, payload, *, template_method, statistics, audit):
     """Describe template interpolation and independent original-cell accounts."""
     input_light = payload["input_luminosity_erg_s"]
     captured = payload["captured_luminosity_erg_s"]
     outside = payload["outside_velocity_luminosity_erg_s"]
-    method = str(engine.lookup_tables.method)
+    method = str(template_method)
     for dust_index, dust_key in enumerate(payload["dust_state_keys"].tolist()):
         dust_report = report[dust_key]
-        dust_report["cell_integration"] = "preintegrated-phase-log-sigma-template-native"
-        dust_report.pop("node_integration", None)
+        dust_report["cell_integration"] = "preintegrated-templates-with-direct-outside-sigma-integration"
         dust_report["gaussian_template_method"] = method
-        dust_report.pop("phi_expansion_statistics", None)
         dust_report["gaussian_cutoff_sigma"] = audit["gaussian_cutoff_sigma"]
         dust_report["cutoff_renormalized"] = False
-        dust_report["cutoff_applies_to"] = "Stored template-corner Gaussians"
+        dust_report["cutoff_applies_to"] = audit["cutoff_applies_to"]
         dust_report["profile"] = (
-            "Original-cell luminosities multiplied by interpolated integrated-bin templates; "
-            "fractional mean plus integer-bin shift; linear sigma interpolation on log-spaced sigma nodes"
+            "Original-cell four-corner linear phase/sigma interpolation on log-spaced sigma nodes inside coverage; "
+            "original mu/sigma stable bin integration outside sigma coverage"
         )
         dust_report["cutoff_reference_applies_to"] = "Original-cell Gaussians"
         dust_report["cutoff_accounting"] = (
@@ -147,7 +155,7 @@ def update_cutoff_report(report, payload, *, engine, audit):
             "Complete moments retain original-cell Gaussians."
         )
         dust_report["cutoff_accounting_audit"] = audit
-        dust_report["template_expansion_statistics"] = engine.expansion_statistics
+        dust_report["template_expansion_statistics"] = statistics
         for line_index, line_key in enumerate(payload["line_keys"].tolist()):
             line_report = dust_report["lines"][line_key]
             selections = [("total", (dust_index, line_index))]

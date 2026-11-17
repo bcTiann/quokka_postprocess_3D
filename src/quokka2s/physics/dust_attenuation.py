@@ -10,10 +10,44 @@ from collections.abc import Sequence
 from pathlib import Path
 
 import numpy as np
+
 from numpy.typing import ArrayLike, NDArray
 
+from quokka2s._table_kernels import attenuate_available_line
 from quokka2s.line_definitions import LINE_DEFINITIONS
 from quokka2s.input_paths import DEFAULT_DRAINE_TABLE
+
+
+DEFAULT_NUMPY_ERRORS = {
+    "divide": "warn", "over": "warn", "under": "ignore", "invalid": "warn",
+}
+
+
+def attenuate_available_emissivities(emissivity, foreground_NH, sigma_cm2_H):
+    """Fuse full Float64 line attenuation, or request the existing NumPy path.
+
+    Missing intrinsic entries are copied without reading their foreground
+    columns. This is distinct from attenuate_emissivities(), which accepts only
+    already selected finite entries. Inputs remain borrowed and unchanged.
+    """
+    if (
+        all(
+            type(values) is np.ndarray
+            and values.dtype == np.float64
+            and values.ndim == 1
+            and values.flags.aligned
+            for values in (emissivity, foreground_NH)
+        )
+        and emissivity.shape == foreground_NH.shape
+        and isinstance(sigma_cm2_H, (float, np.float64))
+        and np.geterr() == DEFAULT_NUMPY_ERRORS
+    ):
+        return attenuate_available_line(
+            emissivity=emissivity,
+            foreground_column=foreground_NH,
+            cross_section=sigma_cm2_H,
+        )
+    return None
 
 
 def load_draine_extinction(path=DEFAULT_DRAINE_TABLE):
@@ -173,9 +207,20 @@ def attenuate_emissivities(emissivity, foreground_NH, sigma_cm2_H):
     epsilon = np.asarray(emissivity, dtype=float)
     column = np.asarray(foreground_NH, dtype=float)
     sigma = np.asarray(sigma_cm2_H, dtype=float)
-    if (epsilon.ndim not in (1, 2) or column.shape != (epsilon.shape[-1],)
-            or sigma.shape != epsilon.shape[:-1] or not np.isfinite(epsilon).all()
-            or not np.isfinite(column).all() or not np.isfinite(sigma).all()
-            or np.any(epsilon < 0) or np.any(column < 0) or np.any(sigma < 0)):
+    if (
+        epsilon.ndim not in (1, 2)
+        or column.shape != (epsilon.shape[-1],)
+        or sigma.shape != epsilon.shape[:-1]
+    ):
         raise ValueError("Expected nonnegative finite emissivity, foreground column, and opacity")
-    return epsilon * np.exp(-sigma[..., None] * column)
+    # Extremes reject the same invalid values without full-size Boolean arrays.
+    # Initial zero keeps empty, nonnegative inputs valid as before.
+    for values in (epsilon, column, sigma):
+        minimum = np.min(values, initial=0.0)
+        maximum = np.max(values, initial=0.0)
+        if minimum < 0.0 or not np.isfinite(minimum) or not np.isfinite(maximum):
+            raise ValueError("Expected nonnegative finite emissivity, foreground column, and opacity")
+    attenuated = -sigma[..., None] * column
+    np.exp(attenuated, out=attenuated)
+    np.multiply(epsilon, attenuated, out=attenuated)
+    return attenuated

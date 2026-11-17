@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from time import perf_counter, perf_counter_ns
-from types import SimpleNamespace
 
 import numpy as np
 
@@ -122,6 +121,7 @@ class TemplateIntegratedSpectra(IntegratedSpectra):
             "workers": 0,
             "kernel_calls": 0,
             "contiguous_X_logical_bytes": 0,
+            "contiguous_X_copied_bytes": 0,
             "raw_corner_terms": 0,
             "maximum_profile_tasks": 0,
             "maximum_pending_raw_owned_bytes": 0,
@@ -156,8 +156,8 @@ class TemplateIntegratedSpectra(IntegratedSpectra):
     def queue_gaussian_group(
         self, *, line_keys, branch_index, velocity_kms, thermal_width_kms,
         luminosity_matrix,
-    ):
-        """Implement the shared width-group hook by retaining original cells.
+    ) -> None:
+        """Retain one width group's original cells until corner preparation.
 
         The shared preparation hook retains owned inputs only until the next
         bounded worker wave deposits their existing four template corners.
@@ -169,10 +169,10 @@ class TemplateIntegratedSpectra(IntegratedSpectra):
             if (
                 not isinstance(values, np.ndarray)
                 or values.dtype != np.float64
-                or not values.flags.c_contiguous
+                or not (values.flags.c_contiguous if values.ndim == 1 else values.flags.f_contiguous)
                 or not values.flags.owndata
             ):
-                raise ValueError("Template queues require owned C-order float64 inputs")
+                raise ValueError("Template queues require owned vectors and column-contiguous float64 luminosity")
             values.flags.writeable = False
         group = GaussianBatchGroup(
             profile_ids=self._profile_ids(line_keys, branch_index),
@@ -186,8 +186,6 @@ class TemplateIntegratedSpectra(IntegratedSpectra):
                 self._input_owner_ids.add(id(values))
                 self._owned_input_bytes += values.nbytes
         self._groups_prepared += 1
-        # Shared preparation still computes every original-cell moment and L sum.
-        return np.zeros((self.velocity_edges_kms.size - 1, luminosity_matrix.shape[1]))
 
     def prepare_corner_increments(self):
         """Prepare raw terms, fallback and accounts; keep L until wave writers join.
@@ -318,6 +316,7 @@ class TemplateIntegratedSpectra(IntegratedSpectra):
         observations['workers'] = max(observations['workers'], workers)
         observations['kernel_calls'] += metrics['kernel_calls']
         observations['contiguous_X_logical_bytes'] += metrics['contiguous_X_logical_bytes']
+        observations['contiguous_X_copied_bytes'] += metrics['contiguous_X_copied_bytes']
         observations['raw_corner_terms'] += metrics['raw_corner_terms']
         observations['maximum_profile_tasks'] = max(
             observations['maximum_profile_tasks'], metrics['profile_tasks'],
@@ -498,16 +497,20 @@ class TemplateIntegratedSpectra(IntegratedSpectra):
             "raw_wave_statistics": dict(self._scatter_statistics),
             "raw_luminosity_retention": "Read-only packed owners survive for one bounded wave; every profile writer joins before release.",
         }
-        accounting_engine = SimpleNamespace(
-            coordinate_rule="original-cell",
-            cutoff_applies_to=self.engine.cutoff_applies_to,
-            lookup_tables=self.engine.lookup_tables,
-            expansion_statistics=statistics,
-            untruncated_window_luminosity=self._full_window_luminosity,
+        audit = add_cutoff_accounts(
+            payload,
+            full_window_luminosity=self._full_window_luminosity,
             clipped_window_luminosity=self._clipped_window_luminosity,
+            cutoff_applies_to=self.engine.cutoff_applies_to,
+            cutoff_sigma=5.0,
         )
-        audit = add_cutoff_accounts(payload, engine=accounting_engine, cutoff_sigma=5.0)
-        update_cutoff_report(report, payload, engine=accounting_engine, audit=audit)
+        update_cutoff_report(
+            report,
+            payload,
+            template_method=self.engine.lookup_tables.method,
+            statistics=statistics,
+            audit=audit,
+        )
         for dust_state, dust_report in report.items():
             dust_report["spectral_method"] = "direct-template"
             dust_report["direct_statistics"] = statistics
@@ -515,12 +518,6 @@ class TemplateIntegratedSpectra(IntegratedSpectra):
                 **coverage,
                 "profiles": [entry for entry in coverage["profiles"] if entry["dust_state"] == dust_state],
             }
-            dust_report["profile"] = (
-                "Original-cell four-corner linear phase/sigma interpolation on log-spaced sigma nodes inside coverage; "
-                "original mu/sigma stable bin integration outside sigma coverage"
-            )
-            dust_report["cutoff_applies_to"] = self.engine.cutoff_applies_to
-            dust_report["cell_integration"] = "preintegrated-templates-with-direct-outside-sigma-integration"
             dust_report["fallback"] = (
                 "All valid out-of-table widths use stable original-cell bin integrals; "
                 "same +/-5sigma cutoff, no renormalization or luminosity omission threshold"

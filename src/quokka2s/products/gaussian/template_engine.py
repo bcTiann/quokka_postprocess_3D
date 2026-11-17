@@ -11,7 +11,15 @@ from time import perf_counter, perf_counter_ns
 
 import numpy as np
 
-from .intervals import interval_probability
+from .intervals import (
+    _NARROW_INTERVAL_THRESHOLD,
+    _QUADRATURE_NODES,
+    _QUADRATURE_WEIGHTS,
+    _SQRT_TWO,
+    _SQRT_TWO_PI,
+    interval_probability,
+)
+from ._gaussian_kernels import original_window_probabilities
 from .template_coverage import TemplateGroupCoverage, sigma_range
 from .template_table import FractionalGaussianTable
 
@@ -110,9 +118,15 @@ class TemplateEngine:
             raise ValueError("Gaussian means and widths must be matching vectors")
         if not np.isfinite(centers).all():
             raise ValueError("Gaussian means must be finite")
-        with np.errstate(over="ignore", invalid="ignore"):
-            coordinates = centers / self.lookup_tables.delta_v
-        if not np.isfinite(coordinates).all() or np.any(np.abs(coordinates) >= 2**62):
+        if self.lookup_tables.delta_v == 1.0:
+            # The usual 1-km/s channels need no second coordinate allocation.
+            coordinates = centers
+        else:
+            with np.errstate(over="ignore", invalid="ignore"):
+                coordinates = centers / self.lookup_tables.delta_v
+            if not np.isfinite(coordinates).all():
+                raise ValueError("Gaussian integer-bin shifts must fit safe signed int64 coordinates")
+        if np.any(coordinates <= -(2**62)) or np.any(coordinates >= 2**62):
             raise ValueError("Gaussian integer-bin shifts must fit safe signed int64 coordinates")
         if not np.isfinite(sigmas).all() or np.any(sigmas <= 0.0):
             raise ValueError("Gaussian sigma must be finite and positive")
@@ -148,7 +162,6 @@ class TemplateEngine:
             selected_centers = centers[start:stop][active]
             selected_sigmas = sigmas[start:stop][active]
             selected_luminosity = luminosity[start:stop][active]
-            probabilities = np.empty((selected_centers.size, table.K), dtype=np.float64)
             direct_count = selected_centers.size
             began = perf_counter()
             with np.errstate(over="ignore", invalid="ignore", divide="ignore", under="ignore"):
@@ -156,7 +169,7 @@ class TemplateEngine:
                     table.edges[None, :] - selected_centers[:, None]
                 ) / selected_sigmas[:, None]
             np.clip(boundaries, -table.Z, table.Z, out=boundaries)
-            probabilities[:] = interval_probability(
+            probabilities = interval_probability(
                 boundaries[:, :-1],
                 boundaries[:, 1:],
             )
@@ -173,32 +186,22 @@ class TemplateEngine:
             counters["probability_subbatches"] += 1
         return output, counters, probability_seconds
 
-    def _original_window_probabilities(self, lower, upper):
-        """Reuse saturated/full-cutoff masses; retain stable boundary integrals."""
-        saturated = (lower <= -self._full_window_saturation) & (upper >= self._full_window_saturation)
-        if np.any(saturated):
-            full = np.ones(lower.shape, dtype=np.float64)
-            remaining = ~saturated
-            if np.any(remaining):
-                full[remaining] = interval_probability(lower[remaining], upper[remaining])
-        else:
-            full = interval_probability(lower, upper)
-        cutoff = self.lookup_tables.Z
-        interior = (lower <= -cutoff) & (upper >= cutoff)
-        if np.any(interior):
-            clipped = np.full(lower.shape, self._clipped_interior_mass, dtype=np.float64)
-            boundary = ~interior
-            if np.any(boundary):
-                clipped[boundary] = interval_probability(
-                    np.clip(lower[boundary], -cutoff, cutoff),
-                    np.clip(upper[boundary], -cutoff, cutoff),
-                )
-        else:
-            clipped = interval_probability(
-                np.clip(lower, -cutoff, cutoff),
-                np.clip(upper, -cutoff, cutoff),
-            )
-        return full, clipped
+    def _original_window_probabilities(self, centers, sigmas):
+        """Standardize original cells and retain stable full/clipped probabilities."""
+        return original_window_probabilities(
+            centers=centers,
+            sigmas=sigmas,
+            lower_edge=self.lookup_tables.edges[0],
+            upper_edge=self.lookup_tables.edges[-1],
+            cutoff_sigma=self.lookup_tables.Z,
+            full_saturation=self._full_window_saturation,
+            clipped_interior_mass=self._clipped_interior_mass,
+            quadrature_nodes=_QUADRATURE_NODES,
+            quadrature_weights=_QUADRATURE_WEIGHTS,
+            sqrt_two=_SQRT_TWO,
+            sqrt_two_pi=_SQRT_TWO_PI,
+            narrow_threshold=_NARROW_INTERVAL_THRESHOLD,
+        )
 
     def _prepare_group_result(self, centers, sigmas, luminosity):
         """Validate one worker group and retain its original-cell accounts.
@@ -209,13 +212,8 @@ class TemplateEngine:
         independent original-cell endpoint accounts are timed separately after it.
         """
         query_started_ns = perf_counter_ns()
-        owned_account_inputs = all(
-            isinstance(values, np.ndarray) and values.dtype == np.float64
-            and values.flags.c_contiguous and values.flags.owndata
-            for values in (centers, sigmas, luminosity)
-        )
         centers, sigmas = self._prepare_coordinates(centers, sigmas)
-        luminosity = np.ascontiguousarray(luminosity, dtype=np.float64)
+        luminosity = np.asfortranarray(luminosity, dtype=np.float64)
         if luminosity.ndim != 2 or luminosity.shape[0] != centers.size:
             raise ValueError("Luminosity must have shape(cell count, profile count)")
         if not 1 <= luminosity.shape[1] <= 12:
@@ -225,9 +223,12 @@ class TemplateEngine:
         below = sigmas < self.lookup_tables.sigma_nodes[0]
         above = sigmas > self.lookup_tables.sigma_nodes[-1]
         outside = below | above
-        outside_rows = np.flatnonzero(outside).astype(np.int64, copy=False)
+        outside_count = int(np.count_nonzero(outside))
+        positive = luminosity > 0.0
+        active = np.any(positive, axis=1)
+        all_active = bool(np.all(active))
         channel_mass, counts, probability_seconds = self._prepare_contributions(
-            centers, sigmas, luminosity, outside,
+            centers, sigmas, luminosity, outside, active,
         )
         channel_mass = np.ascontiguousarray(channel_mass.T)
         channel_mass /= self.lookup_tables.delta_v
@@ -236,9 +237,7 @@ class TemplateEngine:
         query_finished_ns = perf_counter_ns()
 
         accounting_began = perf_counter()
-        positive = luminosity > 0.0
-        active = np.any(positive, axis=1)
-        if owned_account_inputs and np.all(active):
+        if all_active:
             account_centers = centers
             account_sigmas = sigmas
             account_luminosity = luminosity
@@ -246,38 +245,58 @@ class TemplateEngine:
             account_centers = centers[active]
             account_sigmas = sigmas[active]
             account_luminosity = luminosity[active]
-        with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
-            lower = (self.lookup_tables.edges[0] - account_centers) / account_sigmas
-            upper = (self.lookup_tables.edges[-1] - account_centers) / account_sigmas
         full_probability, clipped_probability = self._original_window_probabilities(
-            lower, upper,
+            account_centers, account_sigmas,
         )
-        full_window = np.einsum("i,ip->p", full_probability, account_luminosity, optimize=False)
-        clipped_window = np.einsum("i,ip->p", clipped_probability, account_luminosity, optimize=False)
+        full_window = np.dot(full_probability, account_luminosity)
+        clipped_window = np.dot(clipped_probability, account_luminosity)
         accounting_seconds = perf_counter() - accounting_began
         if not np.isfinite(full_window).all() or not np.isfinite(clipped_window).all():
             raise FloatingPointError("Original-cell analytic window accounts became nonfinite")
         coverage_began = perf_counter()
-        outside_accounts = outside[active]
+        all_sigma_range = sigma_range(sigmas)
+        emitting_sigma_range = all_sigma_range if all_active else sigma_range(account_sigmas)
+        if outside_count:
+            outside_accounts = outside[active]
+            outside_emitting_rows = int(np.count_nonzero(outside & active))
+            below_range_rows = int(np.count_nonzero(below))
+            above_range_rows = int(np.count_nonzero(above))
+            below_range_emitting_rows = int(np.count_nonzero(below & active))
+            above_range_emitting_rows = int(np.count_nonzero(above & active))
+            outside_sigma_range = sigma_range(sigmas[outside])
+            outside_profile_emitting_rows = np.count_nonzero(positive[outside], axis=0)
+            outside_input_luminosity = np.sum(luminosity[outside], axis=0, dtype=np.float64)
+            outside_window_luminosity_reference = np.einsum(
+                "i,ip->p", clipped_probability[outside_accounts],
+                account_luminosity[outside_accounts], optimize=False,
+            )
+        else:
+            # Covered-only groups have no outside cells to gather or integrate.
+            outside_emitting_rows = 0
+            below_range_rows = 0
+            above_range_rows = 0
+            below_range_emitting_rows = 0
+            above_range_emitting_rows = 0
+            outside_sigma_range = None
+            outside_profile_emitting_rows = np.zeros(luminosity.shape[1], dtype=np.int64)
+            outside_input_luminosity = np.zeros(luminosity.shape[1], dtype=np.float64)
+            outside_window_luminosity_reference = np.zeros(luminosity.shape[1], dtype=np.float64)
         coverage = TemplateGroupCoverage(
             rows=int(centers.size),
             emitting_rows=int(np.count_nonzero(active)),
-            outside_rows=int(outside_rows.size),
-            outside_emitting_rows=int(np.count_nonzero(outside & active)),
-            below_range_rows=int(np.count_nonzero(below)),
-            above_range_rows=int(np.count_nonzero(above)),
-            below_range_emitting_rows=int(np.count_nonzero(below & active)),
-            above_range_emitting_rows=int(np.count_nonzero(above & active)),
-            sigma_range=sigma_range(sigmas),
-            emitting_sigma_range=sigma_range(account_sigmas),
-            outside_sigma_range=sigma_range(sigmas[outside]),
+            outside_rows=outside_count,
+            outside_emitting_rows=outside_emitting_rows,
+            below_range_rows=below_range_rows,
+            above_range_rows=above_range_rows,
+            below_range_emitting_rows=below_range_emitting_rows,
+            above_range_emitting_rows=above_range_emitting_rows,
+            sigma_range=all_sigma_range,
+            emitting_sigma_range=emitting_sigma_range,
+            outside_sigma_range=outside_sigma_range,
             profile_emitting_rows=np.count_nonzero(positive, axis=0),
-            outside_profile_emitting_rows=np.count_nonzero(positive[outside], axis=0),
-            outside_input_luminosity=np.sum(luminosity[outside], axis=0, dtype=np.float64),
-            outside_window_luminosity_reference=np.einsum(
-                "i,ip->p", clipped_probability[outside_accounts],
-                account_luminosity[outside_accounts], optimize=False,
-            ),
+            outside_profile_emitting_rows=outside_profile_emitting_rows,
+            outside_input_luminosity=outside_input_luminosity,
+            outside_window_luminosity_reference=outside_window_luminosity_reference,
         )
         coverage_seconds = perf_counter() - coverage_began
         statistics = {
@@ -292,7 +311,7 @@ class TemplateEngine:
             "template_probability_values_generated": int(counts["support_bins_visited"] - counts.get("direct_support_bins_visited", 0)),
             "template_subbatches": int(counts["probability_subbatches"]),
             "template_online_cdf_queries": 0,
-            "fallback_rows": int(outside_rows.size),
+            "fallback_rows": outside_count,
             "fallback_active_rows": int(counts.get("direct_active_rows", 0)),
             "fallback_probability_intervals": int(counts["direct_support_bins_visited"]),
             "fallback_probability_batches": int(counts["direct_probability_batches"]),

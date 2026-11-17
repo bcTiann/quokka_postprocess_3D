@@ -63,8 +63,8 @@ class ProcessSettings:
     despotic_table: Path = DEFAULT_DESPOTIC_TABLE
     cloudy_table: Path = DEFAULT_CLOUDY_TABLE
     dust_opacity_table: Path = DEFAULT_DRAINE_TABLE
-    query_chunk: int = 262_144
-    chunk_workers: int = 32
+    query_chunk: int = 131_072
+    chunk_workers: int = 16
     x_index_range: tuple[int, int] | None = None
     y_index_range: tuple[int, int] | None = None
     gaussian_grid: dict | None = None
@@ -318,10 +318,8 @@ def _selected_dataset(supplied: dict, dataset: str | Path | None) -> str:
     return str(expanded)
 
 
-def _positive_int(name: str, value: object, *, nullable: bool = False) -> int | None:
-    """Accept a positive integer without coercion; optionally permit None."""
-    if value is None and nullable:
-        return None
+def _positive_int(name: str, value: object) -> int:
+    """Accept a positive integer without coercion."""
     if type(value) is not int or value <= 0:
         raise ValueError(f"{name} must be a positive integer")
     return value
@@ -455,30 +453,6 @@ def load_plot_config(
     output group; the original snapshot does not need to remain available.
     """
     config_path, supplied = _read_mapping(path)
-    return _plot_settings(
-        config_path=config_path,
-        supplied=supplied,
-        dataset=dataset,
-        jobname=jobname,
-        x_index_range=x_index_range,
-        y_index_range=y_index_range,
-        figure_formats=figure_formats,
-        figure_styles=figure_styles,
-    )
-
-
-def _plot_settings(
-    *,
-    config_path: Path,
-    supplied: dict,
-    dataset: str | Path | None,
-    jobname: str | None,
-    x_index_range: list[int] | None,
-    y_index_range: list[int] | None,
-    figure_formats: list[str] | None,
-    figure_styles: list[str] | None,
-) -> PlotSettings:
-    """Validate saved-result selection and figure choices from one YAML mapping."""
     run = read_run_selection(
         supplied=supplied,
         config_directory=config_path.parent,

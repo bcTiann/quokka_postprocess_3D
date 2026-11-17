@@ -7,7 +7,7 @@ from time import perf_counter_ns
 
 def process_template_batches(
     *, config, snapshot, emission_calculator, products, slab, executor,
-    accumulate_batch, progress=None, after_wave=None,
+    accumulate_batch, after_wave=None,
 ):
     """Keep at most chunk_workers Gaussian input queues within the current slab.
 
@@ -24,24 +24,16 @@ def process_template_batches(
     from ..emission_products import EmissionProducts
 
     batches = iter(slab.iter_batches(batch_size=config.query_chunk))
-    submitted_batches = 0
     while True:
         wave_cells = list(islice(batches, config.chunk_workers))
         if not wave_cells:
             break
-        first_batch = submitted_batches + 1
-        batch_numbers = list(range(first_batch, first_batch + len(wave_cells)))
-        submitted_batches += len(wave_cells)
         physical_started = perf_counter_ns()
         physical_futures = []
         gaussian_futures = []
         partials = []
 
-        def prepare_one(batch_number, cells):
-            stage_progress = None
-            if progress is not None:
-                progress.start_batch(batch_number)
-                stage_progress = lambda stage: progress.set_stage(batch_number, stage)
+        def prepare_one(cells):
             partial = EmissionProducts(
                 gaussian_engine=products.spectra.engine,
                 batch_partial=True,
@@ -53,26 +45,15 @@ def process_template_batches(
                     cells=cells,
                     emission_calculator=emission_calculator,
                     products=partial,
-                    progress=stage_progress,
                 )
             except BaseException:
                 partial.spectra.release_gaussian_inputs()
                 raise
-            if progress is not None:
-                progress.set_stage(batch_number, "prepared original-cell Gaussians")
-            return partial
-
-        def prepare_corners_one(batch_number, partial):
-            if progress is not None:
-                progress.set_stage(batch_number, "preparing Gaussian corners and accounts")
-            partial.spectra.prepare_corner_increments()
-            if progress is not None:
-                progress.batch_ready(batch_number)
             return partial
 
         try:
-            for batch_number, cells in zip(batch_numbers, wave_cells):
-                physical_futures.append(executor.submit(prepare_one, batch_number, cells))
+            for cells in wave_cells:
+                physical_futures.append(executor.submit(prepare_one, cells))
             for cells, future in zip(wave_cells, physical_futures):
                 products.failure_context = {
                     "first_cell_id": cells.first_cell_id,
@@ -83,8 +64,8 @@ def process_template_batches(
             owned_input_bytes = sum(partial.spectra._owned_input_bytes for partial in partials)
             prepared_groups = sum(partial.spectra._groups_prepared for partial in partials)
             gaussian_started = perf_counter_ns()
-            for batch_number, partial in zip(batch_numbers, partials):
-                gaussian_futures.append(executor.submit(prepare_corners_one, batch_number, partial))
+            for partial in partials:
+                gaussian_futures.append(executor.submit(partial.spectra.prepare_corner_increments))
             for cells, future in zip(wave_cells, gaussian_futures):
                 products.failure_context = {
                     "first_cell_id": cells.first_cell_id,
@@ -104,16 +85,12 @@ def process_template_batches(
             )
             gaussian_finished = perf_counter_ns()
             merge_started = perf_counter_ns()
-            for batch_number, cells, partial in zip(batch_numbers, wave_cells, partials):
+            for cells, partial in zip(wave_cells, partials):
                 products.failure_context = {
                     "first_cell_id": cells.first_cell_id,
                     "last_cell_id": cells.last_cell_id,
                 }
-                if progress is not None:
-                    progress.set_stage(batch_number, "merging completed batch products")
                 products.merge(partial)
-                if progress is not None:
-                    progress.batch_merged(batch_number, cells.cell_count)
             merge_finished = perf_counter_ns()
             products.spectra.record_completed_wave(
                 physical_ns=physical_finished - physical_started,

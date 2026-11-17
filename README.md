@@ -5,13 +5,17 @@ columns into bounded RAM. A separate script draws images and spectra from the
 saved numerical arrays. On Setonix, use the short
 [Setonix guide](docs/setonix.md).
 
+This branch enables the compiled numerical kernels. The supplied configuration
+uses 16 batches of at most 131072 cells, sigma coverage through 8192 km/s, and
+a 30 GB whole-process memory guard. Runtime physics and grids remain Python inputs.
+
 Setonix results are tracked in [output/](output/). A normal clone includes the
 saved numerical products and PNG/PDF figures in their original directory structure.
 
 ## 1. Clone
 
 ```bash
-git clone https://github.com/bcTiann/quokka_postprocess_3D.git
+git clone --branch codex/cython-optimized https://github.com/bcTiann/quokka_postprocess_3D.git
 cd quokka_postprocess_3D
 ```
 
@@ -33,16 +37,19 @@ uv sync
 
 uv creates `.venv` and installs this checkout in editable mode. No activation,
 `PYTHONPATH` or manual `pip install` is needed. The locked environment uses
-Python 3.11. Project calculations use NumPy/SciPy and have no custom Cython
-extensions or separate compilation step. Building the pinned yt source dependency
-can still require Git and C/C++ build tools when no cached build is available.
-uv installs its build dependencies automatically. Both process and plot
+Python 3.11. Project calculations use NumPy/SciPy with small Cython numerical
+loops. `uv sync` builds these automatically and installs their pinned build
+dependencies; a C compiler is required. The pinned yt source dependency can
+also require Git and C/C++ build tools when no cached build is available.
+Both process and plot
 dependencies are installed by default. `uv run` checks the environment
 automatically and reuses the locked versions; it does not reinstall everything
 on each run.
 
 The editable installation reads changes to the processing Python files directly.
 Run `uv sync` after changing dependencies or package settings.
+Changing grids, physical parameters or configuration in Python requires no
+native rebuild. Changes to `.pyx` files trigger rebuilding on the next sync/run.
 
 On Setonix, follow its [environment setup](docs/setonix.md#2-configure-the-environment)
 instead: keep the repository, environment, caches and generated results under
@@ -124,11 +131,14 @@ spaced; interpolation weights use linear sigma distances.
 
 This is the sole production Gaussian method. Valid sigma values outside table
 coverage use stable direct integration with the same 5-sigma cutoff and are
-reported in the log. No project Cython extension is required. Only Gaussian
+reported in the log. Compiled loops handle physical-table interpolation,
+Gaussian coordinate preparation, independent window probabilities and full
+moments; their grids, tables and numerical parameters are Python inputs. Only Gaussian
 template preparation is outside process timing; metadata, field reads, physical
 calculations, all accumulation, checks and saving remain timed. The reader uses
 a conservative memory preflight and a 30 GB process RSS guard; tune query and
-worker sizes for the available memory. This cleanup does not claim a speedup.
+worker sizes for the available memory. Benchmark complete processing on the
+intended snapshot and host when choosing worker settings.
 
 [Detailed usage](docs/usage.md) · [Methods](docs/emission_method.md) ·
 [Code guide](docs/code_walkthrough.md) · [Repository layout](docs/repository_layout.md)

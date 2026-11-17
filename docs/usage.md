@@ -14,6 +14,11 @@ export, or manual `pip install -e .` is required. From the repository root:
 uv sync
 ```
 
+Sync automatically builds three small Cython extensions using a C compiler.
+Build dependencies are isolated and pinned in `pyproject.toml`. Grid arrays,
+physical settings and configuration remain Python inputs; editing them needs
+no recompilation. Editing a `.pyx` file triggers rebuilding on the next sync/run.
+
 `.python-version` selects Python 3.11. On Setonix, load the Python module and
 add `--python "$(command -v python)"` to sync, as shown in the Setonix guide.
 In later shells, return to the repository and use `uv run python process_snapshot.py`
@@ -126,11 +131,16 @@ when process refuses to reuse them. There is no partial snapshot checkpoint.
 
 | Setting | Meaning | Default |
 |---|---|---|
-| `query_chunk` | Maximum cells per physical/Gaussian batch | 262144 |
-| `chunk_workers` | Concurrent batches in one bounded wave | 32 |
+| `query_chunk` | Maximum cells per physical/Gaussian batch | 131072 |
+| `chunk_workers` | Concurrent batches in one bounded wave | 16 |
 | `z_read_workers` | Concurrent original FAB-field reads | 5 |
 | `z_reader_threads` | Complete-column derivation tasks | 32 |
-| `gaussian_grid` | Optional Gaussian template geometry overrides | null |
+| `gaussian_grid` | Gaussian template geometry overrides | `{sigma_max: 8192.0}` |
+
+Process sets one native BLAS/OpenMP thread by default before importing NumPy;
+independent batches provide the outer parallelism. Explicit environment thread
+settings remain respected. This avoids nesting a BLAS team inside every batch
+when reducing column-contiguous luminosity arrays.
 
 ### Original native-column fields
 
@@ -156,8 +166,9 @@ There is no algorithm selector. Means use integer-channel shifts and fractional
 phase; sigma nodes are logarithmically placed with **linear sigma weights**.
 The observed grid remains 400 channels over [-200,200] km/s.
 
-Default template sigma coverage is [1e-5,1024] km/s, with natural-log node step
-1/32. A known wider range can be configured before table preparation:
+The supplied configuration covers sigma=[1e-5,8192] km/s at natural-log node
+spacing 1/32, matching the validated compiled run. Omitting Gaussian settings
+uses the engine fallback range [1e-5,1024] km/s. Set coverage before preparation:
 
 ```yaml
 gaussian_grid:
@@ -175,7 +186,8 @@ Gaussian template preparation/validation is measured separately before process
 timing. Metadata, original reads, physical lookups, four-corner accumulation,
 convolution, checks and file saving are timed. Worker-call durations can overlap;
 do not add their sums to wall-clock stages. The final status includes saving.
-No custom Cython module or project compiler step is used.
+Environment synchronization builds the numerical extensions before processing;
+there is no compilation inside the timed snapshot calculation.
 
 ### Memory, concurrency and progress
 
@@ -276,8 +288,8 @@ figure_styles: [titled]
 ```
 
 Replace the old `titled_figures` setting with `figure_styles`. These choices
-apply to all figures from `uv run python plot_emission_results.py` and process's automatic plots, including
-luminosity images.
+apply to figures from `uv run python plot_emission_results.py`, including
+luminosity images. Processing never draws figures.
 The command-line equivalents are:
 
 | Command | Formats | Styles |
@@ -520,9 +532,9 @@ columns, then released. Each layer's inputs use the original column carries
 and periodic velocity neighbours. Every sightline retains complete z-column
 physics without a full-snapshot field array. The `nH` conversion, column and
 velocity-gradient definitions match process, including the order of cumulative
-additions. Emission
-processing retains its six slab fields and x-slab accumulation order; its YAML
-settings `slab_nx` and `max_slabs` do not control the range scan.
+additions. Emission processing retains six fields for one full-z XY tile and
+merges its batches in input order. Its x/y selection and the range survey's
+`max_columns` limit are independent.
 The range scan records DESPOTIC inputs for all cells
 (including hot CO) and Cloudy inputs for
 `T_QUOKKA >= 3000 K`. It does not calculate emission products or query table

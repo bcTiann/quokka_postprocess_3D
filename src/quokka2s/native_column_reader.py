@@ -15,21 +15,14 @@ from time import perf_counter
 
 import numpy as np
 
-
-FIELD_NAMES = (
-    "gasDensity",
-    "temperature",
-    "x-GasMomentum",
-    "y-GasMomentum",
-    "z-GasMomentum",
-)
+from .native_snapshot_reader import NATIVE_FIELD_NAMES
 
 
 @dataclass(frozen=True)
 class NativeColumnRawTile:
     """Owned full-z raw core and its true global periodic XY neighbours.
 
-    fields contains the five FIELD_NAMES as writable C-order float64 arrays
+    fields contains the five NATIVE_FIELD_NAMES as writable C-order float64 arrays
     [nx,ny,nz]. x_*_faces has shape [2,ny,nz], with index0 at
     (x_start-1)%global_nx and index1 at x_stop%global_nx. y_*_faces has shape
     [nx,2,nz], with index0 at (y_start-1)%global_ny and index1 at y_stop%global_ny.
@@ -111,12 +104,12 @@ class NativeColumnReader:
             raise ValueError("Native columns require a positive three-dimensional domain")
         if self._native_dtype.kind != "f" or self._native_dtype.itemsize not in (4, 8):
             raise ValueError("Native columns require float32 or float64 source fields")
-        if any(name not in self._field_positions for name in FIELD_NAMES):
+        if any(name not in self._field_positions for name in NATIVE_FIELD_NAMES):
             raise ValueError("Native columns require all five raw fields")
-        positions = [self._field_positions[name] for name in FIELD_NAMES]
+        positions = [self._field_positions[name] for name in NATIVE_FIELD_NAMES]
         if any(not isinstance(position, (int, np.integer)) or position < 0 for position in positions):
             raise ValueError("Native field positions must be nonnegative integers")
-        if len(set(positions)) != len(FIELD_NAMES):
+        if len(set(positions)) != len(NATIVE_FIELD_NAMES):
             raise ValueError("Native field positions must be distinct")
         if not self._blocks:
             raise ValueError("Native columns require nonempty FABs")
@@ -391,7 +384,7 @@ class NativeColumnReader:
         )
         fields = {
             name: np.empty(shape, dtype=np.float64, order="C")
-            for name in FIELD_NAMES
+            for name in NATIVE_FIELD_NAMES
         }
         core_started = perf_counter()
         tasks = [
@@ -403,7 +396,7 @@ class NativeColumnReader:
                 bounds=bounds,
             )
             for block in self._tiles[bounds]
-            for name in FIELD_NAMES
+            for name in NATIVE_FIELD_NAMES
         ]
         self._wait_for_tasks(tasks)
         self._record_wall("core_read_and_gather", perf_counter() - core_started)
@@ -450,7 +443,7 @@ class NativeColumnReader:
             "read_workers": self._read_workers,
             "unique_required_field_payload_bytes": (
                 prod(self._native_shape)
-                * len(FIELD_NAMES)
+                * len(NATIVE_FIELD_NAMES)
                 * self._native_dtype.itemsize
             ),
             **counts,

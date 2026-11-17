@@ -58,15 +58,19 @@ does not move a cell into the hot QUOKKA branch.
 DESPOTIC interpolates stored field values directly on logarithmic coordinates,
 with the adopted SciPy `RegularGridInterpolator` semantics. The process loader
 reads its seven required fields while full table tools retain their complete
-loader. Standard SciPy sparse multiplication applies the same eight linear
+loader. A Cython loop locates runtime coordinates and applies the same eight linear
 corner weights to the fields together. Explicit zero weights retain original
 per-field NaN propagation. Singleton axes and special interpolation/error
 settings retain the existing regular-grid path. The shared implementation
-is `table_interpolation.py`; no project compilation is required.
+is `table_interpolation.py`, with its dense loop in `_table_kernels.pyx`.
 Cloudy coefficients are interpolated in logarithm
 unless a valid zero corner has non-negligible interpolation weight, when
 that line/query uses the coefficient itself. Its attenuation lookup coordinate
 is bounded by the table; this does not replace the cell's physical column.
+The compiled loop checks each line's zero and failed-node support and retains
+the existing corner multiplication and addition order. NumPy still performs
+the final power-of-ten conversion. Masks are inspected
+on every query, so modifying a public mask remains observable.
 
 The interpolated DESPOTIC table fills only unavailable values inside the
 finite-support convex hull using SciPy `griddata` with linear interpolation.
@@ -124,8 +128,9 @@ cells through preintegrated fractional-mean templates on logarithmically spaced
 sigma nodes. With channel width `delta_v=1 km/s`, write
 `mu/delta_v=floor(mu/delta_v)+phase`. Integer shifts
 move the stored template; the fractional phase lies in [0,1]. Natural-log sigma
-nodes have step 0.03125 and default coverage [1e-5,1024] km/s. The physical width
-floor remains 1e-5 km/s. Valid widths outside template coverage are integrated
+nodes have step 0.03125. The supplied configuration covers [1e-5,8192] km/s;
+omitting Gaussian settings uses the engine fallback [1e-5,1024] km/s.
+The physical width floor remains 1e-5 km/s. Valid widths outside template coverage are integrated
 directly from their original mu/sigma, with stable bin probabilities clipped
 at +/-5 sigma and no renormalization or luminosity omission threshold. Invalid
 coordinates, unsafe integer shifts and nonpositive/nonfinite widths still raise.
@@ -135,7 +140,7 @@ Each sigma layer independently samples phase with transition spacing at most
 flat phase interiors can omit redundant knots while retaining fine boundary
 transitions. All templates store their phase-union five-sigma support with
 zero guard bins; they are not restricted to the observed 400 bins before shifting.
-Default coverage can be extended explicitly, for example
+Coverage is configured before preparation, for example
 `gaussian_grid: {sigma_max: 8192.0}` for a large snapshot with broader emitting
 profiles. Coverage counts, observed ranges and luminosity-weighted fallback
 fractions are saved per line, dust state and temperature branch. They describe
@@ -154,11 +159,12 @@ four-corner interpolation with a different floating-point summation order.
 Intrinsic/attenuated, line and cold/hot accounts remain separate. There is no
 cell-brightness cut or additional grid approximation.
 
-The immutable table is prepared outside process time. Worker batches use NumPy
-coordinates to prepare original corner contributions. Separate workers then own
+The immutable table is prepared outside process time. Worker batches pass their
+coordinates and runtime grid metadata to a compiled corner-location loop.
+Original corner contributions remain in their existing order. Separate workers then own
 separate profile planes, accumulating weight times cell luminosity directly into
 NumPy arrays. The prebuilt private SciPy 1.16.3 `coo_matvec` kernel performs that
-arithmetic; no project code is compiled. Types, lengths, bounds and ownership are
+arithmetic. Types, lengths, bounds and ownership are
 checked before the call. Writers join before their wave-local inputs are freed.
 These are identical sums at identical original nodes, with floating reduction
 differences, and do not change Gaussian parameter coverage. Every stored
@@ -175,6 +181,8 @@ Finished products merge in deterministic native-tile order, with ascending
 batches within each tile; floating-point reductions can round differently from
 a full-grid batch walk. Full moments use an anchored centroid followed by a
 centered second pass, never subtraction of nearly equal raw second moments.
+The default Float64 full-moment loop is compiled; custom NumPy error policies,
+other dtypes and nonfinite reductions retain the original NumPy behavior.
 Installed NumPy/SciPy versions and CPU dispatch are recorded with the results;
 library reductions can change the last floating-point bits.
 
@@ -196,16 +204,19 @@ Images, gas phases, physical temperatures/widths, per-line missingness and full
 moments retain their definitions. Compare spectra and finite-window moments
 against a named reference when assessing grid accuracy.
 
-The original-file reader uses five read workers followed by up to 32 complete-column
-derivation tasks in the same pool. Up to 32 batch workers prepare unchanged
-emission/products for one bounded wave. Those workers then prepare the original
+The original-file reader uses five read workers. Column derivation then uses up
+to 32 tasks and completes before batch calculation. By default, 16 batch workers
+prepare emission/products for one bounded wave. Those workers then prepare the original
 four template corners and directly integrate uncovered widths. The same pool
 adds corner luminosities into disjoint NumPy profile planes, preserving original
 batch/group order within each profile. All writers join before wave-local
 luminosity is released. One main thread merges the remaining small products.
 Final template convolution occurs after every original cell has been processed;
 it remains timed and is reported separately. There is no nested spectral pool.
-Project calculations use NumPy/SciPy without custom compiled extensions.
+Small Cython loops fuse dense numerical work and release the GIL inside these
+same workers. Axes, grid values, masks, physical parameters, width floors,
+window edges and cutoff values are runtime Python inputs. There is no OpenMP
+pool or fast-math compilation.
 
 Gaussian template preparation/validation is separately measured outside process
 elapsed time. Input identity, metadata construction, physical table loading, every

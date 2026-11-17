@@ -305,7 +305,8 @@ class EmissionProducts:
         Parameters
         ----------
         other : EmissionProducts
-            Batch sums on the same grid, line order and velocity channels.
+            Worker partial created with batch_partial=True, on the same grid,
+            line order and velocity channels. Its images contain compact rows.
 
         Returns
         -------
@@ -317,10 +318,7 @@ class EmissionProducts:
         --------
         products.merge(batch_products)
         """
-        if hasattr(other.images, 'merge_into_dense'):
-            other.images.merge_into_dense(self.images)
-        else:
-            self.images.merge(other.images)
+        other.images.merge_into_dense(self.images)
         self.spectra.merge(other.spectra)
         self.phases.merge(other.phases)
         self.intrinsic_luminosity_erg_s += other.intrinsic_luminosity_erg_s

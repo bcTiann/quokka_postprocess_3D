@@ -1,6 +1,8 @@
 [build-system]
 requires = [
     "setuptools==84.0.0",
+    "Cython==3.3.1",
+    "scipy==1.16.3",
 ]
 build-backend = "setuptools.build_meta"
 
@@ -37,6 +39,14 @@ tables = [
     "despotic @ git+https://bitbucket.org/krumholz/despotic.git@ed18e5669adb7306f795a3d30d8919995793bc61",
     "joblib==1.5.2",
     "tqdm==4.67.1",
+]
+
+[tool.uv]
+# Rebuild native loops when their source changes. Python edits stay editable.
+cache-keys = [
+    { file = "pyproject.toml" },
+    { file = "setup.py" },
+    { file = "src/**/*.pyx" },
 ]
 
 [tool.uv.extra-build-dependencies]

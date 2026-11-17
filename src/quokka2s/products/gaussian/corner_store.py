@@ -15,11 +15,11 @@ from time import perf_counter
 
 import numpy as np
 
-from .template_corners import locate_corners, prepare_corner_increment
+from .template_corners import prepare_cell_corner_increment
 from .corner_scatter import scatter_corner_profiles
 from .template_engine import TemplateEngine
 
-# Decimal GB matches the native-column whole-process memory budget.
+# Keep Gaussian allocations within the same decimal whole-process GB budget.
 CORNER_MEMORY_LIMIT_BYTES = 30_000_000_000
 
 
@@ -128,13 +128,12 @@ class CornerPreparationEngine(TemplateEngine):
             self._increment = None
             self._metrics = None
 
-    def _prepare_contributions(self, centers, sigmas, luminosity, outside):
+    def _prepare_contributions(self, centers, sigmas, luminosity, outside, active):
         """Prepare covered terms and directly integrate only outside-table widths."""
         if self._profile_ids is None:
             raise RuntimeError("Use prepare_group with explicit original profile IDs")
         table = self.lookup_tables
         began = perf_counter()
-        active = np.any(luminosity > 0.0, axis=1)
         covered = active & ~outside
         output = np.zeros((luminosity.shape[1], table.K))
         counts = {
@@ -156,30 +155,22 @@ class CornerPreparationEngine(TemplateEngine):
         else:
             selected_centers = centers[covered]
             selected_sigmas = sigmas[covered]
-            selected_light = luminosity[covered]
+            selected_light = np.asfortranarray(luminosity[covered])
         metrics = {"covered_selection_seconds": perf_counter() - began}
         check_corner_memory(
             "raw corner term preparation",
             additional_bytes=selected_centers.size * 512,
         )
         began = perf_counter()
-        shifts, rows, fractions = locate_corners(
-            table=table,
+        increment, preparation = prepare_cell_corner_increment(
+            spec=self.spec,
             centers=selected_centers,
             sigmas=selected_sigmas,
-        )
-        metrics["coordinate_location_seconds"] = perf_counter() - began
-        began = perf_counter()
-        increment, preparation = prepare_corner_increment(
-            spec=self.spec,
-            shifts=shifts,
-            rows=rows,
-            fractions=fractions,
             luminosity=selected_light,
             profiles=self._profile_ids,
         )
         metrics.update(preparation)
-        metrics["raw_term_preparation_seconds"] = perf_counter() - began
+        metrics["coordinate_and_raw_term_preparation_seconds"] = perf_counter() - began
         probability_seconds = 0.0
         if np.any(outside):
             direct, direct_counts, probability_seconds = self._integrate_outside_widths(

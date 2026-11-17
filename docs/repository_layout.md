@@ -10,7 +10,9 @@ Two root scripts are independent entry points:
 No process/plot aliases are registered in `pyproject.toml`. That file describes
 the package and dependencies; `uv.lock` fixes their versions. `uv sync` creates
 an editable environment, so the root scripts import the current `src/` files.
-No custom Cython build or import-path export is required.
+It automatically builds three small Cython extensions; no manual build command
+or import-path export is required. Runtime grids and physical parameters remain
+in Python. Generated C and platform-specific binaries stay out of Git.
 
 A parent run directory is rejected. Shared YAML holds output, tables and worker
 settings, and optionally one absolute snapshot path. Grid dimensions come from
@@ -49,7 +51,8 @@ level-zero FABs can have shorter edge blocks. No converted field copy is used.
    uses `np.fromfile` for original FAB fields and copies selected values into
    z-contiguous RAM tiles. Global neighbour faces support unchanged gradients.
 4. [native_column_process.py](../src/quokka2s/native_column_process.py) validates
-   exact selected-region coverage and memory planning. Each selected tile is
+   exact selected-region coverage and memory planning. `run_one_snapshot()`
+   calls it directly with the prepared reader. Each selected tile is
    derived by [native_column_fields.py](../src/quokka2s/native_column_fields.py),
    then processed in bounded worker waves. Partial final batches are valid.
 5. [cell_emission.py](../src/quokka2s/physics/cell_emission.py) calculates named
@@ -88,6 +91,25 @@ level-zero FABs can have shorter edge blocks. No converted field copy is used.
 
 `products/integrated_spectra.py` supplies shared line masks, full moments and
 saved-spectrum preparation; it does not select an alternative integration method.
+Luminosity queues keep each account contiguous, so node scattering takes column
+views. Queue validation avoids temporary luminosity vectors by checking the
+largest emissivity product. Full moments use two anchored, centered passes per
+account. The NumPy fallback reuses velocity offsets and thermal variances for
+identical positive-light masks; no cell state is cached between batches.
+`_table_kernels.pyx` fuses physical-table interpolation, Cloudy support checks,
+checked hot-line scatter and foreground dust multiplication;
+`table_interpolation.py` retains SciPy behavior for special interpolation settings.
+`products/gaussian/_gaussian_kernels.pyx` locates runtime template corners,
+prepares their ordered terms without intermediate location vectors, and
+calculates independent original-cell window probabilities. `_spectral_kernels.pyx`
+validates spectral fields, packs shared-width luminosity queues and calculates
+stable two-pass full moments. These kernels borrow Python-owned arrays
+and release the GIL within existing worker tasks, without a nested thread pool.
+Lines with the same
+gas state share immutable temperature vectors while retaining separate
+emissivities and availability masks.
+Cloudy reads live zero/failure masks on each query and keeps each line's support
+and coefficients separate; modifying a public mask remains observable.
 `result_metadata.py`, `processing_report.py` and `result_files.py` respectively
 prepare interpretation fields, assemble descriptive metadata, and save results.
 `process_reuse.py` verifies completion, exact configuration/input identity and

@@ -65,7 +65,10 @@ class CompactImageAccumulator:
         self.pixel_ids = np.ascontiguousarray(local_x * self.native_xy_shape[1] + local_y)
         self.column_sums = np.zeros((2, len(self.line_keys), column_count), dtype=np.float64)
         full_columns = batch_start % depth == 0 and count % depth == 0
-        if not full_columns:
+        if full_columns:
+            # Reuse one luminosity buffer across all lines and dust states.
+            luminosity_workspace = np.empty((column_count, depth), dtype=np.float64)
+        else:
             # Partial columns need original per-cell column IDs, including the
             # first z offset when the batch starts inside a sightline.
             cell_columns = (batch_start % depth + np.arange(count, dtype=np.int64)) // depth
@@ -85,11 +88,16 @@ class CompactImageAccumulator:
                     # Preserve each cell's luminosity multiplication before
                     # reducing its z column. Both dust states use this line's
                     # intrinsic missing mask; available attenuated NaNs remain.
-                    luminosity = (emissivity * cells.cell_volume_cm3).reshape(column_count, depth)
-                    self.column_sums[dust_index, line_index] = np.sum(
-                        luminosity,
+                    np.multiply(
+                        emissivity.reshape(column_count, depth),
+                        cells.cell_volume_cm3,
+                        out=luminosity_workspace,
+                    )
+                    np.sum(
+                        luminosity_workspace,
                         axis=1,
                         where=retained,
+                        out=self.column_sums[dust_index, line_index],
                     )
             else:
                 retained_cells = np.flatnonzero(~missing)

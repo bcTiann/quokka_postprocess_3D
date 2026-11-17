@@ -16,6 +16,7 @@ from quokka2s.products.gaussian.spectral_fields import (
     pack_width_group,
     prepare_available_group,
     prepare_branch_rows,
+    prepare_direct_group_fields,
     prepare_direct_group_luminosity,
     selected_temperatures_equal,
     validate_branch_emission,
@@ -128,17 +129,16 @@ class IntegratedSpectra:
             raise ValueError("cell_volume_cm3 must be finite and positive")
         increments = []
         for line_keys, available_cells in self.group_lines_by_available_cells(emission=emission):
-            profiles, luminosities, counts, moments = self.calculate_available_line_group(
+            luminosities, counts, moments = self.calculate_available_line_group(
                 cells=cells,
                 emission=emission,
                 line_keys=line_keys,
                 available_cells=available_cells,
                 cell_volume_cm3=volume,
             )
-            increments.append((line_keys, profiles, luminosities, counts, moments))
-        for line_keys, profiles, luminosities, counts, moments in increments:
+            increments.append((line_keys, luminosities, counts, moments))
+        for line_keys, luminosities, counts, moments in increments:
             line_indices = [self.line_keys.index(line_key) for line_key in line_keys]
-            self.dL_dv[:, line_indices] += profiles
             self.input_luminosity[:, line_indices] += luminosities
             self.cell_counts[line_indices] += counts
             self.merge_full_line_moments(
@@ -169,8 +169,12 @@ class IntegratedSpectra:
     ):
         """Prepare one group of lines sharing exactly the same available cells.
 
-        Normal processing builds final C-order queues directly. A custom NumPy
-        error policy retains the original Fortran-order moment preparation.
+        Normal processing builds column-contiguous queues directly. Under custom
+        NumPy error policies, retain matrix multiplication even when all cell
+        luminosities underflow to zero: callers may require that warning/error.
+        The matrix route also preserves its original luminosity reduction order.
+        Returns branch luminosities[2,line,2], counts[line,2] and full moments;
+        channel spectra are produced after the queued corners are accumulated.
         """
         default_numpy_errors = {
             "divide": "warn",
@@ -206,9 +210,7 @@ class IntegratedSpectra:
             cell_volume_cm3=cell_volume_cm3,
             speed_of_light_kms=SPEED_OF_LIGHT_KMS,
         )
-        profile_shape = (2, len(line_keys), 2, self.velocity_edges_kms.size - 1)
-        profiles = np.zeros(profile_shape)
-        luminosities = np.zeros(profile_shape[:3])
+        luminosities = np.zeros((2, len(line_keys), 2))
         counts = np.zeros((len(line_keys), 2), dtype=np.int64)
         moments = {
             dust_state: {
@@ -226,16 +228,14 @@ class IntegratedSpectra:
             if branch_count == 0:
                 continue
             branch_luminosities = dict(zip(DUST_STATES, (intrinsic, attenuated)))
-            branch_profiles, branch_moments = self.prepare_branch_gaussians_and_moments(
+            branch_moments = self.prepare_branch_gaussians_and_moments(
                 branch_index=branch_index,
                 line_keys=line_keys,
                 masses_g=masses_g,
                 velocity_kms=velocity,
                 temperature_K=temperature,
                 luminosity_by_dust=branch_luminosities,
-                velocity_edges_kms=self.velocity_edges_kms,
             )
-            profiles[:, :, branch_index] = branch_profiles
             counts[:, branch_index] = branch_count
             branch_name = ("cold", "hot")[branch_index]
             for dust_index, dust_state in enumerate(DUST_STATES):
@@ -243,7 +243,7 @@ class IntegratedSpectra:
                 luminosities[dust_index, :, branch_index] = branch_luminosities[dust_state].sum(axis=1)
                 for line_key in line_keys:
                     moments[dust_state][line_key][branch_name] = branch_moments[dust_state][line_key]
-        return profiles, luminosities, counts, moments
+        return luminosities, counts, moments
 
     def calculate_direct_line_group(
         self, *, cells, emission, line_keys, available_cells, cell_volume_cm3,
@@ -254,6 +254,7 @@ class IntegratedSpectra:
         share a queue only when their emitter masses and selected branch
         temperatures are identical. Stable two-pass NumPy full moments reuse
         the final queue; all masks and the Gaussian integration are unchanged.
+        Returns branch luminosities, counts and moments without channel arrays.
         """
         lines = tuple(emission.lines[line_key] for line_key in line_keys)
         intrinsic_fields = tuple(
@@ -275,9 +276,7 @@ class IntegratedSpectra:
             speed_of_light_kms=SPEED_OF_LIGHT_KMS,
         )
         line_count = len(line_keys)
-        profile_shape = (2, line_count, 2, self.velocity_edges_kms.size - 1)
-        profiles = np.zeros(profile_shape)
-        luminosities = np.zeros(profile_shape[:3])
+        luminosities = np.zeros((2, line_count, 2))
         counts = np.zeros((line_count, 2), dtype=np.int64)
         moments = {
             dust_state: {
@@ -317,18 +316,34 @@ class IntegratedSpectra:
                     line_index for line_index in remaining_lines
                     if line_index not in shared_lines
                 ]
-                thermal_width = calculate_thermal_width_kms(
-                    velocity_kms=velocity,
-                    temperature_K=temperature_fields[first_line][rows],
-                    mass_g=masses_g[first_line],
-                )
-                luminosity_matrix = prepare_direct_group_luminosity(
+                prepared_fields = prepare_direct_group_fields(
                     rows=rows,
                     intrinsic_fields=intrinsic_fields,
                     attenuated_fields=attenuated_fields,
                     shared_lines=np.asarray(shared_lines, dtype=np.int64),
+                    temperature_K=temperature_fields[first_line],
+                    velocity_kms=velocity,
                     cell_volume_cm3=cell_volume_cm3,
+                    mass_g=masses_g[first_line],
+                    boltzmann_erg_K=BOLTZMANN_ERG_K,
+                    speed_of_light_kms=SPEED_OF_LIGHT_KMS,
+                    velocity_cm_per_km=1.e5,
                 )
+                if prepared_fields is None:
+                    thermal_width = calculate_thermal_width_kms(
+                        velocity_kms=velocity,
+                        temperature_K=temperature_fields[first_line][rows],
+                        mass_g=masses_g[first_line],
+                    )
+                    luminosity_matrix = prepare_direct_group_luminosity(
+                        rows=rows,
+                        intrinsic_fields=intrinsic_fields,
+                        attenuated_fields=attenuated_fields,
+                        shared_lines=np.asarray(shared_lines, dtype=np.int64),
+                        cell_volume_cm3=cell_volume_cm3,
+                    )
+                else:
+                    thermal_width, luminosity_matrix = prepared_fields
                 full_moments = calculate_centered_full_moments(
                     velocity_kms=velocity,
                     thermal_width_kms=thermal_width,
@@ -347,31 +362,24 @@ class IntegratedSpectra:
                             centroid_kms=float(values[1]),
                             centered_second_moment=float(values[2]),
                         )
-                channel_profiles = self.queue_gaussian_group(
+                self.queue_gaussian_group(
                     line_keys=tuple(line_keys[index] for index in shared_lines),
                     branch_index=branch_index,
                     velocity_kms=velocity,
                     thermal_width_kms=thermal_width,
                     luminosity_matrix=luminosity_matrix,
                 )
-                for dust_index in range(2):
-                    first_column = dust_index * group_size
-                    last_column = first_column + group_size
-                    profiles[dust_index, shared_lines, branch_index] = (
-                        channel_profiles[:, first_column:last_column].T
-                    )
-        return profiles, luminosities, counts, moments
+        return luminosities, counts, moments
 
     def prepare_branch_gaussians_and_moments(
         self, *, branch_index, line_keys, masses_g, velocity_kms, temperature_K,
-        luminosity_by_dust, velocity_edges_kms,
+        luminosity_by_dust,
     ):
-        """Keep the frozen width-group and deposit order without repacking.
+        """Queue matrix-prepared width groups and return their full moments.
 
-        The only changed moment work is sharing velocity offsets and sigma squared
-        between profiles whose positive masks match. Each line's sums stay separate.
+        Profiles with matching positive masks share velocity offsets and thermal
+        variances. Each line's luminosity and moment reductions stay separate.
         """
-        profiles = np.zeros((2, len(line_keys), velocity_edges_kms.size - 1))
         moments = {
             dust_state: {line_key: LineVelocityMoments() for line_key in line_keys}
             for dust_state in DUST_STATES
@@ -410,19 +418,14 @@ class IntegratedSpectra:
                 attenuated_luminosity=luminosity_by_dust[DUST_STATES[1]],
                 shared_lines=np.asarray(shared_lines, dtype=np.int64),
             )
-            channel_profiles = self.queue_gaussian_group(
+            self.queue_gaussian_group(
                 line_keys=tuple(line_keys[index] for index in shared_lines),
                 branch_index=branch_index,
                 velocity_kms=velocity_kms,
                 thermal_width_kms=thermal_width,
                 luminosity_matrix=luminosity_matrix,
             )
-            group_size = len(shared_lines)
-            for dust_index in range(2):
-                first_column = dust_index * group_size
-                last_column = first_column + group_size
-                profiles[dust_index, shared_lines] = channel_profiles[:, first_column:last_column].T
-        return profiles, moments
+        return moments
 
     def merge_full_line_moments(self, *, moments, line_keys):
         """Merge complete Gaussian moments in dust, line and cold/hot order.

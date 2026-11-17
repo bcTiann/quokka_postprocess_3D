@@ -187,8 +187,16 @@ def _process_one_tile(*, config, snapshot, reader, bounds, executor, emission_ca
     }
 
 
-def process_native_columns(*, config, snapshot, reader, emission_calculator, products, accumulate_batch, began, status_began=None):
-    """Read one native tile at a time; immediately merge its finished batches."""
+def process_native_columns(
+    *, config, snapshot, reader, emission_calculator, products, accumulate_batch,
+    calculation_began, process_began,
+):
+    """Read one native tile at a time; immediately merge its finished batches.
+
+    calculation_began starts the tile loop's elapsed/ETA clock. process_began
+    starts the complete process clock, including input and reader initialization.
+    Both are monotonic seconds supplied by run_one_snapshot().
+    """
     bounds, expected_batches = _validate_plan(config, snapshot, reader)
     memory = _memory_plan(
         config=config,
@@ -213,11 +221,11 @@ def process_native_columns(*, config, snapshot, reader, emission_calculator, pro
             )
             records.append(record)
             processed_fraction = products.counts["all"] / snapshot.processing_cell_count
-            elapsed = monotonic() - began
+            elapsed = monotonic() - calculation_began
             write_status(
                 output_dir=config.output_dir,
                 counts=products.counts,
-                began=began if status_began is None else status_began,
+                began=process_began,
                 state="running",
                 completed_tiles=number,
                 total_tiles=len(bounds),

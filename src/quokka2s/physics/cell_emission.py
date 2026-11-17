@@ -19,7 +19,12 @@ from quokka2s.physics.line_emissivity import (
     calculate_hot_atomic_emissivities,
     check_field_values,
 )
-from quokka2s.physics.dust_attenuation import attenuate_emissivities
+from quokka2s.physics.dust_attenuation import (
+    DEFAULT_NUMPY_ERRORS,
+    attenuate_available_emissivities,
+    attenuate_emissivities,
+)
+from quokka2s._table_kernels import scatter_scaled_nonnegative_fields
 from quokka2s.physics.settings import EMISSION_TEMPERATURE_BOUNDARY_K
 from quokka2s.snapshot_reader import CellBatch
 
@@ -309,32 +314,19 @@ class CellEmissionCalculator:
             despotic_fields=despotic_fields,
             selected_cells=cold_despotic_cells,
         )
-        self.assign_emission_from_gas_state(
-            line=lines['cii'],
-            selected_cells=cold_despotic_cells,
-            emissivity_erg_s_cm3=cold_cii_emissivity,
-            temperature_K=cold_temperature_K,
-        )
+        lines['cii'].emissivity_erg_s_cm3[cold_despotic_cells] = cold_cii_emissivity
+        # These three lines share one gas-state temperature vector.
+        lines['cii'].temperature_K[cold_despotic_cells] = cold_temperature_K
         cold_halpha_emissivity = calculate_cold_halpha_emissivity(
             despotic_fields=despotic_fields,
             selected_cells=cold_despotic_cells,
         )
-        self.assign_emission_from_gas_state(
-            line=lines['halpha'],
-            selected_cells=cold_despotic_cells,
-            emissivity_erg_s_cm3=cold_halpha_emissivity,
-            temperature_K=cold_temperature_K,
-        )
+        lines['halpha'].emissivity_erg_s_cm3[cold_despotic_cells] = cold_halpha_emissivity
         cold_hi21_emissivity = calculate_cold_hi21_emissivity(
             despotic_fields=despotic_fields,
             selected_cells=cold_despotic_cells,
         )
-        self.assign_emission_from_gas_state(
-            line=lines['hi21'],
-            selected_cells=cold_despotic_cells,
-            emissivity_erg_s_cm3=cold_hi21_emissivity,
-            temperature_K=cold_temperature_K,
-        )
+        lines['hi21'].emissivity_erg_s_cm3[cold_despotic_cells] = cold_hi21_emissivity
 
         return lines
 
@@ -354,15 +346,10 @@ class CellEmissionCalculator:
             line_keys=CIII_CIV_LINE_KEYS,
             cell_array_shape=cold_cells.shape,
         )
-        cold_zero_emissivity = np.zeros(np.count_nonzero(cold_cells))
-        cold_placeholder_temperature_K = cells.temperature_QUOKKA_K[cold_cells]
+        # All five lines share this placeholder temperature for cold zeros.
+        lines['ciii_977'].temperature_K[cold_cells] = cells.temperature_QUOKKA_K[cold_cells]
         for line in lines.values():
-            self.assign_emission_from_gas_state(
-                line=line,
-                selected_cells=cold_cells,
-                emissivity_erg_s_cm3=cold_zero_emissivity,
-                temperature_K=cold_placeholder_temperature_K,
-            )
+            line.emissivity_erg_s_cm3[cold_cells] = 0.0
 
         return lines
 
@@ -389,18 +376,10 @@ class CellEmissionCalculator:
             despotic_fields=despotic_fields,
             selected_cells=available_cells,
         )
-        self.assign_emission_from_gas_state(
-            line=lines['co10'],
-            selected_cells=available_cells,
-            emissivity_erg_s_cm3=co10_emissivity,
-            temperature_K=temperature_K,
-        )
-        self.assign_emission_from_gas_state(
-            line=lines['co21'],
-            selected_cells=available_cells,
-            emissivity_erg_s_cm3=co21_emissivity,
-            temperature_K=temperature_K,
-        )
+        lines['co10'].emissivity_erg_s_cm3[available_cells] = co10_emissivity
+        # Both CO lines use the same DESPOTIC temperature vector.
+        lines['co10'].temperature_K[available_cells] = temperature_K
+        lines['co21'].emissivity_erg_s_cm3[available_cells] = co21_emissivity
         return lines
 
     def fill_hot_cloudy_lines(
@@ -417,17 +396,55 @@ class CellEmissionCalculator:
         final paired arrays directly; failed hot positions remain NaN, while
         the existing cold entries are retained. Returns None.
         """
-        hot_emissivities = calculate_hot_atomic_emissivities(
-            cloudy_fields=cloudy_fields,
-            line_keys=tuple(lines),
-        )
-        for line_key, emissivity in hot_emissivities.items():
-            self.assign_emission_from_gas_state(
-                line=lines[line_key],
-                selected_cells=cloudy_fields.cell_indices,
-                emissivity_erg_s_cm3=emissivity,
-                temperature_K=cloudy_fields.temperature_K,
+        line_keys = tuple(lines)
+        coefficients = tuple(cloudy_fields.emissivity_per_nH2[key] for key in line_keys)
+        destinations = tuple(lines[key].emissivity_erg_s_cm3 for key in line_keys)
+        density = cloudy_fields.physical_hydrogen_density_cm3
+        rows = cloudy_fields.cell_indices
+        directly_written = False
+        if (
+            line_keys
+            and all(
+                type(values) is np.ndarray
+                and values.dtype == np.float64
+                and values.ndim == 1
+                and values.flags.aligned
+                for values in (*coefficients, *destinations, density)
             )
+            and all(values.flags.writeable for values in destinations)
+            and type(rows) is np.ndarray
+            and rows.dtype == np.int64
+            and rows.ndim == 1
+            and rows.flags.aligned
+            and density.shape == rows.shape
+            and all(values.shape == rows.shape for values in coefficients)
+            and np.geterr() == DEFAULT_NUMPY_ERRORS
+        ):
+            # Invalid attempts write nothing and repeat NumPy only to retain
+            # its original warning and exception behavior.
+            with np.errstate(all="ignore"):
+                density_squared = density ** 2
+            directly_written = scatter_scaled_nonnegative_fields(
+                destinations=destinations,
+                coefficients=coefficients,
+                scale=density_squared,
+                rows=rows,
+            )
+        if not directly_written:
+            hot_emissivities = calculate_hot_atomic_emissivities(
+                cloudy_fields=cloudy_fields,
+                line_keys=line_keys,
+            )
+        shared_temperatures = {}
+        for line_key in line_keys:
+            line = lines[line_key]
+            if not directly_written:
+                line.emissivity_erg_s_cm3[rows] = hot_emissivities[line_key]
+            shared_temperatures[id(line.temperature_K)] = line.temperature_K
+        # The hydrogen/CII and CIII/CIV families each share one temperature
+        # array. Fill each gas-state vector once, keeping line emissivities separate.
+        for temperature_K in shared_temperatures.values():
+            temperature_K[cloudy_fields.cell_indices] = cloudy_fields.temperature_K
 
     def create_empty_intrinsic_lines(
         self,
@@ -438,35 +455,17 @@ class CellEmissionCalculator:
         """Allocate paired NaN arrays for the named lines in this group.
 
         cell_array_shape is the original cell shape, e.g. (1000000,).
-        Returns one emissivity [erg/s/cm^3] and temperature [K] array per line.
+        Returns separate emissivities [erg/s/cm^3] and one shared temperature
+        [K] vector for this gas-state family. All become read-only after dust.
         """
         lines = {}
+        temperature_K = np.full(cell_array_shape, np.nan)
         for line_key in line_keys:
             lines[line_key] = IntrinsicLineEmission(
                 emissivity_erg_s_cm3=np.full(cell_array_shape, np.nan),
-                temperature_K=np.full(cell_array_shape, np.nan),
+                temperature_K=temperature_K,
             )
         return lines
-
-    def assign_emission_from_gas_state(
-        self,
-        *,
-        line: IntrinsicLineEmission,
-        selected_cells: np.ndarray,
-        emissivity_erg_s_cm3: np.ndarray,
-        temperature_K: np.ndarray,
-    ) -> None:
-        """Put the selected gas state's emissivity and temperature into one line.
-
-        line holds two original (B,) destination arrays. selected_cells is a
-        (B,) boolean mask or an (R,) vector of original batch cell indices.
-        The supplied epsilon [erg/s/cm^3] and T [K] each have R entries, where
-        R is the number of selected cells. Updates both arrays; returns None.
-        Example: mask [True, False, True] puts epsilon [2, 7] and T [50, 100]
-        at cells 0 and 2; cell 1 keeps NaN in both arrays.
-        """
-        line.emissivity_erg_s_cm3[selected_cells] = emissivity_erg_s_cm3
-        line.temperature_K[selected_cells] = temperature_K
 
     def check_intrinsic_lines(self, *, lines: dict[str, IntrinsicLineEmission]) -> None:
         """Check paired line values without choosing their gas state again.
@@ -475,17 +474,19 @@ class CellEmissionCalculator:
         Returns None; checks nonnegative available epsilon and positive matching T.
         Missing positions remain NaN, and physical zeros remain available.
         """
+        invalid_temperatures = {}
         for line in lines.values():
-            available_emissivity = ~np.isnan(line.emissivity_erg_s_cm3)
-            check_field_values(
-                'Volume emissivity',
-                line.emissivity_erg_s_cm3[available_emissivity],
-            )
-            check_field_values(
-                'Thermal temperature',
-                line.temperature_K[available_emissivity],
-                positive=True,
-            )
+            emissivity = line.emissivity_erg_s_cm3
+            if np.isinf(emissivity).any() or np.any(emissivity < 0):
+                raise ValueError('Volume emissivity must be finite and nonnegative')
+            temperature_identity = id(line.temperature_K)
+            if temperature_identity not in invalid_temperatures:
+                invalid_temperatures[temperature_identity] = (
+                    ~np.isfinite(line.temperature_K) | (line.temperature_K <= 0)
+                )
+            available_emissivity = ~np.isnan(emissivity)
+            if np.any(available_emissivity & invalid_temperatures[temperature_identity]):
+                raise ValueError('Thermal temperature must be finite and positive')
 
     def apply_foreground_dust(
         self,
@@ -514,23 +515,29 @@ class CellEmissionCalculator:
         lines = {}
         for line_key, intrinsic_line in intrinsic_lines.items():
             intrinsic_emissivity = intrinsic_line.emissivity_erg_s_cm3
-            available_cells = np.isfinite(intrinsic_emissivity)
             cross_section = self.dust_cross_section_cm2_H[line_key]
-            if available_cells.all():
-                # Complete finite lines need no selection copies or scatter.
-                attenuated_emissivity = attenuate_emissivities(
-                    emissivity=intrinsic_emissivity,
-                    foreground_NH=foreground_column_cm2,
-                    sigma_cm2_H=cross_section,
-                )
-            else:
-                attenuated_emissivity = intrinsic_emissivity.copy()
-                attenuated_values = attenuate_emissivities(
-                    emissivity=intrinsic_emissivity[available_cells],
-                    foreground_NH=foreground_column_cm2[available_cells],
-                    sigma_cm2_H=cross_section,
-                )
-                attenuated_emissivity[available_cells] = attenuated_values
+            attenuated_emissivity = attenuate_available_emissivities(
+                emissivity=intrinsic_emissivity,
+                foreground_NH=foreground_column_cm2,
+                sigma_cm2_H=cross_section,
+            )
+            if attenuated_emissivity is None:
+                available_cells = np.isfinite(intrinsic_emissivity)
+                if available_cells.all():
+                    # Complete finite lines need no selection copies or scatter.
+                    attenuated_emissivity = attenuate_emissivities(
+                        emissivity=intrinsic_emissivity,
+                        foreground_NH=foreground_column_cm2,
+                        sigma_cm2_H=cross_section,
+                    )
+                else:
+                    attenuated_emissivity = intrinsic_emissivity.copy()
+                    attenuated_values = attenuate_emissivities(
+                        emissivity=intrinsic_emissivity[available_cells],
+                        foreground_NH=foreground_column_cm2[available_cells],
+                        sigma_cm2_H=cross_section,
+                    )
+                    attenuated_emissivity[available_cells] = attenuated_values
             lines[line_key] = LineEmission(
                 intrinsic_emissivity_erg_s_cm3=intrinsic_emissivity,
                 attenuated_emissivity_erg_s_cm3=attenuated_emissivity,
