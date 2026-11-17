@@ -7,7 +7,7 @@ from time import perf_counter_ns
 
 def process_template_batches(
     *, config, snapshot, emission_calculator, products, slab, executor,
-    accumulate_batch, after_wave=None,
+    accumulate_batch, after_wave=None, on_wave=None,
 ):
     """Keep at most chunk_workers Gaussian input queues within the current slab.
 
@@ -19,15 +19,32 @@ def process_template_batches(
     tiles are visited in their deterministic XY order; sums across tiles may
     therefore differ in floating-point rounding from a full-grid batch walk.
     A one-worker configuration follows this same path. after_wave optionally
-    checks process memory after each bounded worker wave completes.
+    checks process memory after each bounded worker wave completes. on_wave
+    receives main-thread phase updates for one bounded wave; it never runs
+    inside a physical, Gaussian or profile writer task.
     """
     from ..emission_products import EmissionProducts
 
     batches = iter(slab.iter_batches(batch_size=config.query_chunk))
+    submitted_batches = 0
     while True:
         wave_cells = list(islice(batches, config.chunk_workers))
         if not wave_cells:
             break
+        first_batch = submitted_batches + 1
+        submitted_batches += len(wave_cells)
+        wave_cell_count = sum(cells.cell_count for cells in wave_cells)
+
+        def report_wave(stage, seconds=None):
+            if on_wave is not None:
+                on_wave(
+                    stage=stage,
+                    first_batch=first_batch,
+                    last_batch=submitted_batches,
+                    cell_count=wave_cell_count,
+                    seconds=seconds,
+                )
+
         physical_started = perf_counter_ns()
         physical_futures = []
         gaussian_futures = []
@@ -52,6 +69,7 @@ def process_template_batches(
             return partial
 
         try:
+            report_wave("physical")
             for cells in wave_cells:
                 physical_futures.append(executor.submit(prepare_one, cells))
             for cells, future in zip(wave_cells, physical_futures):
@@ -63,6 +81,7 @@ def process_template_batches(
             physical_finished = perf_counter_ns()
             owned_input_bytes = sum(partial.spectra._owned_input_bytes for partial in partials)
             prepared_groups = sum(partial.spectra._groups_prepared for partial in partials)
+            report_wave("corners", (physical_finished - physical_started) / 1e9)
             gaussian_started = perf_counter_ns()
             for partial in partials:
                 gaussian_futures.append(executor.submit(partial.spectra.prepare_corner_increments))
@@ -78,6 +97,7 @@ def process_template_batches(
                 raise AssertionError("A Gaussian wave omitted one or more prepared groups")
             if any(partial.spectra._groups for partial in partials):
                 raise AssertionError("A prepared Gaussian wave retained its coordinate queues")
+            report_wave("scatter", (gaussian_workers_finished - gaussian_started) / 1e9)
             products.spectra.scatter_corner_wave(
                 partials,
                 executor=executor,
@@ -101,6 +121,7 @@ def process_template_batches(
             )
             if after_wave is not None:
                 after_wave()
+            report_wave("complete", (merge_finished - physical_started) / 1e9)
         except BaseException:
             # Wait only for this bounded wave before releasing every surviving
             # partial; no failed task is resubmitted or reused in another wave.

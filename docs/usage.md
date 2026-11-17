@@ -198,7 +198,16 @@ Each tile finishes physical preparation, corner preparation and profile-plane
 accumulation in bounded waves. One writer owns each spectrum profile plane;
 small products merge in input order. Original-cell luminosities are released
 only after all wave writers finish. Final convolution runs after the last tile.
-Logs print selected tile bounds and update status after completed tiles.
+The console reports each tile's original-field reads, velocity gradients,
+unit/column preparation, and every bounded group of concurrent batches. Each
+group prints the physical-products, Gaussian-corner and luminosity-accumulation
+stages, then the merged snapshot cell/batch counts, percentage, elapsed cell-
+processing time and an ETA based on completed work. Batch ranges before the
+semicolon are local to the tile; snapshot batch totals are global. Output is
+flushed from the main thread, without per-cell or interleaved worker messages.
+Template construction is announced separately outside process timing. Final
+output preparation, conservation checks, saving and total process time are also
+reported. Status files continue updating after completed tiles.
 
 ## Saved products
 

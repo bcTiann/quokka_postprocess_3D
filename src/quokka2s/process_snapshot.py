@@ -86,8 +86,10 @@ def run_one_snapshot(config: ProcessSettings, config_path: Path) -> None:
     """
     from quokka2s.products.gaussian.template_engine import prepare_template_engine
 
-    gaussian_engine, gaussian_table_seconds = prepare_template_engine(config.gaussian_grid)
     print_run_settings(config=config, config_path=config_path)
+    print("Gaussian templates: preparing stored bin integrals before process timing...", flush=True)
+    gaussian_engine, gaussian_table_seconds = prepare_template_engine(config.gaussian_grid)
+    print(f"Gaussian templates ready in {gaussian_table_seconds:.2f} s (excluded from process time).", flush=True)
     began = time.monotonic()
     input_identity = processing_input_identity(config=config)
     snapshot, emission_calculator = load_processing_inputs(config)
@@ -129,12 +131,17 @@ def run_one_snapshot(config: ProcessSettings, config_path: Path) -> None:
             processing_timings['field_source'] = 'native-columns'
             processing_timings['gaussian_table_build_seconds_excluded'] = gaussian_table_seconds
             stage = 'building results'
-            print('Outputs: building image, spectrum and gas-phase results...', flush=True)
+            print('Outputs: expanding completed Gaussian nodes into 400-bin spectra and preparing image/gas-phase results...', flush=True)
             output_build_began = time.monotonic()
             outputs = products.build_outputs()
             processing_timings['output_construction_seconds'] = time.monotonic() - output_build_began
             # Include final convolution in the Gaussian process timing summary.
             processing_timings['gaussian'] = products.spectra.timing_summary()
+            print(
+                f"Outputs prepared in {processing_timings['output_construction_seconds']:.2f} s; "
+                f"final 400-bin expansion {processing_timings['gaussian']['snapshot_corner_finalization_seconds']:.2f} s.",
+                flush=True,
+            )
             metadata = ResultMetadata.from_processing_inputs(
                 snapshot=snapshot,
                 emission_calculator=emission_calculator,
@@ -142,7 +149,9 @@ def run_one_snapshot(config: ProcessSettings, config_path: Path) -> None:
             outputs.add_metadata(metadata=metadata)
             stage = 'checking results'
             print('Outputs: checking luminosity conservation and cell accounting...', flush=True)
+            checking_began = time.monotonic()
             image_conservation = products.check_outputs(outputs)
+            print(f"Output checks passed in {time.monotonic() - checking_began:.2f} s.", flush=True)
             stage = 'building report'
             print('Outputs: preparing the processing report...', flush=True)
             report = build_processing_report(
@@ -166,11 +175,13 @@ def run_one_snapshot(config: ProcessSettings, config_path: Path) -> None:
             report['input_identity'] = input_identity
             stage = 'saving results'
             print(f'Outputs: saving numerical products and report to: {config.output_dir}', flush=True)
+            saving_began = time.monotonic()
             write_emission_results(
                 directory=config.output_dir,
                 outputs=outputs,
                 report=report,
             )
+            print(f"Numerical products saved in {time.monotonic() - saving_began:.2f} s.", flush=True)
         # Original-field readers have closed before completion is recorded.
         write_status(
             output_dir=config.output_dir,
@@ -180,7 +191,7 @@ def run_one_snapshot(config: ProcessSettings, config_path: Path) -> None:
             processing_complete=outputs.processing_complete,
             full_snapshot=outputs.full_snapshot,
         )
-        print(f'Run finished: {report["status"]}.', flush=True)
+        print(f'Run finished: {report["status"]}; complete process {time.monotonic() - began:.2f} s, Gaussian template preparation excluded.', flush=True)
         print(f'Saved numerical results: {config.output_dir}', flush=True)
     except BaseException as exc:
         print(f'Failed while {stage}: {type(exc).__name__}: {exc}', flush=True)
