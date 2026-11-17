@@ -41,6 +41,14 @@ None is a whole-snapshot field array. A tile owns its raw/derived arrays and
 releases them before the next tile. Original-cell Gaussian inputs live for
 one bounded worker wave. `EmissionProducts` owns snapshot result accumulators.
 
+Within a batch, lines using the same gas state share their completed read-only
+temperature array. Table queries prepare flat corner indices once for masks and
+values, and share adjacent corner-weight factors. Near-uniform axes use a
+predicted bracket only after checking the actual nodes; other coordinates use
+`searchsorted`. Gaussian preparation reuses the same positive-light mask and
+equal full/clipped window probabilities. Node positions, linear weights,
+missing-value support and original-cell conservation accounts are unchanged.
+
 Open one function at a time and identify its input, action and output before
 following another call. The root scripts only launch package `main()`; all
 reusable calculations live under `src/quokka2s/`. `pyproject.toml` declares

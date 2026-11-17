@@ -438,13 +438,17 @@ class CellEmissionCalculator:
         """Allocate paired NaN arrays for the named lines in this group.
 
         cell_array_shape is the original cell shape, e.g. (1000000,).
-        Returns one emissivity [erg/s/cm^3] and temperature [K] array per line.
+        Returns one emissivity [erg/s/cm^3] array per line. This gas-state
+        group shares its temperature [K] array, which becomes read-only after
+        all cold/hot assignments finish. Its lines always use the same rows
+        and temperatures; their emissivity arrays remain independent.
         """
         lines = {}
+        temperature_K = np.full(cell_array_shape, np.nan)
         for line_key in line_keys:
             lines[line_key] = IntrinsicLineEmission(
                 emissivity_erg_s_cm3=np.full(cell_array_shape, np.nan),
-                temperature_K=np.full(cell_array_shape, np.nan),
+                temperature_K=temperature_K,
             )
         return lines
 

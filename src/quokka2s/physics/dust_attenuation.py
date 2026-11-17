@@ -173,9 +173,20 @@ def attenuate_emissivities(emissivity, foreground_NH, sigma_cm2_H):
     epsilon = np.asarray(emissivity, dtype=float)
     column = np.asarray(foreground_NH, dtype=float)
     sigma = np.asarray(sigma_cm2_H, dtype=float)
-    if (epsilon.ndim not in (1, 2) or column.shape != (epsilon.shape[-1],)
-            or sigma.shape != epsilon.shape[:-1] or not np.isfinite(epsilon).all()
-            or not np.isfinite(column).all() or not np.isfinite(sigma).all()
-            or np.any(epsilon < 0) or np.any(column < 0) or np.any(sigma < 0)):
+    if (
+        epsilon.ndim not in (1, 2)
+        or column.shape != (epsilon.shape[-1],)
+        or sigma.shape != epsilon.shape[:-1]
+    ):
         raise ValueError("Expected nonnegative finite emissivity, foreground column, and opacity")
-    return epsilon * np.exp(-sigma[..., None] * column)
+    # Extremes reject the same invalid values without full-size Boolean arrays.
+    # Initial zero keeps empty, nonnegative inputs valid as before.
+    for values in (epsilon, column, sigma):
+        minimum = np.min(values, initial=0.0)
+        maximum = np.max(values, initial=0.0)
+        if minimum < 0.0 or not np.isfinite(minimum) or not np.isfinite(maximum):
+            raise ValueError("Expected nonnegative finite emissivity, foreground column, and opacity")
+    attenuated = -sigma[..., None] * column
+    np.exp(attenuated, out=attenuated)
+    np.multiply(epsilon, attenuated, out=attenuated)
+    return attenuated

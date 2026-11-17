@@ -42,25 +42,35 @@ def validate_branch_emission(
     ):
         raise ValueError("Each line requires intrinsic, attenuated and temperature fields")
     emitting = np.zeros(len(intrinsic_fields), dtype=np.bool_)
+    checked_temperatures = set()
     for index, fields in enumerate(zip(intrinsic_fields, attenuated_fields, temperature_fields)):
         if any(values.shape != (original_count,) for values in fields):
             raise ValueError("Per-line fields must match the original cell shape")
-        intrinsic, attenuated, temperature = (values[rows] for values in fields)
-        if not np.isfinite(temperature).all() or np.any(temperature < 0.0):
-            raise ValueError("temperatures_K must be finite and nonnegative")
+        intrinsic = fields[0][rows]
+        attenuated = fields[1][rows]
+        temperature_identity = id(fields[2])
+        if temperature_identity not in checked_temperatures:
+            temperature = fields[2][rows]
+            if not np.isfinite(temperature).all() or np.any(temperature < 0.0):
+                raise ValueError("temperatures_K must be finite and nonnegative")
+            checked_temperatures.add(temperature_identity)
         for emissivity in (intrinsic, attenuated):
             if not np.isfinite(emissivity).all() or np.any(emissivity < 0.0):
                 raise ValueError("emissivity must be finite and nonnegative")
+            # Positive volume preserves order, so the largest product proves
+            # both finiteness and whether any cell emits after underflow.
             with np.errstate(all="ignore"):
-                luminosity = emissivity * cell_volume_cm3
-            if not np.isfinite(luminosity).all():
+                maximum_luminosity = np.max(emissivity, initial=0.0) * cell_volume_cm3
+            if not np.isfinite(maximum_luminosity):
                 raise ValueError("emissivity times volume must remain finite")
-            emitting[index] |= np.any(luminosity != 0.0)
+            emitting[index] |= maximum_luminosity != 0.0
     return emitting
 
 
 def selected_temperatures_equal(rows, first_temperature_K, second_temperature_K):
     """Compare temperatures only on this validated available branch."""
+    if first_temperature_K is second_temperature_K:
+        return True
     return np.array_equal(first_temperature_K[rows], second_temperature_K[rows])
 
 

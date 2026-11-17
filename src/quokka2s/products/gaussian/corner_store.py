@@ -128,13 +128,12 @@ class CornerPreparationEngine(TemplateEngine):
             self._increment = None
             self._metrics = None
 
-    def _prepare_contributions(self, centers, sigmas, luminosity, outside):
+    def _prepare_contributions(self, centers, sigmas, luminosity, outside, active):
         """Prepare covered terms and directly integrate only outside-table widths."""
         if self._profile_ids is None:
             raise RuntimeError("Use prepare_group with explicit original profile IDs")
         table = self.lookup_tables
         began = perf_counter()
-        active = np.any(luminosity > 0.0, axis=1)
         covered = active & ~outside
         output = np.zeros((luminosity.shape[1], table.K))
         counts = {

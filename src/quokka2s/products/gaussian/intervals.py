@@ -30,22 +30,26 @@ def interval_probability(a, b):
         width = b - a
         midpoint = 0.5 * a + 0.5 * b
         narrow = active & np.isfinite(midpoint) & (width * (1.0 + np.abs(midpoint)) < 1e-5)
-    half_width = 0.5 * width[narrow]
-    points = midpoint[narrow, None] + half_width[:, None] * _QUADRATURE_NODES
-    density = np.exp(-0.5 * points**2) / np.sqrt(2.0 * np.pi)
-    result[narrow] = half_width * np.sum(density * _QUADRATURE_WEIGHTS, axis=-1)
+    if np.any(narrow):
+        half_width = 0.5 * width[narrow]
+        points = midpoint[narrow, None] + half_width[:, None] * _QUADRATURE_NODES
+        density = np.exp(-0.5 * points**2) / np.sqrt(2.0 * np.pi)
+        result[narrow] = half_width * np.sum(density * _QUADRATURE_WEIGHTS, axis=-1)
     active = active & ~narrow
     negative = active & (b <= 0.0)
     positive = active & (a >= 0.0)
     crossing = active & ~(negative | positive)
-    for selected, large_endpoint, small_endpoint in (
-        (negative, b, a),
-        (positive, -a, -b),
-    ):
-        log_large = log_ndtr(large_endpoint[selected])
-        log_small = log_ndtr(small_endpoint[selected])
-        result[selected] = np.exp(log_large) * -np.expm1(log_small - log_large)
-    result[crossing] = 0.5 * (
-        erf(b[crossing] / np.sqrt(2.0)) - erf(a[crossing] / np.sqrt(2.0))
-    )
+    if np.any(negative):
+        log_large = log_ndtr(b[negative])
+        log_small = log_ndtr(a[negative])
+        result[negative] = np.exp(log_large) * -np.expm1(log_small - log_large)
+    if np.any(positive):
+        # Reflect selected positive-tail endpoints, not both full input arrays.
+        log_large = log_ndtr(-a[positive])
+        log_small = log_ndtr(-b[positive])
+        result[positive] = np.exp(log_large) * -np.expm1(log_small - log_large)
+    if np.any(crossing):
+        result[crossing] = 0.5 * (
+            erf(b[crossing] / np.sqrt(2.0)) - erf(a[crossing] / np.sqrt(2.0))
+        )
     return result

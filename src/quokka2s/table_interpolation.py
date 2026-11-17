@@ -7,14 +7,82 @@ import numpy as np
 from scipy.sparse import csr_matrix
 
 
+def trilinear_brackets(*, axis, coordinate):
+    """Locate Q coordinates on actual increasing nodes, retaining right ties.
+
+    Logarithmic physical-table axes are close to uniformly spaced. Predicting
+    the interval from their mean spacing avoids binary searches for most rows.
+    Each prediction is checked against the actual neighbouring nodes; all
+    mismatches, knots at the final node and nonfinite rows use searchsorted.
+    Fractions always use the original nodes, including on nonuniform axes.
+    """
+    with np.errstate(all="ignore"):
+        mean_spacing = (axis[-1] - axis[0]) / (axis.size - 1)
+    if not np.isfinite(mean_spacing) or mean_spacing <= 0.0:
+        upper = np.searchsorted(axis, coordinate, side="right")
+        upper = np.clip(upper, 1, axis.size - 1)
+        lower = upper - 1
+    else:
+        bounded = np.clip(coordinate, axis[0], axis[-1])
+        with np.errstate(invalid="ignore"):
+            upper = ((bounded - axis[0]) / mean_spacing).astype(np.intp) + 1
+        np.clip(upper, 1, axis.size - 1, out=upper)
+        lower = upper - 1
+        retry = (
+            ~np.isfinite(coordinate)
+            | (coordinate < axis[lower])
+            | (coordinate >= axis[upper])
+        )
+        if np.any(retry):
+            upper[retry] = np.clip(
+                np.searchsorted(axis, coordinate[retry], side="right"),
+                1,
+                axis.size - 1,
+            )
+            lower[retry] = upper[retry] - 1
+    fraction = (coordinate - axis[lower]) / (axis[upper] - axis[lower])
+    return lower, upper, fraction
+
+
+def trilinear_corners(*, brackets, grid_shape):
+    """Yield eight flat table-node indices and weights for Q prepared queries.
+
+    brackets holds each axis's lower/upper indices and upper-node fractions.
+    Flat C-order indices are shared by mask inspection and field interpolation;
+    the original 000,...,111 corner and weight-multiplication order is retained.
+    """
+    axis_indices = [(lower, upper) for lower, upper, _ in brackets]
+    axis_weights = [(1.0 - fraction, fraction) for _, _, fraction in brackets]
+    # Corners 000/001 share their first two indices and weight factors.
+    # Reuse that work for each pair without changing the 000,...,111 order.
+    for first_side, second_side in product((0, 1), repeat=2):
+        first_two_weight = np.multiply(
+            axis_weights[0][first_side],
+            axis_weights[1][second_side],
+            dtype=np.float64,
+        )
+        first_two_index = (
+            axis_indices[0][first_side] * grid_shape[1]
+            + axis_indices[1][second_side]
+        ) * grid_shape[2]
+        for third_side in (0, 1):
+            node_indices = first_two_index + axis_indices[2][third_side]
+            weight = np.multiply(
+                first_two_weight,
+                axis_weights[2][third_side],
+                dtype=np.float64,
+            )
+            yield node_indices, weight
+
+
 def trilinear_weight_matrix(*, grid_shape, corners, selected):
     """Return CSR[selected query, grid node] with all eight corner entries.
 
-    grid_shape=(N0,N1,N2) describes the source table, while each corner has
-    three (Q,) index arrays and one (Q,) weight array. selected is a (Q,) mask.
-    Flattening preserves grid-axis order and the supplied 000,...,111 corner
-    order. Explicit zero weights remain: removing them would change 0 * NaN
-    propagation from unavailable table values. No query or table is retained.
+    grid_shape=(N0,N1,N2) describes the source table. Each corner from
+    trilinear_corners() supplies a (Q,) flat-node index and a (Q,) weight array;
+    selected is a (Q,) mask. The supplied 000,...,111 corner order is retained.
+    Explicit zero weights remain: removing them would change 0 * NaN propagation
+    from unavailable table values. No query or table is retained.
     """
     query_count = int(np.count_nonzero(selected))
     node_count = prod(grid_shape)
@@ -26,18 +94,13 @@ def trilinear_weight_matrix(*, grid_shape, corners, selected):
     indices = np.empty((query_count, 8), dtype=index_dtype)
     weights = np.empty((query_count, 8))
     all_selected = bool(np.all(selected))
-    for corner, (coordinates, weight) in enumerate(corners):
+    for corner, (node_indices, weight) in enumerate(corners):
         if all_selected:
-            first, second, third = coordinates
+            indices[:, corner] = node_indices
             weights[:, corner] = weight
         else:
-            first, second, third = (
-                coordinate[selected] for coordinate in coordinates
-            )
+            indices[:, corner] = node_indices[selected]
             weights[:, corner] = weight[selected]
-        indices[:, corner] = (
-            (first * grid_shape[1] + second) * grid_shape[2] + third
-        )
     pointers = np.arange(0, entry_count + 8, 8, dtype=index_dtype)
     return csr_matrix(
         (weights.ravel(), indices.ravel(), pointers),
@@ -72,26 +135,13 @@ def interpolate_regular_grid(*, interpolator, points):
     brackets = []
     outside = np.any(~np.isfinite(points), axis=1)
     for axis, coordinate in zip(axes, points.T):
-        upper = np.searchsorted(axis, coordinate, side="right")
-        upper = np.clip(upper, 1, axis.size - 1)
-        lower = upper - 1
-        fraction = (coordinate - axis[lower]) / (axis[upper] - axis[lower])
-        brackets.append((lower, upper, fraction))
+        brackets.append(trilinear_brackets(axis=axis, coordinate=coordinate))
         outside |= (coordinate < axis[0]) | (coordinate > axis[-1])
-    corners = []
+    grid_shape = tuple(axis.size for axis in axes)
     with np.errstate(invalid="ignore"):
-        for sides in product((0, 1), repeat=3):
-            coordinates = []
-            weight = np.ones(points.shape[0])
-            for side, (lower, upper, fraction) in zip(sides, brackets):
-                coordinates.append(upper if side else lower)
-                weight *= fraction if side else 1.0 - fraction
-            corners.append((tuple(coordinates), weight))
-
-        grid_shape = tuple(axis.size for axis in axes)
         matrix = trilinear_weight_matrix(
             grid_shape=grid_shape,
-            corners=corners,
+            corners=trilinear_corners(brackets=brackets, grid_shape=grid_shape),
             selected=np.ones(points.shape[0], dtype=bool),
         )
         output_shape = interpolator.values.shape[3:]

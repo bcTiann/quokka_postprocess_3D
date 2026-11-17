@@ -183,6 +183,12 @@ Each tile finishes physical preparation, corner preparation and profile-plane
 accumulation in bounded waves. One writer owns each spectrum profile plane;
 small products merge in input order. Original-cell luminosities are released
 only after all wave writers finish. Final convolution runs after the last tile.
+Completed temperatures are shared only within their existing gas-state group.
+Physical-table queries reuse flat corner indices and adjacent weight factors;
+predicted brackets are checked against the actual table nodes. Gaussian groups
+reuse positive-light masks, matching phase grids and equal window probabilities.
+These batch-local arrays are released by the existing wave lifecycle. Raw fields
+still use the original NumPy reader, without a converted snapshot on disk.
 The console lists input/output paths once, then reports each tile's original-field
 reads, velocity gradients and combined unit/column preparation. Batch progress
 prints after the first completed wave, at most once per ten seconds thereafter,

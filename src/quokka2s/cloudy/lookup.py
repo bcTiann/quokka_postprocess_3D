@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from itertools import product
 import json
 from pathlib import Path
 
@@ -12,7 +11,11 @@ from scipy.interpolate import RegularGridInterpolator
 
 from quokka2s.cloudy.table_definition import EXPECTED_AXIS_ORDER
 from quokka2s.physics.composition import reject_superseded_composition
-from quokka2s.table_interpolation import trilinear_weight_matrix
+from quokka2s.table_interpolation import (
+    trilinear_brackets,
+    trilinear_corners,
+    trilinear_weight_matrix,
+)
 
 
 TOUCH_EPS = 1.0e-12
@@ -118,34 +121,6 @@ def _validate_axis(name: str, axis: np.ndarray) -> None:
         or np.any(np.diff(axis) <= 0.0)
     ):
         raise ValueError(f"{name} must be a finite, strictly increasing 1D axis")
-
-
-def _brackets(
-    axis: np.ndarray,
-    coordinate: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Bracket coordinates on an increasing 1D axis in the same log10 units.
-
-    Return lower indices, upper indices and upper-node fractions, each with
-    coordinate.shape. The caller supplies coordinates inside the axis bounds.
-    """
-    upper = np.searchsorted(axis, coordinate, side="right")
-    upper = np.clip(upper, 1, axis.size - 1)
-    lower = upper - 1
-    fraction = (coordinate - axis[lower]) / (axis[upper] - axis[lower])
-    return lower, upper, fraction
-
-
-def _weighted_corners(brackets):
-    """Yield eight table indices and (Q,) weights in NH/nH/T corner order."""
-    query_count = brackets[0][0].size
-    for corner in product((0, 1), repeat=3):
-        indices = []
-        weight = np.ones(query_count)
-        for side, (lower, upper, fraction) in zip(corner, brackets):
-            indices.append(upper if side else lower)
-            weight *= fraction if side else 1.0 - fraction
-        yield tuple(indices), weight
 
 
 def _sum_corner_fields(values, corners, selected):
@@ -403,7 +378,7 @@ class CloudyLookup:
 
         brackets = []
         for axis_index, axis in enumerate(axes):
-            bracket = _brackets(
+            bracket = trilinear_brackets(
                 axis=axis,
                 coordinate=points[:, axis_index],
             )
@@ -441,14 +416,36 @@ class CloudyLookup:
             hydrogen_density_cm3=hydrogen_density_cm3,
             shielding_NH_cm2=shielding_NH_cm2,
         )
-        corners = tuple(_weighted_corners(coordinates.brackets))
+        corners = tuple(
+            trilinear_corners(
+                brackets=coordinates.brackets,
+                grid_shape=self.emissivity_per_nH2.shape[1:],
+            )
+        )
         query_count = coordinates.points.shape[0]
 
         # Reinspect public masks on each query; they are not immutable caches.
         zero_lines = np.flatnonzero(
             np.any(self.zero_emission_table_nodes, axis=(1, 2, 3)),
         )
-        zero_table = self.zero_emission_table_nodes[zero_lines]
+        node_count = int(np.prod(self.emissivity_per_nH2.shape[1:]))
+        zero_table = self.zero_emission_table_nodes[zero_lines].reshape(
+            zero_lines.size, node_count,
+        )
+        # Lines with identical zero-node masks share the same support check.
+        # Pack only the small table masks; restore each line with mask_groups.
+        packed_zero_masks = np.ascontiguousarray(
+            np.packbits(zero_table, axis=1),
+        )
+        mask_keys = packed_zero_masks.view(
+            np.dtype((np.void, packed_zero_masks.shape[1])),
+        ).ravel()
+        _, first_mask, mask_groups = np.unique(
+            mask_keys,
+            return_index=True,
+            return_inverse=True,
+        )
+        zero_table = zero_table[first_mask]
         shared_failures = all(
             np.array_equal(mask, self.failed_table_nodes[0])
             for mask in self.failed_table_nodes
@@ -457,22 +454,23 @@ class CloudyLookup:
             self.failed_table_nodes[:1]
             if shared_failures else self.failed_table_nodes
         )
+        failure_table = failure_table.reshape(failure_table.shape[0], node_count)
         has_failures = bool(np.any(failure_table))
-        zero_small = np.zeros((zero_lines.size, query_count), dtype=bool)
+        zero_small = np.zeros((zero_table.shape[0], query_count), dtype=bool)
         failure_weight = np.zeros((failure_table.shape[0], query_count))
         for indices, weight in corners:
             if zero_lines.size:
                 zero_small |= (
-                    zero_table[(slice(None), *indices)]
+                    np.take(zero_table, indices, axis=1)
                     & (weight[None, :] > TOUCH_EPS)
                 )
             if has_failures:
                 failure_weight += (
-                    failure_table[(slice(None), *indices)] * weight[None, :]
+                    failure_table[:, indices] * weight[None, :]
                 )
         failed_queries = np.any(failure_weight > TOUCH_EPS, axis=0)
         zero_support = np.zeros((len(self.line_keys), query_count), dtype=bool)
-        zero_support[zero_lines] = zero_small
+        zero_support[zero_lines] = zero_small[mask_groups]
         retained = ~failed_queries
         need_linear = np.any(zero_support, axis=0) & retained
         need_logarithmic = np.any(~zero_support, axis=0) & retained
@@ -559,12 +557,16 @@ class CloudyLookup:
         shape = (len(self.line_keys), query_count)
         zero_support = np.zeros(shape, dtype=bool)
         failure_weight = np.zeros(shape)
-        # 0 selects the lower node; 1 selects the upper node on each axis.
-        for indices, weight in _weighted_corners(coordinates.brackets):
-            table_index = (slice(None), *indices)
+        # Mask and value lookups use the same flat table-node coordinates.
+        zero_table = self.zero_emission_table_nodes.reshape(shape[0], -1)
+        failure_table = self.failed_table_nodes.reshape(shape[0], -1)
+        for indices, weight in trilinear_corners(
+            brackets=coordinates.brackets,
+            grid_shape=self.emissivity_per_nH2.shape[1:],
+        ):
             line_weights = weight[None, :]
-            zero_support |= self.zero_emission_table_nodes[table_index] & (line_weights > TOUCH_EPS)
-            failure_weight += self.failed_table_nodes[table_index] * line_weights
+            zero_support |= zero_table[:, indices] & (line_weights > TOUCH_EPS)
+            failure_weight += failure_table[:, indices] * line_weights
 
         return InterpolationNodes(
             zero_support=zero_support,

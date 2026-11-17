@@ -13,26 +13,67 @@ from .corner_scatter import CornerTerms, CornerIncrement
 
 def locate_corners(table, centers, sigmas):
     """Locate covered rows already validated by worker group preparation."""
-    coordinate = centers / table.delta_v
+    coordinate = centers if table.delta_v == 1.0 else centers / table.delta_v
     integer = np.floor(coordinate)
     phases = coordinate - integer
     shifts = integer.astype(np.int64)
-    upper = np.searchsorted(table.sigma_nodes, sigmas, side='left')
+    # Sigma layers are log-spaced except for the final endpoint. Estimate the
+    # upper layer in one NumPy pass, then compare the actual stored knots so
+    # values at/next to a knot keep searchsorted(side='left') semantics.
+    upper = np.ceil(
+        (np.log(sigmas) - table.log_sigma_nodes[0]) / table.parameters.log_sigma_step
+    ).astype(np.int64)
+    np.clip(upper, 0, table.sigma_nodes.size - 1, out=upper)
+    upper -= (upper > 0) & (sigmas <= table.sigma_nodes[np.maximum(upper - 1, 0)])
+    upper += sigmas > table.sigma_nodes[upper]
+    # Extremely fine user grids can magnify logarithm rounding by more than
+    # one layer. Correct only such rows with the reference binary search.
+    inconsistent = (sigmas > table.sigma_nodes[upper]) | (
+        (upper > 0) & (sigmas <= table.sigma_nodes[np.maximum(upper - 1, 0)])
+    )
+    if np.any(inconsistent):
+        upper[inconsistent] = np.searchsorted(table.sigma_nodes, sigmas[inconsistent], side='left')
     lower = np.maximum(upper - 1, 0)
     lower_sigma = table.sigma_nodes[lower]
     upper_sigma = table.sigma_nodes[upper]
-    fraction = np.divide(
-        sigmas - lower_sigma,
+    fraction = sigmas - lower_sigma
+    np.divide(
+        fraction,
         upper_sigma - lower_sigma,
-        out=np.zeros_like(sigmas),
+        out=fraction,
         where=upper != lower,
     )
     np.clip(fraction, 0.0, 1.0, out=fraction)
     low_left, low_right, low_fraction = table._phase_brackets(lower, phases)
-    high_left, high_right, high_fraction = table._phase_brackets(upper, phases)
+    matching_phase_grids = (
+        (table.phase_counts[lower] == table.phase_counts[upper])
+        & ~table.narrow_phase_layers[lower]
+        & ~table.narrow_phase_layers[upper]
+    )
+    if np.all(matching_phase_grids):
+        # Wide adjacent layers often use the identical [0,1] knot vector.
+        # Only their flat row offsets differ; repeat no phase search or divide.
+        row_offset = table.phase_starts[upper] - table.phase_starts[lower]
+        high_left = low_left + row_offset
+        high_right = low_right + row_offset
+        high_fraction = low_fraction
+    elif np.count_nonzero(matching_phase_grids) > matching_phase_grids.size // 2:
+        # A few narrow rows must not repeat the wide phase search for a whole
+        # group. Search only the exceptions when most phase grids are shared.
+        row_offset = table.phase_starts[upper] - table.phase_starts[lower]
+        high_left = low_left + row_offset
+        high_right = low_right + row_offset
+        high_fraction = low_fraction.copy()
+        selected = ~matching_phase_grids
+        high_left[selected], high_right[selected], high_fraction[selected] = table._phase_brackets(
+            upper[selected], phases[selected],
+        )
+    else:
+        high_left, high_right, high_fraction = table._phase_brackets(upper, phases)
+    lower_fraction = 1.0 - fraction
     return shifts, (low_left, low_right, high_left, high_right), (
-        (1.0 - fraction) * (1.0 - low_fraction),
-        (1.0 - fraction) * low_fraction,
+        lower_fraction * (1.0 - low_fraction),
+        lower_fraction * low_fraction,
         fraction * (1.0 - high_fraction),
         fraction * high_fraction,
     )
@@ -48,8 +89,6 @@ def prepare_corner_increment(
     template row plus shift. Only the existing corner/window filter is applied.
     """
     table = spec.table
-    output_first = int(table.output_bin_indices[0])
-    output_stop = output_first + table.K
     largest_index = max(spec.slot_count, luminosity.shape[0])
     index_dtype = np.int32 if largest_index <= np.iinfo(np.int32).max else np.int64
     source = np.arange(shifts.size, dtype=index_dtype)
@@ -61,17 +100,13 @@ def prepare_corner_increment(
     for ids, fraction in zip(rows, fractions):
         positive = fraction != 0.0
         positive_corners += int(np.count_nonzero(positive))
-        minimum = shifts + table.row_min_bins[ids]
-        stop = minimum + table.row_bin_counts[ids]
-        retained = positive & (minimum < output_stop) & (stop > output_first)
+        # The prepared row already stores exactly the valid integer shifts.
+        # Testing this relative index is the same window-overlap filter; it
+        # avoids recomputing the bin endpoints and checking the bounds twice.
+        relative = shifts - spec.row_minimum_shifts[ids]
+        retained = positive & (relative >= 0) & (relative < spec.row_shift_counts[ids])
         retained_rows = ids[retained]
-        relative = shifts[retained] - spec.row_minimum_shifts[retained_rows]
-        if (
-            np.any(relative < 0)
-            or np.any(relative >= spec.row_shift_counts[retained_rows])
-        ):
-            raise ValueError("Raw corner shift is outside its exact support/window overlap")
-        slots = spec.row_offsets[retained_rows] + relative
+        slots = spec.row_offsets[retained_rows] + relative[retained]
         selected_slots.append(slots.astype(index_dtype, copy=False))
         selected_cells.append(source[retained])
         selected_weights.append(fraction[retained])
