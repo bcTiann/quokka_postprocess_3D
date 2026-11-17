@@ -143,7 +143,8 @@ intersecting FAB field; it does not trigger conversion of a complete snapshot.
 Only the current tile and bounded worker wave stay resident. Six derived
 physical arrays replace/reuse raw allocations, and each tile is released before
 the next read. Preflight estimates raw, derived, worker, neighbour and headroom
-storage. A 20 GiB process RSS guard catches excess high-water usage; lower
+storage. The limit is 30,000,000,000 bytes (30 GB, approximately 27.94 GiB).
+The process RSS guard catches excess high-water usage; lower
 `query_chunk` or `chunk_workers` if needed. This is a memory guard, not proof
 that every possible grid or FAB layout fits at every worker setting.
 

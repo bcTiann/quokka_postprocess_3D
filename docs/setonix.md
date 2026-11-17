@@ -109,7 +109,7 @@ A parent run directory is an error; the script processes only the named plt.
 
 Only numerical products are calculated, checked and saved. Results use
 `output/jobname/snapshot_name/processed/`, with a region directory for explicit
-x/y ranges. Default memory planning and RSS guards stay within a 20 GiB limit
+x/y ranges. Default memory planning and RSS guards stay within a 30 GB limit
 or stop with an actionable error; reduce batch/worker settings when needed.
 Original simulation files and lookup tables remain read-only.
 

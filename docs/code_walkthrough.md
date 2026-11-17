@@ -105,7 +105,7 @@ conflicting results remain untouched and drawable by the separate plot script.
 2. `_validate_plan()` checks selected tiles cover every requested cell exactly
    once; it does not require query batches to divide Ny or Nz.
 3. `_memory_plan()` reserves current raw/derived arrays, batch workers,
-   neighbouring faces and headroom, with a 20 GiB RSS guard.
+   neighbouring faces and headroom, with a 30 GB RSS guard.
 4. `read_tile()` reads intersecting original FAB fields through `np.fromfile`.
    NumPy copies selected values into owned z-contiguous RAM arrays. It also
    obtains original global x/y neighbour faces for gradients. A narrow region

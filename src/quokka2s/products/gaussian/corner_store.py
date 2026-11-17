@@ -19,11 +19,12 @@ from .template_corners import locate_corners, prepare_corner_increment
 from .corner_scatter import scatter_corner_profiles
 from .template_engine import TemplateEngine
 
-CORNER_MEMORY_LIMIT_BYTES = 20 * 1024**3
+# Decimal GB matches the native-column whole-process memory budget.
+CORNER_MEMORY_LIMIT_BYTES = 30_000_000_000
 
 
 def check_corner_memory(stage, additional_bytes=0):
-    """Refuse a planned allocation above the conservative 20-GiB process limit.
+    """Refuse a planned allocation above the conservative 30-GB process limit.
 
     macOS reports high-water RSS in bytes; Linux reports KiB. High-water RSS
     includes caller-owned queued inputs and can overestimate current residency
@@ -35,7 +36,8 @@ def check_corner_memory(stage, additional_bytes=0):
     additional_bytes = max(0, int(additional_bytes))
     if high_water_bytes + additional_bytes > CORNER_MEMORY_LIMIT_BYTES:
         raise MemoryError(
-            f"Corner accumulation exceeds the 20-GiB process budget at {stage}: "
+            f"Corner accumulation exceeds the {CORNER_MEMORY_LIMIT_BYTES / 1e9:g}-GB "
+            f"process budget at {stage}: "
             f"high-water RSS {high_water_bytes} bytes + planned allocation "
             f"{additional_bytes} bytes"
         )

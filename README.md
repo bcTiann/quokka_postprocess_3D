@@ -127,7 +127,7 @@ coverage use stable direct integration with the same 5-sigma cutoff and are
 reported in the log. No project Cython extension is required. Only Gaussian
 template preparation is outside process timing; metadata, field reads, physical
 calculations, all accumulation, checks and saving remain timed. The reader uses
-a conservative memory preflight and a 20 GiB process RSS guard; tune query and
+a conservative memory preflight and a 30 GB process RSS guard; tune query and
 worker sizes for the available memory. This cleanup does not claim a speedup.
 
 [Detailed usage](docs/usage.md) · [Methods](docs/emission_method.md) ·

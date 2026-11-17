@@ -18,7 +18,8 @@ from .products.gaussian.template_batches import process_template_batches
 from .result_files import write_status
 
 
-PROCESS_LIMIT_BYTES = 20 * 1024**3
+# Decimal GB matches the whole-process memory budget.
+PROCESS_LIMIT_BYTES = 30_000_000_000
 
 
 def peak_process_rss_bytes():
@@ -31,8 +32,8 @@ def _check_process_memory(stage):
     peak = peak_process_rss_bytes()
     if peak > PROCESS_LIMIT_BYTES:
         raise MemoryError(
-            f"native-columns exceeded the 20 GiB process RSS guard during {stage}: "
-            f"{peak / 1024**3:.3f} GiB"
+            f"native-columns exceeded the {PROCESS_LIMIT_BYTES / 1e9:g} GB "
+            f"process RSS guard during {stage}: {peak / 1e9:.3f} GB"
         )
     return peak
 
@@ -108,8 +109,9 @@ def _memory_plan(config, snapshot, bounds):
     estimated = baseline + max(raw_peak, derive_peak, compute_peak) + maximum_faces + face_cache + 1024**3
     if estimated > PROCESS_LIMIT_BYTES:
         raise MemoryError(
-            "native-columns conservative all-process memory plan exceeds 20 GiB: "
-            f"{estimated / 1024**3:.3f} GiB; lower query_chunk/chunk_workers or use smaller native FABs"
+            "native-columns conservative all-process memory plan exceeds "
+            f"{PROCESS_LIMIT_BYTES / 1e9:g} GB: {estimated / 1e9:.3f} GB; "
+            "lower query_chunk/chunk_workers or use smaller native FABs"
         )
     return {
         "process_limit_bytes": PROCESS_LIMIT_BYTES,
