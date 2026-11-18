@@ -4,7 +4,7 @@
 *.egg-info/
 /build/
 /dist/
-# Legacy generated native artifacts stay local during source cleanup.
+# Generated native artifacts are not sources of this NumPy/SciPy project.
 /src/**/*.c
 /src/**/*.so
 /src/**/*.pyd
@@ -18,7 +18,7 @@
 .claude/
 
 # Snapshots and build intermediates stay local. Track the fixed process tables
-# and their previous versions; exact exceptions follow the *.npz rule.
+# used by the current process; exact exceptions follow the *.npz rule.
 /inputs/*
 !/inputs/tables/
 /inputs/tables/*
@@ -53,19 +53,15 @@
 
 # Fixed prebuilt emission tables are supplied with a normal Git clone.
 !/inputs/tables/cloudy/emission.npz
-!/inputs/tables/cloudy/emission_old.npz
 !/inputs/tables/despotic/interpolated.npz
-!/inputs/tables/despotic/interpolated_old.npz
 
 # Selected README examples; other generated figures remain local.
 !/docs/examples/line_luminosity_halpha_intrinsic.png
 !/docs/examples/line_luminosity_halpha_attenuated.png
 !/docs/examples/spectrum_halpha.png
 
-# Track generated Setonix results, including numerical and figure files.
-!/output/**
-
-# Personal experiments, timings and validation records stay local.
-/output/diagnostics/
+# Generated results, experiments and validation records stay local. Previously
+# published result bundles remain tracked; ignore rules do not remove them.
+/output/
 # Per-snapshot z-contiguous working copies are always temporary.
 **/.zfields-*/

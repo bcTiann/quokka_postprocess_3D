@@ -28,8 +28,9 @@ temperature, both conversions give an uncapped Jeans length above 100 pc, so
 the applied model depth is identical. The new density minimum is
 `8.030857221391619e-8 cm^-3`; the seven attenuation columns and 21 temperatures
 are unchanged. Extension provenance describes only the new planes; historical
-metadata are not rewritten to claim a new build. The previous table is kept
-as `inputs/tables/cloudy/emission_old.npz`.
+metadata are not rewritten to claim a new build. The previous table remains
+in Git history (commit `72c7f4884`, path
+`inputs/tables/cloudy/emission_old.npz`); it is not a runtime input.
 
 ## Line emissivities
 

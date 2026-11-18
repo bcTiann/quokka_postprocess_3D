@@ -30,8 +30,8 @@ level-zero FABs can have shorter edge blocks. No converted field copy is used.
 | `docs/` | Usage instructions, physical methods and code walkthrough | Yes |
 | `vendor/` | Pinned external source, dust table, molecular data and their notes | Yes |
 | `inputs/snapshots/` | User-provided QUOKKA snapshots | No |
-| `inputs/tables/` | Cloudy `emission.npz`, DESPOTIC `interpolated.npz`, and their previous `emission_old.npz` / `interpolated_old.npz` | Yes; raw tables and other build files stay local |
-| `output/` | Processed numerical products and figures, including the Setonix results; diagnostics and temporary field copies remain local | Results only |
+| `inputs/tables/` | Current Cloudy `emission.npz` and DESPOTIC `interpolated.npz` | These two tables only; previous tables remain in Git history |
+| `output/` | Processed numerical products, figures and private validation records | New outputs are ignored; previously published result bundles remain tracked |
 | `runtime/` | Cloudy build parameters, `.inc` exports, raw outputs and logs | No |
 
 ## Start reading the current pipeline

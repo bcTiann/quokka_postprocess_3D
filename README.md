@@ -5,8 +5,13 @@ columns into bounded RAM. A separate script draws images and spectra from the
 saved numerical arrays. On Setonix, use the short
 [Setonix guide](docs/setonix.md).
 
-Setonix results are tracked in [output/](output/). A normal clone includes the
-saved numerical products and PNG/PDF figures in their original directory structure.
+`main` is the maintained NumPy/SciPy implementation: nearest-node Gaussian
+accumulation, original-plt reads and no custom compilation. Previous
+implementations remain available through archived Git tags.
+
+Previously published Setonix results remain in [output/](output/). A normal
+clone includes those numerical products and PNG/PDF figures in their original
+directory structure. Newly generated results and personal experiments are ignored.
 
 ## 1. Clone
 

@@ -515,16 +515,24 @@ Runtime inputs/logs go to `runtime/cloudy_eightline/`; the final table is
 existing final tables. The [physics reference](emission_method.md)
 summarizes the table-query rules used during emission processing.
 
-The bundled Cloudy table includes two lower-density planes; its previous
-version is kept as `inputs/tables/cloudy/emission_old.npz`. To reproduce this
-extension, use the incremental tool. It continues the source table's first
+The bundled Cloudy table includes two lower-density planes. Its previous
+version remains in Git history and is not needed by process or plot. To
+reproduce this extension, first restore that historical table to a separate
+local path:
+
+```bash
+git show 72c7f4884:inputs/tables/cloudy/emission_old.npz \
+  > /absolute/path/emission_before_extension.npz
+```
+
+Then use the incremental tool. It continues the source table's first
 density interval, keeps its NH and temperature axes, and calculates only the
 294 new states. Supply the parameter file recorded by the source table and
 its existing incident-spectrum directory:
 
 ```bash
 uv run python tools/cloudy/extend_cloudy_density.py plan \
-  --source-table inputs/tables/cloudy/emission_old.npz \
+  --source-table /absolute/path/emission_before_extension.npz \
   --output-table output/tables/cloudy_extended.npz \
   --recipe-parameter /path/to/original_7x10x21.par \
   --cloudy-exe /absolute/path/to/cloudy.exe \
