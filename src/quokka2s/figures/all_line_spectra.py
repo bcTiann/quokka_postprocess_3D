@@ -59,7 +59,6 @@ def plot_all_line_spectra(
     header_height = 0.22 * (header.count("\n") + 1) if header else 0.0
     figure_height = 4.7 + header_height
     for dust_state in ("intrinsic", "attenuated"):
-        print(f"  All-line spectrum: {dust_state}", flush=True)
         figure, axis = plt.subplots(figsize=(9.3, figure_height))
         for line_key in spectra.line_keys:
             line_spectrum = spectra.for_line(

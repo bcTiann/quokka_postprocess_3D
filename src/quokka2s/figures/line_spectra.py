@@ -42,8 +42,7 @@ def plot_line_spectra(
     header = fill(run_label, width=80) if titled and run_label else ""
     header_height = 0.22 * (header.count("\n") + 1) if header else 0.0
     figure_height = 3.5 + header_height
-    for line_index, key in enumerate(spectra.line_keys, start=1):
-        print(f'  Line spectra [{line_index}/{len(spectra.line_keys)}]: {key}', flush=True)
+    for key in spectra.line_keys:
         intrinsic = spectra.for_line(
             line=key,
             dust_state="intrinsic",

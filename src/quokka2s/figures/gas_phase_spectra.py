@@ -300,8 +300,7 @@ def plot_phase_spectrum_overlay(
     stem = Path(output_stem)
     phase_cut_footer = format_phase_cut_footer(gas_phases=gas_phases)
     paths = []
-    for line_index, (key, line_spectrum) in enumerate(line_spectra.items(), start=1):
-        print(f'  Gas-phase spectra [{line_index}/{len(line_spectra)}]: {key}', flush=True)
+    for key, line_spectrum in line_spectra.items():
         fig, ax, legend_ax = create_phase_comparison_figure(
             titled=titled,
             run_label=run_label,

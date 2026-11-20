@@ -92,7 +92,13 @@ def draw_emission_products(
     task_count = len(images.line_keys) + 3 * len(SPECTRUM_VELOCITY_WINDOWS_KMS)
     worker_count = min(plot_workers, available_cpus, task_count)
 
-    print(f"Plot: preparing Matplotlib (rendering workers: {worker_count})...", flush=True)
+    format_label = " + ".join(extension.upper() for extension in formats)
+    window_label = ", ".join(f"±{upper:g}" for _, upper in SPECTRUM_VELOCITY_WINDOWS_KMS)
+    worker_label = "worker" if worker_count == 1 else "workers"
+    print(
+        f"  Rendering   {worker_count} {worker_label}  |  {format_label}  |  {window_label} km/s",
+        flush=True,
+    )
     import matplotlib
 
     render_pool = nullcontext()
@@ -113,11 +119,12 @@ def draw_emission_products(
     paths = {}
     with render_pool as executor:
         for style in styles:
+            style_started = time.perf_counter()
             titled = style == "titled"
             output = base_output_dir
             if titled:
                 output = base_output_dir.with_name(f"{base_output_dir.name}_titled")
-            print(f"Figures ({style}): {output}", flush=True)
+            print(f"  {style.capitalize():<11} {output}", flush=True)
 
             image_paths = []
             spectrum_paths = []
@@ -184,6 +191,9 @@ def draw_emission_products(
                 for figure_paths, draw in render_jobs:
                     figure_paths.extend(draw())
             else:
+                # Start the ten-figure batches first so short jobs can fill idle workers.
+                long_renderers = (plot_line_spectra, plot_phase_spectrum_overlay)
+                render_jobs.sort(key=lambda job: job[1].func not in long_renderers)
                 submitted = [
                     (figure_paths, executor.submit(draw))
                     for figure_paths, draw in render_jobs
@@ -197,8 +207,10 @@ def draw_emission_products(
                 "gas_phases": phase_paths,
                 "all_line_spectra": all_line_paths,
             }
-            file_count = sum(len(files) for files in paths[style].values())
-            print(f"Figures ({style}): saved {file_count} files.", flush=True)
+            if len(styles) > 1:
+                file_count = sum(len(files) for files in paths[style].values())
+                style_elapsed = time.perf_counter() - style_started
+                print(f"              {file_count} files in {style_elapsed:.2f} s", flush=True)
     return paths
 
 
@@ -209,13 +221,11 @@ def plot_one_snapshot(config: PlotSettings) -> int:
     This independent plotting script reads only saved numerical arrays.
     """
     started = time.perf_counter()
-    print(f'Plot: reading saved numerical products from {config.products}', flush=True)
+    print(f"  Products    {config.products}", flush=True)
     products = read_emission_results(
         directory=config.products,
         image_downsample_factor=config.image_downsample_factor,
     )
-    line_count = len(products.images.line_keys)
-    print(f'Plot: loaded {line_count} lines. No simulation or table lookup is needed.', flush=True)
     # raw_luminosity selects saved erg/s/(km/s) instead of light per area.
     # It does not select intrinsic versus dust-attenuated emission.
     paths = draw_emission_products(
@@ -229,7 +239,7 @@ def plot_one_snapshot(config: PlotSettings) -> int:
     )
     file_count = sum(len(files) for groups in paths.values() for files in groups.values())
     elapsed_seconds = time.perf_counter() - started
-    print(f'Plot finished: saved {file_count} files in {elapsed_seconds:.1f} s.', flush=True)
+    print(f"  Finished    {file_count} files in {elapsed_seconds:.2f} s", flush=True)
     return file_count
 
 
@@ -242,7 +252,6 @@ def main(argv=None) -> None:
     add_run_selection_arguments(parser)
     add_plot_arguments(parser)
     args = parser.parse_args(argv)
-    print(f'Plot configuration: {args.config}', flush=True)
     try:
         config = load_plot_config(
             path=args.config,
@@ -256,6 +265,8 @@ def main(argv=None) -> None:
         )
     except (ValueError, OSError) as exc:
         parser.error(str(exc))
+    print("Emission plots", flush=True)
+    print(f"  Config      {args.config}", flush=True)
     plot_one_snapshot(config=config)
 
 

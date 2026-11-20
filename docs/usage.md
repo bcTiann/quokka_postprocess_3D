@@ -306,7 +306,7 @@ x/y ranges to select a downloaded region; omit them to select the full-box resul
 |---|---|
 | `figure_formats` | Nonempty list containing `png`, `pdf`, or both; default `[png]` |
 | `figure_styles` | Nonempty list containing `titled`, `untitled`, or both; default `[titled]` |
-| `plot_workers` | Maximum number of concurrent rendering processes, a positive integer with default 4 |
+| `plot_workers` | Maximum number of concurrent rendering processes, a positive integer with default 8 |
 | `image_downsample_factor` | Select an already prepared image resolution; default 1, native |
 | `raw_luminosity` | Display spectra in luminosity units rather than luminosity per projected area; default false |
 | `allow_partial` | Permit figures from an intentionally incomplete diagnostic run; default false |
@@ -316,7 +316,7 @@ For example, the default plotting selection is:
 ```yaml
 figure_formats: [png]
 figure_styles: [titled]
-plot_workers: 4
+plot_workers: 8
 ```
 
 Replace the old `titled_figures` setting with `figure_styles`. The format and

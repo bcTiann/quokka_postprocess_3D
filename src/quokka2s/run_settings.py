@@ -91,7 +91,7 @@ class PlotSettings:
     raw_luminosity: bool = False
     allow_partial: bool = False
     image_downsample_factor: int = 1
-    plot_workers: int = 4
+    plot_workers: int = 8
 
 
 _RUN_REQUIRED_SETTINGS = {"dataset", "jobname", "results_dir"}
@@ -198,7 +198,10 @@ def add_plot_arguments(parser: argparse.ArgumentParser) -> None:
         "--plot-workers",
         type=int,
         metavar="N",
-        help="Maximum rendering processes (default: 4, use 1 for serial rendering)",
+        help=(
+            f"Maximum rendering processes (default {_PLOT_DEFAULTS['plot_workers']}, "
+            "use 1 for serial rendering)"
+        ),
     )
 
 

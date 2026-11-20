@@ -671,8 +671,10 @@ Open [plot_emission_results.py](../src/quokka2s/plot_emission_results.py) and st
    With multiple workers, image jobs receive the saved planes for one line and
    spectrum jobs are grouped by renderer and velocity window. The parent
    loads the shared font cache before the workers start with Matplotlib's Agg
-   backend. `plot_workers` caps the number of rendering processes, subject to
-   available CPUs and jobs. A value of 1 draws serially with the same renderers.
+   backend. It schedules the longer line and gas-phase spectrum batches first
+   and reports progress by output style. `plot_workers` caps the number of
+   rendering processes, subject to available CPUs and jobs. A value of 1 draws
+   serially with the same renderers.
 5. Each plotting step saves only the selected formats. Titled figures go in
    `figures_titled/`, and untitled figures in `figures/`, using `png/` and/or
    `pdf/` subdirectories. `--png --pdf --titled --untitled` writes both formats
