@@ -68,12 +68,15 @@ def plot_line_spectra(
                 lw=1.8,
             )
         else:
+            # Keep the intrinsic dashes visible when the CO profiles coincide.
+            is_co_line = key in ("co10", "co21")
             axis.plot(
                 intrinsic.velocity_kms,
                 intrinsic_profile,
                 color="#242424",
                 lw=1.5,
                 ls="--",
+                zorder=3 if is_co_line else 2,
                 label="Intrinsic",
             )
             axis.plot(
@@ -81,6 +84,7 @@ def plot_line_spectra(
                 attenuated_profile,
                 color="#C53D46",
                 lw=1.8,
+                alpha=0.65 if is_co_line else 1.0,
                 label="Dust attenuated",
             )
             axis.legend(frameon=False, fontsize=9)

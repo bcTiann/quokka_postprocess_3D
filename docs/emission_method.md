@@ -264,7 +264,9 @@ common mass-weighted gas mean and about its own mean.
 Plotting draws saved native images unless a prepared coarse image is selected.
 Numerical preparation sums neighbouring pixel luminosities into a separate
 image product, retaining the native data. Normal spectrum comparisons
-show cold+hot totals. The peak-normalized gas-phase comparison uses the
+show cold+hot totals. For CO, the dashed intrinsic curve is drawn above
+the translucent attenuated curve so near-coincident profiles remain visible.
+The peak-normalized gas-phase comparison uses the
 attenuated total Halpha/HI/CII/CO and hot CIII/CIV profiles. Its gas
 histogram bin centres are connected without additional smoothing. CO's WIM/HIM
 curves are faint. Individual-line spectra, gas-phase comparisons and the
