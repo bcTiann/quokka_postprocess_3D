@@ -81,6 +81,7 @@ class PlotSettings:
     output_dir is the untitled figure directory; the titled version uses its
     name plus "_titled". figure_formats and figure_styles select which files
     are written. Omitted choices save PNG figures with titles only.
+    plot_workers limits the concurrent rendering processes.
     """
 
     products: Path
@@ -90,6 +91,7 @@ class PlotSettings:
     raw_luminosity: bool = False
     allow_partial: bool = False
     image_downsample_factor: int = 1
+    plot_workers: int = 4
 
 
 _RUN_REQUIRED_SETTINGS = {"dataset", "jobname", "results_dir"}
@@ -166,7 +168,7 @@ def add_run_selection_arguments(parser: argparse.ArgumentParser) -> None:
 
 
 def add_plot_arguments(parser: argparse.ArgumentParser) -> None:
-    """Select output formats and title styles independently of YAML choices.
+    """Select output formats, title styles and the rendering worker limit.
 
     Omitted categories retain YAML values. Example: --pdf selects only PDF;
     --png --pdf selects both. --titled --untitled writes both title versions.
@@ -192,6 +194,12 @@ def add_plot_arguments(parser: argparse.ArgumentParser) -> None:
             default=None,
             help=f"Save {style} figures; title flags replace YAML figure_styles",
         )
+    parser.add_argument(
+        "--plot-workers",
+        type=int,
+        metavar="N",
+        help="Maximum rendering processes (default: 4, use 1 for serial rendering)",
+    )
 
 
 def _figure_choices(
@@ -441,6 +449,7 @@ def load_plot_config(
     y_index_range: list[int] | None = None,
     figure_formats: list[str] | None = None,
     figure_styles: list[str] | None = None,
+    plot_workers: int | None = None,
 ) -> PlotSettings:
     """Locate the selected job/snapshot/region's products and figure directories.
 
@@ -463,6 +472,7 @@ def load_plot_config(
         y_index_range=y_index_range,
         figure_formats=figure_formats,
         figure_styles=figure_styles,
+        plot_workers=plot_workers,
     )
 
 
@@ -476,6 +486,7 @@ def _plot_settings(
     y_index_range: list[int] | None,
     figure_formats: list[str] | None,
     figure_styles: list[str] | None,
+    plot_workers: int | None,
 ) -> PlotSettings:
     """Validate saved-result selection and figure choices from one YAML mapping."""
     run = read_run_selection(
@@ -494,6 +505,8 @@ def _plot_settings(
         values["figure_formats"] = figure_formats
     if figure_styles is not None:
         values["figure_styles"] = figure_styles
+    if plot_workers is not None:
+        values["plot_workers"] = plot_workers
     values["figure_formats"] = _figure_choices(
         name="figure_formats",
         values=values["figure_formats"],
@@ -507,8 +520,8 @@ def _plot_settings(
     for name in ("raw_luminosity", "allow_partial"):
         if type(values[name]) is not bool:
             raise ValueError(f"{name} must be true or false")
-    values["image_downsample_factor"] = _positive_int(
-        "image_downsample_factor", values["image_downsample_factor"])
+    for name in ("image_downsample_factor", "plot_workers"):
+        values[name] = _positive_int(name, values[name])
     return PlotSettings(
         products=run.directory / "processed",
         output_dir=run.directory / "figures",

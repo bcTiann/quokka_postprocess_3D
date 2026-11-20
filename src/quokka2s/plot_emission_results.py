@@ -1,11 +1,16 @@
 """Plot saved numerical products; no snapshot reading or emission calculation.
 
 Default output is titled PNG figures, with both +/-50 and +/-200 km/s views.
-Format and title flags override the corresponding choices in the shared YAML.
+CLI flags override format, title style and worker settings in the shared YAML.
 """
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ProcessPoolExecutor
+from contextlib import nullcontext
+from functools import partial
+import multiprocessing
+import os
 from pathlib import Path
 import time
 
@@ -45,6 +50,7 @@ def draw_emission_products(
     formats: tuple[str, ...] = ("png",),
     styles: tuple[str, ...] = ("titled",),
     allow_partial: bool = False,
+    plot_workers: int = 1,
 ) -> dict[str, dict[str, list[Path]]]:
     """Draw the selected formats/styles and both saved-spectrum display windows.
 
@@ -54,6 +60,7 @@ def draw_emission_products(
     output_dir is the untitled figure directory; the titled version uses its
     sibling with "_titled" appended. Images are drawn once per style, while
     line, gas-phase and all-line spectra each use +/-50 and +/-200 km/s.
+    plot_workers limits rendering processes. One worker renders in this process.
     Returns paths grouped by style and product type. For example,
     formats=("png", "pdf"), styles=("untitled", "titled") writes four versions.
     """
@@ -63,6 +70,8 @@ def draw_emission_products(
         raise ValueError("styles must contain untitled and/or titled")
     if not products.processing_complete and not allow_partial:
         raise ValueError("Partial diagnostic products require allow_partial=True")
+    if type(plot_workers) is not int or plot_workers < 1:
+        raise ValueError("plot_workers must be a positive integer")
     diagnostic_suffix = "" if products.processing_complete else "_partial_diagnostic"
     images = products.images
     run_label = format_run_label(products)
@@ -76,71 +85,120 @@ def draw_emission_products(
         for key in LINE_ORDER
     }
 
-    print('Plot: preparing Matplotlib (the first run may build its font cache)...', flush=True)
+    if hasattr(os, "sched_getaffinity"):
+        available_cpus = len(os.sched_getaffinity(0))
+    else:
+        available_cpus = os.cpu_count() or 1
+    task_count = len(images.line_keys) + 3 * len(SPECTRUM_VELOCITY_WINDOWS_KMS)
+    worker_count = min(plot_workers, available_cpus, task_count)
+
+    print(f"Plot: preparing Matplotlib (rendering workers: {worker_count})...", flush=True)
     import matplotlib
-    matplotlib.use("Agg")
+
+    render_pool = nullcontext()
+    if worker_count == 1:
+        matplotlib.use("Agg")
+    else:
+        # Build the font cache once before workers start using it.
+        import matplotlib.font_manager
+
+        render_pool = ProcessPoolExecutor(
+            max_workers=worker_count,
+            mp_context=multiprocessing.get_context("spawn"),
+            initializer=matplotlib.use,
+            initargs=("Agg",),
+        )
 
     base_output_dir = Path(output_dir)
     paths = {}
-    for style in styles:
-        titled = style == "titled"
-        output = base_output_dir
-        if titled:
-            output = base_output_dir.with_name(f"{base_output_dir.name}_titled")
-        print(f'Figures ({style}): {output}', flush=True)
-        image_paths = plot_line_images(
-            images=images,
-            output=output,
-            diagnostic_suffix=diagnostic_suffix,
-            titled=titled,
-            formats=formats,
-            run_label=run_label,
-        )
-        spectrum_paths = []
-        phase_paths = []
-        all_line_paths = []
-        for velocity_limits_kms in SPECTRUM_VELOCITY_WINDOWS_KMS:
-            filename_suffix = f"_v{velocity_limits_kms[1]:g}"
-            print(f'  Spectrum window: {velocity_limits_kms} km/s', flush=True)
-            spectrum_paths.extend(plot_line_spectra(
-                spectra=products.spectra,
-                output=output,
-                per_projected_area=per_projected_area,
-                diagnostic_suffix=diagnostic_suffix,
-                titled=titled,
-                formats=formats,
-                velocity_limits_kms=velocity_limits_kms,
-                filename_suffix=filename_suffix,
-                run_label=run_label,
-            ))
-            phase_paths.extend(plot_phase_spectrum_overlay(
-                line_spectra=attenuated_lines,
-                gas_phases=products.gas_phases,
-                output_stem=output / f"gas_phase_spectrum{diagnostic_suffix}",
-                titled=titled,
-                formats=formats,
-                velocity_limits_kms=velocity_limits_kms,
-                filename_suffix=filename_suffix,
-                run_label=run_label,
-            ))
-            all_line_paths.extend(plot_all_line_spectra(
-                spectra=products.spectra,
-                output=output,
-                diagnostic_suffix=diagnostic_suffix,
-                titled=titled,
-                formats=formats,
-                velocity_limits_kms=velocity_limits_kms,
-                filename_suffix=filename_suffix,
-                run_label=run_label,
-            ))
-        paths[style] = {
-            "images": image_paths,
-            "spectra": spectrum_paths,
-            "gas_phases": phase_paths,
-            "all_line_spectra": all_line_paths,
-        }
-        file_count = sum(len(files) for files in paths[style].values())
-        print(f'Figures ({style}): saved {file_count} files.', flush=True)
+    with render_pool as executor:
+        for style in styles:
+            titled = style == "titled"
+            output = base_output_dir
+            if titled:
+                output = base_output_dir.with_name(f"{base_output_dir.name}_titled")
+            print(f"Figures ({style}): {output}", flush=True)
+
+            image_paths = []
+            spectrum_paths = []
+            phase_paths = []
+            all_line_paths = []
+            render_jobs = []
+            image_batches = (images,)
+            if executor is not None:
+                # Send each worker only the image planes it draws.
+                image_batches = tuple(images.select_line(line=key) for key in images.line_keys)
+            for image_batch in image_batches:
+                draw_images = partial(
+                    plot_line_images,
+                    images=image_batch,
+                    output=output,
+                    diagnostic_suffix=diagnostic_suffix,
+                    titled=titled,
+                    formats=formats,
+                    run_label=run_label,
+                )
+                render_jobs.append((image_paths, draw_images))
+
+            for velocity_limits_kms in SPECTRUM_VELOCITY_WINDOWS_KMS:
+                filename_suffix = f"_v{velocity_limits_kms[1]:g}"
+                draw_spectra = partial(
+                    plot_line_spectra,
+                    spectra=products.spectra,
+                    output=output,
+                    per_projected_area=per_projected_area,
+                    diagnostic_suffix=diagnostic_suffix,
+                    titled=titled,
+                    formats=formats,
+                    velocity_limits_kms=velocity_limits_kms,
+                    filename_suffix=filename_suffix,
+                    run_label=run_label,
+                )
+                render_jobs.append((spectrum_paths, draw_spectra))
+                draw_phases = partial(
+                    plot_phase_spectrum_overlay,
+                    line_spectra=attenuated_lines,
+                    gas_phases=products.gas_phases,
+                    output_stem=output / f"gas_phase_spectrum{diagnostic_suffix}",
+                    titled=titled,
+                    formats=formats,
+                    velocity_limits_kms=velocity_limits_kms,
+                    filename_suffix=filename_suffix,
+                    run_label=run_label,
+                )
+                render_jobs.append((phase_paths, draw_phases))
+                draw_all_lines = partial(
+                    plot_all_line_spectra,
+                    spectra=products.spectra,
+                    output=output,
+                    diagnostic_suffix=diagnostic_suffix,
+                    titled=titled,
+                    formats=formats,
+                    velocity_limits_kms=velocity_limits_kms,
+                    filename_suffix=filename_suffix,
+                    run_label=run_label,
+                )
+                render_jobs.append((all_line_paths, draw_all_lines))
+
+            if executor is None:
+                for figure_paths, draw in render_jobs:
+                    figure_paths.extend(draw())
+            else:
+                submitted = [
+                    (figure_paths, executor.submit(draw))
+                    for figure_paths, draw in render_jobs
+                ]
+                for figure_paths, future in submitted:
+                    figure_paths.extend(future.result())
+
+            paths[style] = {
+                "images": image_paths,
+                "spectra": spectrum_paths,
+                "gas_phases": phase_paths,
+                "all_line_spectra": all_line_paths,
+            }
+            file_count = sum(len(files) for files in paths[style].values())
+            print(f"Figures ({style}): saved {file_count} files.", flush=True)
     return paths
 
 
@@ -167,6 +225,7 @@ def plot_one_snapshot(config: PlotSettings) -> int:
         formats=config.figure_formats,
         styles=config.figure_styles,
         allow_partial=config.allow_partial,
+        plot_workers=config.plot_workers,
     )
     file_count = sum(len(files) for groups in paths.values() for files in groups.values())
     elapsed_seconds = time.perf_counter() - started
@@ -193,6 +252,7 @@ def main(argv=None) -> None:
             y_index_range=args.y_index_range,
             figure_formats=args.figure_formats,
             figure_styles=args.figure_styles,
+            plot_workers=args.plot_workers,
         )
     except (ValueError, OSError) as exc:
         parser.error(str(exc))

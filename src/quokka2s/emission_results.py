@@ -1,7 +1,7 @@
 """Read named image, spectrum and gas-phase results without simulation inputs."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import json
 from pathlib import Path
 
@@ -32,6 +32,19 @@ class ImageResults:
         line_index = self.line_keys.index(line)
         dust_index = self.dust_state_keys.index(dust_state)
         return self.line_luminosity_image_erg_s[dust_index, line_index]
+
+    def select_line(self, line: str) -> ImageResults:
+        """Return saved views for one line, keeping the (dust, line, x, y) axes."""
+        line_index = self.line_keys.index(line)
+        selected_line = slice(line_index, line_index + 1)
+        return replace(
+            self,
+            line_keys=(line,),
+            line_luminosity_image_erg_s=self.line_luminosity_image_erg_s[:, selected_line],
+            color_limits_erg_s=self.color_limits_erg_s[selected_line],
+            line_has_emission=self.line_has_emission[selected_line],
+            image_is_hidden=self.image_is_hidden[:, selected_line],
+        )
 
 
 @dataclass(frozen=True)

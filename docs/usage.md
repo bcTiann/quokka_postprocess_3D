@@ -298,12 +298,12 @@ For a single plot, the basename of `dataset` selects the saved snapshot. Its
 original Setonix path can remain unchanged;
 plot does not require that path or the tables to exist locally. Retain the same
 x/y ranges to select a downloaded region; omit them to select the full-box result.
-Use the plotting script to redraw the entire output group without a dataset selection.
 
 | Plot setting | Meaning |
 |---|---|
 | `figure_formats` | Nonempty list containing `png`, `pdf`, or both; default `[png]` |
 | `figure_styles` | Nonempty list containing `titled`, `untitled`, or both; default `[titled]` |
+| `plot_workers` | Maximum number of concurrent rendering processes, a positive integer with default 4 |
 | `image_downsample_factor` | Select an already prepared image resolution; default 1, native |
 | `raw_luminosity` | Display spectra in luminosity units rather than luminosity per projected area; default false |
 | `allow_partial` | Permit figures from an intentionally incomplete diagnostic run; default false |
@@ -313,11 +313,12 @@ For example, the default plotting selection is:
 ```yaml
 figure_formats: [png]
 figure_styles: [titled]
+plot_workers: 4
 ```
 
-Replace the old `titled_figures` setting with `figure_styles`. These choices
-apply to all figures from `uv run python plot_emission_results.py` and process's automatic plots, including
-luminosity images.
+Replace the old `titled_figures` setting with `figure_styles`. The format and
+style choices apply to all figures written by `plot_emission_results.py`,
+including luminosity images.
 The command-line equivalents are:
 
 | Command | Formats | Styles |
@@ -331,6 +332,11 @@ The command-line equivalents are:
 An explicitly selected category replaces its YAML list. For example,
 `--pdf` does not also save PNG just because PNG is the default. Combine
 `--png --pdf --titled --untitled` to write both formats of both styles.
+
+`--plot-workers N` overrides `plot_workers` for one plotting invocation.
+The number of workers is capped by the available CPUs and rendering jobs.
+Use `--plot-workers 1` to render serially. Both modes use the same saved
+arrays and figure settings.
 
 Every titled figure includes the saved `jobname`, snapshot name and simulation
 time, for example `sigma13.v2 | plt0655228 | time = 256.00 Myr`, where Myr means

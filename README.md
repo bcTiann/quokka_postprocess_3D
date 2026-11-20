@@ -106,6 +106,9 @@ uv run python plot_emission_results.py \
 Plot reads only saved arrays. The original snapshot need not still exist; its
 folder name selects the result. Omit x/y arguments to select full-box products.
 The default saves titled PNG figures in `figures_titled/png/`.
+Plotting uses up to four rendering processes by default. Set `plot_workers` in
+YAML or pass `--plot-workers N` for one invocation. Use `--plot-workers 1` for
+serial rendering.
 Select formats and title styles independently:
 
 ```bash

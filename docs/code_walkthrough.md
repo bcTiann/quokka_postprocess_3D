@@ -660,9 +660,14 @@ Open [plot_emission_results.py](../src/quokka2s/plot_emission_results.py) and st
    [figures/gas_phase_spectra.py](../src/quokka2s/figures/gas_phase_spectra.py),
    and all-lines comparisons with
    [figures/all_line_spectra.py](../src/quokka2s/figures/all_line_spectra.py).
-   Each selected style draws its images once, then draws each spectral figure
-   with ±50 and ±200 km/s limits. The limits affect axes only, and filenames
-   distinguish the views with `_v50` and `_v200`.
+   Each selected style draws its images once and its spectral figures with ±50
+   and ±200 km/s limits. The limits affect axes only, and filenames distinguish
+   the views with `_v50` and `_v200`.
+   With multiple workers, image jobs receive the saved planes for one line and
+   spectrum jobs are grouped by renderer and velocity window. The parent
+   loads the shared font cache before the workers start with Matplotlib's Agg
+   backend. `plot_workers` caps the number of rendering processes, subject to
+   available CPUs and jobs. A value of 1 draws serially with the same renderers.
 5. Each plotting step saves only the selected formats. Titled figures go in
    `figures_titled/`, and untitled figures in `figures/`, using `png/` and/or
    `pdf/` subdirectories. `--png --pdf --titled --untitled` writes both formats

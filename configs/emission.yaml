@@ -36,6 +36,8 @@ gaussian_grid: null
 # Plot settings apply only to plot_emission_results.py.
 figure_formats: [png]
 figure_styles: [titled]
+# Up to four rendering processes. Use 1 for serial rendering.
+plot_workers: 4
 image_downsample_factor: 1
 # To select factor 2, first prepare it from existing products:
 # uv run python -m quokka2s.prepare_emission_results --products /absolute/path/to/processed --image-downsample-factor 2
