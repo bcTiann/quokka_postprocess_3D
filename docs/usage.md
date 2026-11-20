@@ -14,8 +14,8 @@ export, or manual `pip install -e .` is required. From the repository root:
 uv sync
 ```
 
-`.python-version` selects Python 3.11. On Setonix, load the Python module and
-add `--python "$(command -v python)"` to sync, as shown in the Setonix guide.
+`.python-version` selects Python 3.11. To use an existing interpreter, pass
+`--python /path/to/python3.11` to `uv sync`.
 In later shells, return to the repository and use `uv run python process_snapshot.py`
 or `uv run python plot_emission_results.py`. uv checks and synchronizes the environment automatically,
 reusing the locked versions rather than reinstalling everything on each run.

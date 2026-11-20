@@ -1,150 +1,43 @@
 # quokka2s — QUOKKA emission post-processing
 
-Process one explicitly selected QUOKKA snapshot by reading original native
-columns into bounded RAM. A separate script draws images and spectra from the
-saved numerical arrays. On Setonix, use the short
-[Setonix guide](docs/setonix.md).
+Process one QUOKKA snapshot, then plot its saved emission maps and spectra.
 
-`main` is the maintained NumPy/SciPy implementation: nearest-node Gaussian
-accumulation, original-plt reads and no custom compilation. Previous
-implementations remain available through archived Git tags.
+## Install
 
-Previously published Setonix results remain in [output/](output/). A normal
-clone includes those numerical products and PNG/PDF figures in their original
-directory structure. Newly generated results and personal experiments are ignored.
-
-## 1. Clone
+The project uses [uv](https://docs.astral.sh/uv/getting-started/installation/) to install dependencies.
 
 ```bash
 git clone https://github.com/bcTiann/quokka_postprocess_3D.git
 cd quokka_postprocess_3D
-```
-
-## 2. Configure the environment
-
-Install [uv](https://docs.astral.sh/uv/getting-started/installation/) once on
-your local computer, then install the locked project environment:
-
-```bash
-curl -LsSf https://astral.sh/uv/0.11.31/install.sh | sh
-```
-
-Open a new terminal after installation so the installer's PATH setup takes
-effect, return to the repository, then run:
-
-```bash
 uv sync
 ```
 
-uv creates `.venv` and installs this checkout in editable mode. No activation,
-`PYTHONPATH` or manual `pip install` is needed. The locked environment uses
-Python 3.11. Project calculations use NumPy/SciPy and have no custom Cython
-extensions or separate compilation step. Building the pinned yt source dependency
-can still require Git and C/C++ build tools when no cached build is available.
-uv installs its build dependencies automatically. Both process and plot
-dependencies are installed by default. `uv run` checks the environment
-automatically and reuses the locked versions; it does not reinstall everything
-on each run.
+## Process and plot
 
-The editable installation reads changes to the processing Python files directly.
-Run `uv sync` after changing dependencies or package settings.
-
-On Setonix, follow its [environment setup](docs/setonix.md#2-configure-the-environment)
-instead: keep the repository, environment, caches and generated results under
-`$MYSOFTWARE` to avoid the home quota.
-
-## 3. Process one snapshot
-
-Run the script from the repository root and supply one snapshot's absolute path:
+Pass the absolute path to one snapshot directory containing `Header`.
+`--jobname` names the output group. Use the same selection for both commands.
 
 ```bash
-uv run python process_snapshot.py --snapshot /absolute/path/to/run1/plt0008703
+uv run python process_snapshot.py --snapshot /absolute/path/plt0008703 --jobname my-run
+uv run python plot_emission_results.py --snapshot /absolute/path/plt0008703 --jobname my-run
 ```
 
-The path must name the snapshot itself, containing `Header`. A parent run
-folder is rejected; this script never discovers or processes other snapshots.
-`--jobname my-run` optionally changes the output group from the YAML default.
-[configs/emission.yaml](configs/emission.yaml) holds output locations, table
-paths and execution settings. Its `dataset: null` requires the command-line
-path; alternatively set it to one absolute snapshot path. Other relative YAML
-paths start at that YAML file. Shell variables are not expanded in YAML.
+Alternatively, set `dataset` and `jobname` in
+[`configs/emission.yaml`](configs/emission.yaml) and run both scripts without those flags.
 
-For a small check, select native x/y indices; the stop is excluded:
+```yaml
+dataset: /absolute/path/plt0008703
+jobname: my-run
+```
 
 ```bash
-uv run python process_snapshot.py \
-  --snapshot /absolute/path/to/run1/plt0008703 \
-  --jobname my-run --x 64 66 --y 64 66
+uv run python process_snapshot.py
+uv run python plot_emission_results.py
 ```
 
-This processes only x=64,65 and y=64,65, retaining each column's full original z
-depth. Metadata supplies grid dimensions; no 256/512/2048-sized grid is assumed.
-The reader supports rectangular level-zero grids, including shorter edge FABs
-and dimensions such as 1024 x 1024 x 2028. It reads intersecting original FAB
-fields and required global gradient neighbours into bounded RAM; it does not
-write a z-contiguous disk copy. A small region can still require complete
-intersecting FAB-field reads, but never a whole-snapshot conversion.
+By default, numerical products go to `output/<jobname>/<snapshot>/processed/`.
+Plotting reads those products and writes PNGs in the adjacent `figures_titled/png/`.
 
-`process_snapshot.py` only calculates, checks and saves numerical products.
-It never invokes plotting. Original snapshots and lookup tables stay read-only.
-Results go to `results_dir/jobname/snapshot_name/processed/`; explicit x/y
-ranges add a matching `region_x64-66_y64-66/` directory before `processed/`.
-Complete matching results can be reused after integrity and identity checks.
-Conflicting or incomplete outputs are preserved; choose a new results root to
-calculate a separate version.
-
-## 4. Plot the saved products
-
-Run the independent plotting script with the same selection:
-
-```bash
-uv run python plot_emission_results.py \
-  --snapshot /absolute/path/to/run1/plt0008703 \
-  --jobname my-run --x 64 66 --y 64 66
-```
-
-Plot reads only saved arrays. The original snapshot need not still exist; its
-folder name selects the result. Omit x/y arguments to select full-box products.
-The default saves titled PNG figures in `figures_titled/png/`.
-Plotting uses up to eight rendering processes by default. Set `plot_workers` in
-YAML or pass `--plot-workers N` for one invocation. Use `--plot-workers 1` for
-serial rendering.
-Select formats and title styles independently:
-
-```bash
-uv run python plot_emission_results.py --snapshot /absolute/path/to/plt0008703 --pdf
-uv run python plot_emission_results.py --snapshot /absolute/path/to/plt0008703 --png --pdf --titled --untitled
-```
-
-Both scripts accept `--config /path/to/emission.yaml`. Repeat command-line
-selection overrides in the plot command; they do not edit YAML or persist.
-There are no process/plot console aliases registered in `pyproject.toml`.
-
-## Current numerical route
-
-Each selected RAM tile supplies density, temperature, velocity, shielding and
-foreground columns, and velocity gradient. Physical lookups calculate each
-line's emissivity and foreground dust attenuation. Each original Gaussian
-assigns its full luminosity to one existing fractional-mean/sigma template node.
-These node/shift luminosities remain in H across all batches and tiles. After
-all selected cells, NumPy convolution turns H into 400 spectral bins on
-[-200,200] km/s. Sigma nodes remain logarithmically spaced. Select the closest
-sigma by linear distance, then the closest actual phase knot on that layer;
-exact ties choose the lower node. No sigma/phase interpolation weights are
-used: the selected node receives L with weight 1. Phase one is represented
-as phase zero with the integer shift increased by one.
-
-This is the sole production Gaussian method. Valid sigma values outside table
-coverage use stable direct integration with the same 5-sigma cutoff and are
-reported in the log. No project Cython extension is required. Only Gaussian
-template preparation is outside process timing; metadata, field reads, physical
-calculations, all accumulation, checks and saving remain timed. The reader uses
-a conservative memory preflight and a 30 GB process RSS guard; tune query and
-worker sizes for the available memory. NumPy derives complete z columns in
-bounded blocks targeting 131,072 cells; this is separate from physical
-lookup batch size. Read-worker and derivation-thread counts are configurable.
-See the usage guide for a 16-thread derivation example. A concurrency setting
-alone does not establish a speedup.
-
-[Detailed usage](docs/usage.md) · [Methods](docs/emission_method.md) ·
-[Code guide](docs/code_walkthrough.md) · [Repository layout](docs/repository_layout.md)
+[Setonix](docs/setonix.md) · [Detailed usage](docs/usage.md) ·
+[Methods](docs/emission_method.md) · [Code walkthrough](docs/code_walkthrough.md) ·
+[Repository layout](docs/repository_layout.md) · [Published results](output/)
