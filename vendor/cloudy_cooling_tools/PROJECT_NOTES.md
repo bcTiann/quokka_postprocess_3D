@@ -10,16 +10,15 @@ Local changes included in this snapshot:
 - Its Jeans density conversion uses `coolingMapHydrogenMassFraction`
   (default `0.7157683773530885`) to match QUOKKA's rho-to-nH conversion.
   This changes no elemental abundances. An explicit value of `0.76`
-  reproduces the historical conversion; the upstream `CIAOLoop` is retained
-  unchanged as a source reference.
+  reproduces the historical conversion.
 - `scripts/subtract_cooling_lite.pl` converts Cloudy 17 component fractions
   back to physical heating/cooling rates using the total rate.
-- Eight-line parameters are generated at runtime by
-  `tools/cloudy/build_cloudy_emission_table.py`. Ten upstream-style parameter
-  examples are included in `examples/grackle/` as source references.
 
-The upstream README is preserved as upstream documentation. This is a selected
-source snapshot, so some data/example paths described there are not included.
+The [Cloudy table builder](../../tools/cloudy/build_cloudy_emission_table.py)
+generates its eight-line parameter files at runtime. The source reference
+files, including the original `CIAOLoop` and Grackle examples, are available
+in this repository at commit `3f8a63b1d`.
+
 The main project commands are in the [repository-root README](../../README.md);
 table-building commands and paths are in the [usage guide](../../docs/usage.md#build-tables).
 
