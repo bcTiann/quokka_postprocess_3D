@@ -130,7 +130,7 @@ def build_processing_report(
             'spectral_workers_per_chunk': 1,
             'spectral_method': 'direct-template',
         },
-        # Integrated luminosities, dispersions and query clipping counts.
+        # Integrated luminosities, dispersions and lookup diagnostics.
         'intrinsic_luminosity_erg_s': products.intrinsic_luminosity_erg_s.tolist(),
         'transmitted_luminosity_erg_s': products.attenuated_luminosity_erg_s.tolist(),
         'cold_gas_luminosity_by_despotic_temperature': products.cold_despotic_luminosity.build_report(
@@ -142,6 +142,7 @@ def build_processing_report(
         'line_centroid_window_kms': line_centroid_window,
         'line_centroid_full_kms': line_centroid_full,
         'despotic_coordinate_clipped_cells': products.despotic_coordinate_clipped_cells,
+        'co_zero_below_despotic_nH_cells': products.co_zero_below_despotic_nH_cells,
         'cloudy_attenuation_coordinate_clipped_cells': products.cloudy_column_clipped_cells,
         'input_tables': {
             'despotic': str(config.despotic_table.resolve()),
@@ -186,8 +187,10 @@ def build_processing_report(
         'cold_CIII_CIV': 'Omitted by the adopted prescription; hot contributions only',
         'exclusions': (
             'Each line omits only its own missing emissivities in both images and spectra. '
-            'Hot atomic lines do not depend on DESPOTIC; both CO lines require DESPOTIC '
-            'at all temperatures. Missing entries are distinct from physical zero emission.'
+            'Both CO lines are assigned zero in eligible cells below the DESPOTIC density '
+            'domain. The report counts each of those cells once. Their DESPOTIC temperature '
+            'and cold Halpha, H I and CII are unavailable. Hot atomic lines use Cloudy. '
+            'Missing entries are distinct from prescribed zero emission.'
         ),
         'interpretation': (
             'Local volume emission with inherited Cloudy escape treatment and DESPOTIC LVG; '

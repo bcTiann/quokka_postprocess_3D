@@ -6,12 +6,14 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from quokka2s.despotic.lookup import DespoticTemperatureCO
+
 
 # Relative endpoint tolerance shared by processing and table-range diagnostics.
 COORDINATE_BOUNDARY_RTOL = 1e-6
 
 if TYPE_CHECKING:
-    from quokka2s.despotic.lookup import DespoticLookup, DespoticQueries, DespoticTemperatureCO
+    from quokka2s.despotic.lookup import DespoticLookup, DespoticQueries
     from quokka2s.snapshot_reader import CellBatch
 
 
@@ -26,7 +28,10 @@ class DespoticQueryInputs:
         permitted endpoint clipping. Original physical cell arrays are unchanged.
     coordinate_clipped : dict of str to ndarray of bool, shape (B,)
         'nH', 'NH' and 'dVdr' flags recording which coordinate entries changed.
-        These are clipping flags, not failure flags.
+        Skipped cells have no clipping flags.
+    below_hydrogen_density_domain : ndarray of bool, shape (B,), or None
+        Cells skipped by the low-density emission rule. These have NaN query
+        nH. None means every cell is queried.
 
     Returned by DespoticCellReader.prepare_query_inputs(). Example: hydrogen_density_cm3[7]
     is the eighth cell's lookup nH, also used when converting DESPOTIC lumPerH.
@@ -36,6 +41,7 @@ class DespoticQueryInputs:
     shielding_NH_cm2: np.ndarray
     velocity_gradient_s: np.ndarray
     coordinate_clipped: dict[str, np.ndarray]
+    below_hydrogen_density_domain: np.ndarray | None
 
 
 @dataclass(frozen=True)
@@ -68,9 +74,9 @@ class DespoticCellFields:
     Attributes
     ----------
     temperature_K : ndarray
-        T_DESPOTIC [K], queried for every cell, independently of its T_QUOKKA branch.
+        T_DESPOTIC [K], queried for covered cells at all T_QUOKKA.
     co10_luminosity_per_H, co21_luminosity_per_H : ndarray
-        CO(1-0)/(2-1) luminosities [erg/s/H nucleus], queried for every cell.
+        CO(1-0)/(2-1) luminosities [erg/s/H nucleus], queried for covered cells.
     cii_luminosity_per_H : ndarray
         CII luminosity [erg/s/H nucleus], queried only for eligible cold cells.
     electron_density_cm3, ionized_hydrogen_density_cm3, neutral_hydrogen_density_cm3 : ndarray
@@ -83,6 +89,9 @@ class DespoticCellFields:
         only; other invalid fields with usable temperature are rejected later.
     coordinate_clipped : dict of str to ndarray of bool
         'nH', 'NH', 'dVdr' flags from the reader's coordinate preparation, each (B,).
+    below_hydrogen_density_domain : ndarray of bool, shape (B,), or None
+        Skipped low-density cells for which only the CO emissivity is prescribed
+        as zero. None means every cell was queried.
 
     DespoticCellReader.read_fields() returns this object. Every returned field
     keeps the original batch shape (B,) and cell order; unqueried values are NaN.
@@ -98,6 +107,7 @@ class DespoticCellFields:
     query_hydrogen_density_cm3: np.ndarray
     invalid_temperature_cells: np.ndarray
     coordinate_clipped: dict[str, np.ndarray]
+    below_hydrogen_density_domain: np.ndarray | None = None
 
 
 
@@ -124,8 +134,8 @@ class DespoticCellReader:
         """Read only T_DESPOTIC [K] for every cell in the supplied batch.
 
         cells comes from slab.batch(); its physical nH, shielding NH and
-        velocity gradient each have shape (B,). This action uses the same
-        coordinate checks and permitted clipping as read_fields(), then
+        velocity gradient each have shape (B,). This action requires coverage
+        of all coordinates within the permitted endpoint tolerance, then
         queries the existing temperature interpolator without reading CO,
         CII or particle densities. Returned values keep shape (B,) and the
         original cell order; missing temperature values remain NaN.
@@ -138,18 +148,32 @@ class DespoticCellReader:
         self,
         *,
         cells: CellBatch,
-    ) -> tuple[DespoticQueryInputs, DespoticQueries]:
+        skip_below_density_domain: bool = False,
+    ) -> tuple[DespoticQueryInputs, DespoticQueries | None]:
         """Check/clip cell coordinates and prepare their reusable logarithmic rows.
 
-        Returns the prepared physical inputs/clipping flags and lookup queries
-        for all B cells. Both read_fields() and read_temperature() use this
-        coordinate policy; neither changes the original physical cell arrays.
+        Returns full-batch inputs and queries in covered-cell order. With the
+        low-density emission rule enabled, an entirely skipped batch has no queries.
         """
-        query_inputs = self.prepare_query_inputs(cells=cells)
+        query_inputs = self.prepare_query_inputs(
+            cells=cells,
+            skip_below_density_domain=skip_below_density_domain,
+        )
+        coordinates = (
+            query_inputs.hydrogen_density_cm3,
+            query_inputs.shielding_NH_cm2,
+            query_inputs.velocity_gradient_s,
+        )
+        if query_inputs.below_hydrogen_density_domain is not None:
+            queried_cells = ~query_inputs.below_hydrogen_density_domain
+            if not np.any(queried_cells):
+                return query_inputs, None
+            coordinates = tuple(values[queried_cells] for values in coordinates)
+        density, column, gradient = coordinates
         queries = self.lookup.prepare_queries(
-            hydrogen_density_cm3=query_inputs.hydrogen_density_cm3,
-            shielding_NH_cm2=query_inputs.shielding_NH_cm2,
-            velocity_gradient_s=query_inputs.velocity_gradient_s,
+            hydrogen_density_cm3=density,
+            shielding_NH_cm2=column,
+            velocity_gradient_s=gradient,
         )
         return query_inputs, queries
 
@@ -159,7 +183,7 @@ class DespoticCellReader:
         cells: CellBatch,
         cold_cells: np.ndarray,
     ) -> DespoticCellFields:
-        """Read T/CO for all cells and CII/e-/H+/H for eligible cold cells.
+        """Read T/CO for covered cells and CII/e-/H+/H for eligible cold cells.
 
         Parameters
         ----------
@@ -175,27 +199,55 @@ class DespoticCellReader:
             Returned physical fields keep the input cell-array shape and order.
             Unqueried or missing values are NaN.
         """
-        # 1. Prepare nH, shielding NH and dV/dr; record permitted endpoint clipping.
-        query_inputs, queries = self.prepare_cell_queries(cells=cells)
-
-        # 2. Read temperature and both CO lines at the same coordinates for all cells.
-        temperature_and_co = self.lookup.temperature_and_co(
-            queries=queries,
+        query_inputs, queries = self.prepare_cell_queries(
+            cells=cells,
+            skip_below_density_domain=True,
         )
 
-        # 3. Keep the caller's temperature branch; require usable T_D for cold queries.
+        # Read temperature and CO on the covered subset at any QUOKKA temperature.
+        if queries is None:
+            empty = np.empty(0)
+            temperature_and_co = DespoticTemperatureCO(
+                temperature_K=empty,
+                co10_luminosity_per_H=empty,
+                co21_luminosity_per_H=empty,
+            )
+        else:
+            temperature_and_co = self.lookup.temperature_and_co(queries=queries)
+
+        queried_cells = None
+        queried_cold_cells = cold_cells
+        if query_inputs.below_hydrogen_density_domain is not None:
+            queried_cells = ~query_inputs.below_hydrogen_density_domain
+            queried_cold_cells = cold_cells[queried_cells]
         temperature_K = temperature_and_co.temperature_K
         invalid_temperature_cells = ~np.isfinite(temperature_K) | (temperature_K <= 0)
-        cold_cells_to_query = cold_cells & ~invalid_temperature_cells
+        cold_cells_to_query = queried_cold_cells & ~invalid_temperature_cells
 
-        # 4. Read CII and e-/H+/H densities only for those selected cold cells.
         cold_fields = self.read_cii_and_hydrogen_densities(
             queries=queries,
             cold_cells_to_query=cold_cells_to_query,
         )
 
-        # 5. Return cold-only results to their original cell indices; leave all
-        # unqueried positions as NaN. Temperature and CO already include every cell.
+        if queried_cells is not None:
+            # Restore table data to original rows, leaving skipped states unknown.
+            def restore_values(values):
+                complete = np.full(cold_cells.shape, np.nan)
+                complete[queried_cells] = values
+                return complete
+
+            temperature_and_co = DespoticTemperatureCO(
+                temperature_K=restore_values(temperature_K),
+                co10_luminosity_per_H=restore_values(temperature_and_co.co10_luminosity_per_H),
+                co21_luminosity_per_H=restore_values(temperature_and_co.co21_luminosity_per_H),
+            )
+            batch_invalid_temperature = np.ones(cold_cells.shape, dtype=bool)
+            batch_invalid_temperature[queried_cells] = invalid_temperature_cells
+            invalid_temperature_cells = batch_invalid_temperature
+            batch_cold_cells_to_query = np.zeros(cold_cells.shape, dtype=bool)
+            batch_cold_cells_to_query[queried_cells] = cold_cells_to_query
+            cold_cells_to_query = batch_cold_cells_to_query
+
         return self.restore_batch_positions(
             query_inputs=query_inputs,
             temperature_and_co=temperature_and_co,
@@ -208,6 +260,7 @@ class DespoticCellReader:
         self,
         *,
         cells: CellBatch,
+        skip_below_density_domain: bool = False,
     ) -> DespoticQueryInputs:
         """Check and prepare lookup coordinates without changing physical cell arrays.
 
@@ -218,10 +271,11 @@ class DespoticCellReader:
         changes only the lookup coordinate and its clipping flag.
         """
         hydrogen_density_cm3 = cells.hydrogen_density_cm3
-        self.check_coordinate_bounds(
+        below_hydrogen_density_domain = self.check_coordinate_bounds(
             hydrogen_density_cm3=hydrogen_density_cm3,
             shielding_NH_cm2=cells.shielding_NH_cm2,
             velocity_gradient_s=cells.velocity_gradient_s,
+            skip_below_density_domain=skip_below_density_domain,
         )
         (
             query_hydrogen_density_cm3,
@@ -232,15 +286,23 @@ class DespoticCellReader:
             shielding_NH_cm2=cells.shielding_NH_cm2,
             velocity_gradient_s=cells.velocity_gradient_s,
         )
+        coordinate_clipped = {
+            'nH': hydrogen_density_cm3 != query_hydrogen_density_cm3,
+            'NH': cells.shielding_NH_cm2 != query_shielding_NH_cm2,
+            'dVdr': cells.velocity_gradient_s != query_velocity_gradient_s,
+        }
+        if below_hydrogen_density_domain is not None:
+            query_hydrogen_density_cm3 = np.where(
+                below_hydrogen_density_domain, np.nan, query_hydrogen_density_cm3,
+            )
+            for clipped_cells in coordinate_clipped.values():
+                clipped_cells[below_hydrogen_density_domain] = False
         return DespoticQueryInputs(
             hydrogen_density_cm3=query_hydrogen_density_cm3,
             shielding_NH_cm2=query_shielding_NH_cm2,
             velocity_gradient_s=query_velocity_gradient_s,
-            coordinate_clipped={
-                'nH': hydrogen_density_cm3 != query_hydrogen_density_cm3,
-                'NH': cells.shielding_NH_cm2 != query_shielding_NH_cm2,
-                'dVdr': cells.velocity_gradient_s != query_velocity_gradient_s,
-            },
+            coordinate_clipped=coordinate_clipped,
+            below_hydrogen_density_domain=below_hydrogen_density_domain,
         )
 
     def check_coordinate_bounds(
@@ -249,13 +311,16 @@ class DespoticCellReader:
         hydrogen_density_cm3: np.ndarray,
         shielding_NH_cm2: np.ndarray,
         velocity_gradient_s: np.ndarray,
-    ) -> None:
+        skip_below_density_domain: bool = False,
+    ) -> np.ndarray | None:
         """Reject materially uncovered coordinates before endpoint clipping.
 
         The three input arrays have shape (B,) and units cm^-3, cm^-2 and s^-1;
         their bounds come from self.lookup.table. Nonfinite/nonpositive values
-        or relative endpoint offsets >1e-6 raise ValueError. Example: for an nH
-        upper bound of 100, 100.00001 may be clipped, whereas 101 is rejected.
+        or relative endpoint offsets >1e-6 raise ValueError. With the emission
+        rule enabled, positive nH below the allowed range instead returns a
+        mask of those cells. All other checks still apply. Returns None when
+        every cell is covered within tolerance.
         """
         boundary_rtol = COORDINATE_BOUNDARY_RTOL
         coordinates = (hydrogen_density_cm3, shielding_NH_cm2, velocity_gradient_s)
@@ -264,6 +329,7 @@ class DespoticCellReader:
             self.lookup.table.col_density_values,
             self.lookup.table.dVdr_values,
         )
+        below_hydrogen_density_domain = None
         for name, values, axis in zip(('nH', 'NH', 'dVdr'), coordinates, axes):
             if np.size(values) == 0:
                 continue
@@ -274,27 +340,32 @@ class DespoticCellReader:
                 not np.isfinite(minimum)
                 or not np.isfinite(maximum)
                 or minimum <= 0
-                or minimum < axis[0] * (1 - boundary_rtol)
                 or maximum > axis[-1] * (1 + boundary_rtol)
             ):
                 raise ValueError(f'DESPOTIC {name} outside the table domain')
+            lower_bound = axis[0] * (1 - boundary_rtol)
+            if minimum < lower_bound:
+                if name != 'nH' or not skip_below_density_domain:
+                    raise ValueError(f'DESPOTIC {name} outside the table domain')
+                below_hydrogen_density_domain = values < lower_bound
+        return below_hydrogen_density_domain
 
     def read_cii_and_hydrogen_densities(
         self,
         *,
-        queries: DespoticQueries,
+        queries: DespoticQueries | None,
         cold_cells_to_query: np.ndarray,
     ) -> DespoticColdFields:
         """Read CII luminosity per H and e-/H+/H densities for selected cold cells.
 
-        queries contains all B checked, clipped coordinates and their cached
-        log points. cold_cells_to_query is the (B,) selection from read_fields().
+        queries contains the checked coordinates in covered-cell order.
+        cold_cells_to_query selects cold cells in that order.
         Returns four (Q,) arrays: CII
         [erg/s/H nucleus] and particle densities [cm^-3], using clipped query nH.
         Example: [True, False, True] reads cells 0 and 2; an empty selection returns
         empty arrays without accessing the table.
         """
-        if not np.any(cold_cells_to_query):
+        if queries is None or not np.any(cold_cells_to_query):
             return DespoticColdFields(
                 cii_luminosity_per_H=np.empty(0),
                 electron_density_cm3=np.empty(0),
@@ -328,9 +399,8 @@ class DespoticCellReader:
         """Combine the queried DESPOTIC fields into full-batch arrays.
 
         The earlier queries provide temperature and both CO luminosities per H
-        for all cells. CII luminosity per H and electron, ionized-hydrogen and
-        neutral-hydrogen densities are obtained only for cold cells with a
-        usable DESPOTIC temperature.
+        in original batch order. CII luminosity per H and the three particle
+        densities are obtained only for cold cells with usable DESPOTIC temperature.
 
         For each cold-only field, create an array with the input cell-array
         shape, initially filled with NaN. Write the queried values into the
@@ -362,4 +432,5 @@ class DespoticCellReader:
             query_hydrogen_density_cm3=query_inputs.hydrogen_density_cm3,
             invalid_temperature_cells=invalid_temperature_cells,
             coordinate_clipped=query_inputs.coordinate_clipped,
+            below_hydrogen_density_domain=query_inputs.below_hydrogen_density_domain,
         )

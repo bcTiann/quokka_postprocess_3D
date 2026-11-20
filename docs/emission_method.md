@@ -42,7 +42,15 @@ branch:
 | Halpha, HI 21 cm | Analytic expressions using DESPOTIC state | Cloudy |
 | CII | DESPOTIC | Cloudy |
 | CIII 977/1907/1909, CIV 1548/1551 | Omitted, zero by prescription | Cloudy |
-| CO(1–0), CO(2–1) | DESPOTIC | DESPOTIC |
+| CO(1–0), CO(2–1) | DESPOTIC, with the low-density rule below | DESPOTIC, with the low-density rule below |
+
+For finite positive `nH` below the configured DESPOTIC table's minimum by
+more than the relative endpoint tolerance of `1e-6`, snapshot processing
+skips the DESPOTIC query and assigns zero emissivity to both CO lines. This
+approximation applies in both QUOKKA temperature branches. Other DESPOTIC
+coordinates still undergo validation. Inside the tolerance, processing clips
+the query to the table endpoint. The report records each affected cell once
+under `co_zero_below_despotic_nH_cells`.
 
 DESPOTIC line `lumPerH` values are multiplied by the query `nH` to obtain
 volume emissivity. Cloudy coefficients are multiplied by `nH**2`.
@@ -52,7 +60,8 @@ Each line carries the temperature of its adopted emitting state alongside its
 emissivity. DESPOTIC returns its equilibrium temperature with its fields; Cloudy
 uses the QUOKKA temperature supplied to its query. These same temperatures are
 used for thermal widths. Both CO lines use DESPOTIC temperature for every cell
-with available CO/DESPOTIC results. Cold CIII/CIV have zero light, so their stored
+with an available CO lookup. The prescribed zero for low-density CO contributes
+no line profile. Cold CIII/CIV have zero light, so their stored
 QUOKKA temperature has no spectral effect. A DESPOTIC temperature above 3000 K
 does not move a cell into the hot QUOKKA branch.
 
@@ -76,13 +85,13 @@ finite-support convex hull using SciPy `griddata` with linear interpolation.
 Finite high-temperature solver solutions are retained. Original solver-failure
 masks and remaining numerical-unavailability masks have different meanings.
 
-Each line skips only its own missing emissivities. A missing DESPOTIC result
-does not remove a hot cell's Cloudy atomic emission; CO requires DESPOTIC at
-all temperatures. Missing values remain NaN, while a physical zero remains
-available. Gas-phase statistics use the mixed temperature independently:
-cold cells require DESPOTIC temperature and hot cells use QUOKKA temperature.
-Per-line missing-cell counts and mass fractions are recorded in
-`emission_report.json`.
+Each line skips only its own missing emissivities. Hot cells with missing or
+skipped DESPOTIC results still use Cloudy for their atomic lines. Skipped
+DESPOTIC temperatures and the cold Halpha, H I 21 cm and CII emissivities
+that depend on them are missing (NaN). The prescribed CO zeros count as
+available emissivity. Gas-phase statistics use DESPOTIC temperature for cold
+cells and QUOKKA temperature for hot cells. Per-line missing-cell counts and
+mass fractions are recorded in `emission_report.json`.
 
 ## Foreground dust
 

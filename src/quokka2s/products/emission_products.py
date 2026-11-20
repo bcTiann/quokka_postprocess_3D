@@ -174,6 +174,7 @@ class EmissionProducts:
             "NH": 0,    # Cells whose column lookup coordinate was clipped.
             "dVdr": 0,  # Cells whose velocity-gradient lookup coordinate was clipped.
         }
+        self.co_zero_below_despotic_nH_cells = 0
 
         self.cloudy_column_clipped_cells = {
             "below": 0,  # Cells below the minimum attenuation column.
@@ -190,9 +191,10 @@ class EmissionProducts:
             From SlabArrays.batch(); density_g_cm3 has shape (B,) [g/cm^3]
             and cell_volume_cm3 is the common cell volume [cm^3].
         emission : BatchEmission
-            From CellEmissionCalculator.calculate(); carries cell masks, table clipping
-            integer counts and named LineEmission records. Each record contains
-            (B,) intrinsic/attenuated epsilon [erg/s/cm^3].
+            From CellEmissionCalculator.calculate(). Carries cell masks, lookup
+            counts, the number of cells assigned zero CO below the density
+            domain, and named LineEmission records. Each record contains (B,)
+            intrinsic/attenuated epsilon [erg/s/cm^3].
 
         Returns
         -------
@@ -207,6 +209,7 @@ class EmissionProducts:
         products.record_batch(cells, emission)
         """
         self.record_lookup_clipping_counts(emission)
+        self.co_zero_below_despotic_nH_cells += emission.co_zero_below_despotic_nH_cells
         self.record_line_luminosities(cells, emission)
         self.record_missing_line_emissivities(cells, emission)
         self.record_cell_counts_and_masses(cells, emission)
@@ -325,6 +328,7 @@ class EmissionProducts:
         self.phases.merge(other.phases)
         self.intrinsic_luminosity_erg_s += other.intrinsic_luminosity_erg_s
         self.attenuated_luminosity_erg_s += other.attenuated_luminosity_erg_s
+        self.co_zero_below_despotic_nH_cells += other.co_zero_below_despotic_nH_cells
         self.cold_despotic_luminosity.merge(other.cold_despotic_luminosity)
         for name in (
             'counts', 'mass_g', 'missing_emissivity_cells', 'missing_emissivity_mass_g',

@@ -105,6 +105,9 @@ class BatchEmission:
         Counts of usable DESPOTIC-temperature queries clipped in nH, NH and dVdr.
     cloudy_column_clipped_cells : dict of str to int
         Counts of successful hot queries below/above the Cloudy attenuation grid.
+    co_zero_below_despotic_nH_cells : int
+        Number of original cells assigned zero in both CO lines because their
+        nH falls below the DESPOTIC density domain.
 
     Examples
     --------
@@ -117,6 +120,7 @@ class BatchEmission:
     cold_cells: np.ndarray
     despotic_coordinate_clipped_cells: dict[str, int]
     cloudy_column_clipped_cells: dict[str, int]
+    co_zero_below_despotic_nH_cells: int = 0
 
 
 class CellEmissionCalculator:
@@ -183,7 +187,7 @@ class CellEmissionCalculator:
         # 1. Choose the QUOKKA temperature branch once for this batch.
         cold_cells = cells.temperature_QUOKKA_K < EMISSION_TEMPERATURE_BOUNDARY_K
 
-        # 2. Read DESPOTIC T and CO for all cells, plus cold CII and H/e- densities.
+        # 2. Read DESPOTIC T and CO for covered cells, plus cold CII and H/e- densities.
         despotic_fields = self.despotic_reader.read_fields(
             cells=cells,
             cold_cells=cold_cells,
@@ -230,7 +234,7 @@ class CellEmissionCalculator:
         Line             T_QUOKKA < 3000 K        T_QUOKKA >= 3000 K
         Halpha, HI, CII   DESPOTIC state and T_D    Cloudy state and query T_Q
         CIII, CIV         Zero emission            Cloudy state and query T_Q
-        CO(1-0), CO(2-1)  DESPOTIC state and T_D    DESPOTIC state and T_D
+        CO(1-0), CO(2-1)  DESPOTIC or low-nH zero  DESPOTIC or low-nH zero
 
         Parameters
         ----------
@@ -273,6 +277,7 @@ class CellEmissionCalculator:
             cloudy_fields=cloudy_fields,
         )
         co_lines = self.calculate_co_lines(
+            temperature_quokka_K=cells.temperature_QUOKKA_K,
             despotic_fields=despotic_fields,
         )
         lines.update(co_lines)
@@ -369,14 +374,16 @@ class CellEmissionCalculator:
     def calculate_co_lines(
         self,
         *,
+        temperature_quokka_K: np.ndarray,
         despotic_fields: DespoticCellFields,
     ) -> dict[str, IntrinsicLineEmission]:
         """Calculate both CO lines from DESPOTIC for cold and hot cells alike.
 
         despotic_fields comes from DespoticCellReader.read_fields(). Returns
-        two named results with the original (B,) epsilon [erg/s/cm^3] and T_D [K].
-        Missing DESPOTIC temperature leaves both results NaN at that cell.
-        The lumPerH conversion uses DESPOTIC's clipped query nH.
+        two named results with the original (B,) epsilon [erg/s/cm^3] and
+        line temperature [K]. The lumPerH conversion uses DESPOTIC's clipped
+        query nH and T_D. Below the density domain, emission is prescribed as
+        zero and T_Q is a placeholder for the zero-light line.
         """
         lines = self.create_empty_intrinsic_lines(
             line_keys=CO_LINE_KEYS,
@@ -401,6 +408,12 @@ class CellEmissionCalculator:
             emissivity_erg_s_cm3=co21_emissivity,
             temperature_K=temperature_K,
         )
+        below_density_domain = despotic_fields.below_hydrogen_density_domain
+        if below_density_domain is not None:
+            placeholder_temperature_K = temperature_quokka_K[below_density_domain]
+            for line in lines.values():
+                line.emissivity_erg_s_cm3[below_density_domain] = 0.0
+                line.temperature_K[below_density_domain] = placeholder_temperature_K
         return lines
 
     def fill_hot_cloudy_lines(
@@ -562,10 +575,15 @@ class CellEmissionCalculator:
             retained_clipped_cells = clipped_cells & ~despotic_fields.invalid_temperature_cells
             despotic_clipped_counts[coordinate] = int(np.count_nonzero(retained_clipped_cells))
 
+        below_density_domain = despotic_fields.below_hydrogen_density_domain
+        co_zero_cells = 0
+        if below_density_domain is not None:
+            co_zero_cells = int(np.count_nonzero(below_density_domain))
         return BatchEmission(
             lines=lines,
             despotic_temperature_K=despotic_fields.temperature_K,
             cold_cells=cold_cells,
             despotic_coordinate_clipped_cells=despotic_clipped_counts,
             cloudy_column_clipped_cells=cloudy_fields.column_clipped_cells,
+            co_zero_below_despotic_nH_cells=co_zero_cells,
         )

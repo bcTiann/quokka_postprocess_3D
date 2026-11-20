@@ -199,10 +199,11 @@ The query results, masks, and emissivity arrays remain local to `calculate()`.
    [physics/settings.py](../src/quokka2s/physics/settings.py), currently 3000 K.
    The resulting `(N,)` `cold_cells` array records only the QUOKKA temperature
    branch; table availability does not change it.
-3. `self.despotic_reader.read_fields()` returns `despotic_fields`: temperature
-   and CO `lumPerH` for all cells,
-   then CII `lumPerH` and electron, ionized-H, and neutral-H number densities
-   for cold cells with valid DESPOTIC temperature.
+3. `self.despotic_reader.read_fields()` queries temperature and CO `lumPerH`
+   in both QUOKKA temperature branches. A positive, finite nH below the
+   table minimum beyond the relative endpoint tolerance skips the lookup.
+   The reader then queries CII `lumPerH` and electron, ionized-H, and neutral-H
+   number densities for cold cells with valid DESPOTIC temperature.
 4. `self.cloudy_reader.read_fields()` queries hot cells independently of
    DESPOTIC and returns successful queries compactly. The named atomic-line
    values are emissivity_per_nH2 [erg cm³/s], accompanied by original cell
@@ -219,7 +220,8 @@ The query results, masks, and emissivity arrays remain local to `calculate()`.
      matching physical `nH**2`, then fill final atomic ε/T arrays at the saved
      cell indices. It retains the exact temperature used for each query.
    - `calculate_co_lines()`: calculate both CO lines from DESPOTIC fields and
-     temperature in every QUOKKA temperature branch.
+     temperature in both QUOKKA temperature branches. Assign zero emissivity
+     to the cells whose low nH skipped the lookup.
 
    DESPOTIC `lumPerH` uses query nH; Cloudy uses physical `nH**2`. Each line
    keeps NaN where its own emissivity cannot be calculated.
@@ -312,10 +314,12 @@ Important fields in the returned `BatchEmission`:
 | `lines['halpha'].emissivity_is_missing` | `(N,)` | Boolean: this cell has no Halpha emissivity; physical zero is not missing |
 | `cold_cells` | `(N,)` | Boolean: `T_QUOKKA < 3000 K` |
 | `despotic_coordinate_clipped_cells` | Three integer counts | Clipped nH, NH and dVdr queries with usable DESPOTIC temperature |
+| `co_zero_below_despotic_nH_cells` | Integer count | Cells in this batch assigned zero emissivity in both CO lines |
 
 `cold_cells` records only `T_QUOKKA < 3000 K`; table availability does not
-change it. There is no global line-validity mask. For example, a hot cell
-with missing DESPOTIC results can have available Halpha and missing CO.
+change it. Each line has its own availability mask. For example, a hot cell
+with a missing DESPOTIC interpolation result can have available Halpha and
+missing CO. A hot cell below the DESPOTIC nH limit gets the prescribed CO zero.
 `emissivity_is_missing` is calculated once from each line's intrinsic array;
 images and spectra select that same line's available entries. Unexpected
 invalid required fields with usable temperature still raise errors.
@@ -628,6 +632,7 @@ form:
 | `physical_settings` | `X_H`, column mean, and column directions |
 | `execution` | Original-file source, query-batch size, and worker counts |
 | Counts, masses, and conservation checks | Per-line missing emissivities, unavailable gas temperatures, luminosity sums, and spectral-window losses |
+| `co_zero_below_despotic_nH_cells` | Number of cells assigned zero emissivity in both CO lines by the low-density rule |
 | `cold_gas_luminosity_by_despotic_temperature` | Cold-branch Halpha/HI/CII light above four TD thresholds, corresponding total light, and intrinsic/attenuated fractions |
 | `elapsed_seconds` | Process time through report construction, excluding Gaussian build. Final `status.json` includes saving and cleanup |
 
@@ -766,8 +771,10 @@ Follow its two distinct actions:
    `TableInputStatistics.record_batch()` records physical nH/NH/dVdr for all
    cells and nH/NH/T_QUOKKA for hot cells. Only extrema/counts survive each batch.
 2. `build_table_range_report()` compares those stored extrema with the current
-   axes. It performs no cell reads and no table interpolation. Cloudy NH
-   clipping is allowed; all other axes use the same coverage tolerance as process.
+   axes. It performs no cell reads or table interpolation. Cloudy NH permits
+   clipping. The other axes use the processing endpoint tolerances, so low nH
+   can be reported as outside DESPOTIC coverage even if process assigns zero CO
+   emissivity there.
 
 `TableInputFiles` stores `input_ranges.json` separately from the freshly built
 `table_range_report.json`. Source file state and plain physical definitions

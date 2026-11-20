@@ -278,10 +278,13 @@ Before saving, it also prepares per-area spectra, peak-normalized line/gas
 profiles, gas-channel centres, image display masks and colour limits. Raw arrays and both
 full/window moments remain available alongside these fields.
 
-Each line omits only cells with unavailable results required by that line;
-image and spectrum use the same selection for that line. The processor reports
-the missing count and mass separately for each line. Failed lookups
-are not interpreted as physical zero emission. Before saving, it checks
+Each line uses the same cell selection for its image and spectrum. The processor
+reports the missing count and mass separately for each line. For cells with
+positive finite `nH` below the DESPOTIC table minimum beyond the endpoint
+tolerance, processing skips the query and assigns zero emissivity to both CO
+lines. `emission_report.json` counts those cells under
+`co_zero_below_despotic_nH_cells`. Other failed or skipped lookup values
+required by a line remain missing. Before saving, processing checks
 cell accounting, luminosity sums, channel integrals and full-profile moments. The report
 records the DESPOTIC, Cloudy, and dust table paths under `input_tables`, the
 grid shape and cell widths under `snapshot_grid`, and the density/column
@@ -590,10 +593,12 @@ alongside `processed/`:
 | `input_ranges.json` | Physical extrema, units, invalid counts, hot-cell count, scan completeness and field definitions; independent of tables |
 | `table_range_report.json` | Comparison with the currently configured table axes, using processing's endpoint tolerances |
 
-Cloudy NH records both the unchanged physical range and the permitted clipped
-lookup range. Only NH permits arbitrary lookup clipping; DESPOTIC coordinates
-and Cloudy nH/T must be covered. Range coverage alone does not certify remaining
-table holes or the suitability of composition/radiation assumptions.
+The Cloudy NH comparison records the physical and clipped lookup ranges.
+DESPOTIC coordinates and Cloudy nH/T are compared with their table bounds
+using the endpoint tolerances. The survey reports low nH outside DESPOTIC
+coverage even when processing can assign zero CO emissivity there. The
+comparison checks coordinate coverage. Table holes and the suitability of
+composition or radiation assumptions require separate checks.
 
 Rerunning the command reuses a completed scan when source file paths/sizes/
 modification times, physical definitions and the requested region match.
@@ -735,8 +740,9 @@ used here. `NH`, `dV/dr` and hot-only input ranges still require a cell scan.
 ## Additional figures
 
 Figure 1 and emission phase histograms are separate tools using the same
-snapshot reader. Slice and projection maps query DESPOTIC temperature only;
-emission phase histograms reuse the full cell-emission calculator:
+snapshot reader. Slice and projection maps query DESPOTIC temperature
+and enforce its coordinate bounds. Emission phase histograms reuse the full
+cell-emission calculator and its low-density CO approximation.
 
 ```bash
 uv run python tools/figures/build_table_input_slice.py --config configs/emission.yaml --dataset /absolute/path/to/plt0655228 \
